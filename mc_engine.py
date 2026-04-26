@@ -42,19 +42,6 @@ def _worker_execute(task: Dict[str, Any]) -> Dict[str, Any]:
     """
     Run a single backtest in a subprocess.
     Returns metrics + optionally equity_curve + trades (for pass 2).
-
-    Task dict:
-        run_uuid:         str
-        strategy_name:    str (key in STRATEGIES registry)
-        params:           Dict[str, Any]
-        data_path:        str (path to parquet)
-        cols_needed:      List[str]
-        initial_capital:  float
-        commission:       float
-        slippage:         float
-        benchmarks_path:  str (optional — if provided, compute alpha/beta)
-        return_details:   bool (if True, return equity+trades in result)
-        date_filter:      (start, end) optional
     """
     from core_engine import BacktestEngine
     from mc_strategies import get_strategy_config
@@ -148,13 +135,16 @@ def _compute_metrics(equity_df: pd.DataFrame,
     capital = eq["Capital"].astype(float)
     final = float(capital.iloc[-1])
     metrics["final_capital"] = round(final, 2)
-    metrics["total_return_pct"] = round((final / initial_capital - 1) * 100, 2)
+    
+    # מונע קריסה במקרה של הון התחלתי 0
+    if initial_capital > 0:
+        metrics["total_return_pct"] = round((final / initial_capital - 1) * 100, 2)
 
-    # CAGR
-    years = (eq["Date"].iloc[-1] - eq["Date"].iloc[0]).days / 365.25
-    if years > 0 and initial_capital > 0:
-        cagr = ((final / initial_capital) ** (1 / years) - 1) * 100
-        metrics["cagr_pct"] = round(float(cagr), 2)
+        # CAGR
+        years = (eq["Date"].iloc[-1] - eq["Date"].iloc[0]).days / 365.25
+        if years > 0:
+            cagr = ((final / initial_capital) ** (1 / years) - 1) * 100
+            metrics["cagr_pct"] = round(float(cagr), 2)
 
     # Max drawdown
     peak = capital.cummax()
@@ -193,6 +183,7 @@ def _compute_metrics(equity_df: pd.DataFrame,
 
         if "Hold_Days" in trades_df.columns:
             metrics["avg_hold_days"] = round(float(trades_df["Hold_Days"].mean()), 1)
+            
         # Sum of taxes (from Net_PnL vs Gross_PnL diff)
         if "Net_PnL" in trades_df.columns and "Gross_PnL" in trades_df.columns:
             metrics["total_tax_paid"] = round(
@@ -236,6 +227,7 @@ def _quick_alpha_beta(equity_df: pd.DataFrame, benchmarks_path: str,
         bsub[adj_col] = bsub[adj_col].ffill()
         if bsub.empty or bsub[adj_col].iloc[0] <= 0:
             return None, None, None
+            
         first_px = bsub[adj_col].iloc[0]
         shares = initial_capital / first_px
         bsub["b_cap"] = bsub[adj_col] * shares
@@ -264,9 +256,11 @@ def _quick_alpha_beta(equity_df: pd.DataFrame, benchmarks_path: str,
             alpha = (s_cagr - beta * b_cagr) * 100
             excess = (s_cagr - b_cagr) * 100
             return alpha, beta, excess
-    except Exception:
-        pass
-    return None, None, None
+            
+    except Exception as e:
+        # במקום לבלוע שגיאות בשקט (pass), אנחנו מדווחים ללוג (Debug) כדי שנוכל לחקור קריסות
+        logger.debug(f"Alpha/Beta calc failed for {ticker_prefix}: {e}")
+        return None, None, None
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -346,10 +340,6 @@ class MCRunner:
         logger.info(f"Batch {self.batch_id} finalized.")
         return self.batch_id
 
-    # ────────────────────────────────────────────────────────────────────────
-    # Internal: sampling + task-building
-    # ────────────────────────────────────────────────────────────────────────
-
     def _sample_param_sets(self, n: int) -> List[Dict[str, Any]]:
         cfg = self.config
         ps: ParamSpace = get_strategy_config(cfg.strategy_name)["param_space"]
@@ -385,9 +375,8 @@ class MCRunner:
             details = self.db.get_run_details(rid)
             params = details["params"]
             task = {
-                # Use run_uuid as stable key — avoids fragile id() reuse
                 "run_uuid": details["run_uuid"] + "-detail",
-                "_source_run_uuid": details["run_uuid"],   # used for mapping below
+                "_source_run_uuid": details["run_uuid"],   
                 "strategy_name": cfg.strategy_name,
                 "params": params,
                 "data_path": cfg.data_path,
@@ -395,16 +384,12 @@ class MCRunner:
                 "initial_capital": cfg.initial_capital,
                 "commission": cfg.commission,
                 "slippage": cfg.slippage,
-                "benchmarks_path": None,        # already computed in pass 1
+                "benchmarks_path": None,        
                 "return_details": True,
                 "date_filter": (cfg.start_date, cfg.end_date),
             }
             tasks.append((rid, task))
         return tasks
-
-    # ────────────────────────────────────────────────────────────────────────
-    # Internal: parallel execution
-    # ────────────────────────────────────────────────────────────────────────
 
     def _run_parallel(self, tasks: List[Dict[str, Any]], pass_name: str) -> int:
         cfg = self.config
@@ -423,7 +408,6 @@ class MCRunner:
                     n_failed += 1
                     continue
 
-                # Persist result
                 self._persist_pass1_result(result)
                 if result["status"] == "completed":
                     n_completed += 1
@@ -441,12 +425,10 @@ class MCRunner:
         return n_completed
 
     def _run_detail_parallel(self, tasks: List[Tuple[int, Dict[str, Any]]]):
-        """Pass 2: attach equity+trades to existing run_ids."""
         cfg = self.config
         workers = cfg.n_workers if cfg.n_workers > 0 else None
         t0 = time.time()
 
-        # Map run_uuid → run_id (stable: no id() reuse risk)
         uuid_to_runid = {
             task["_source_run_uuid"]: rid
             for rid, task in tasks
@@ -483,7 +465,6 @@ class MCRunner:
                     logger.info(f"[pass2] {i}/{len(raw_tasks)} detail runs done | {elapsed:.1f}s")
 
     def _persist_pass1_result(self, result: Dict[str, Any]):
-        """Build a RunRecord from worker output and insert to DB."""
         m = result.get("metrics", {})
         rec = RunRecord(
             run_uuid=result["run_uuid"],
@@ -506,7 +487,6 @@ class MCRunner:
             calmar=m.get("calmar"),
             total_trades=m.get("total_trades"),
 
-            # שליפה ישירה מתוך המילון ללא חישובים (החישוב נעשה כבר ב-compute_metrics)
             win_rate_gross_pct=m.get("win_rate_gross_pct"),
             win_rate_net_pct=m.get("win_rate_net_pct"),
             

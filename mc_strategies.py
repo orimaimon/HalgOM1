@@ -100,7 +100,6 @@ TOPN_PARAM_SPACE = ParamSpace({
 })
 
 def build_topn_strategy(params: Dict[str, Any]):
-    """Factory function — creates a TopNVolumeStrategy from sampled params."""
     return TopNVolumeStrategy(
         top_n=int(params["top_n"]),
         hold_days=int(params["hold_days"]),
@@ -129,7 +128,6 @@ TOPN_SL_PARAM_SPACE = ParamSpace({
 })
 
 def build_topn_sl_strategy(params: Dict[str, Any]):
-    """Factory function — creates a TopNVolumeSLStrategy from sampled params."""
     return TopNVolumeSLStrategy(
         top_n=int(params["top_n"]),
         hold_days=int(params["hold_days"]),
@@ -149,12 +147,11 @@ TOPN_REGIME_PARAM_SPACE = ParamSpace({
     "sizing_method":      ParamSpec("choice", ("equal", "relative_dv")),
     "min_price":          ParamSpec("loguniform", (1.0, 50.0)),
     "stop_loss_pct":      ParamSpec("uniform", (0.05, 0.30)),
-    "use_regime_filter":  ParamSpec("constant", True), # FIX: Hardcoded to True!
+    "use_regime_filter":  ParamSpec("constant", True),
 })
 
 
 def build_topn_regime_strategy(params: Dict[str, Any]):
-    """Factory function — creates a TopNVolumeRegimeStrategy from sampled params."""
     return TopNVolumeRegimeStrategy(
         top_n=int(params["top_n"]),
         hold_days=int(params["hold_days"]),
@@ -168,9 +165,6 @@ def build_topn_regime_strategy(params: Dict[str, Any]):
 # ══════════════════════════════════════════════════════════════════════════════
 # TopN Volume Sector (Sector-Diversified, Block) — parameter space
 # ══════════════════════════════════════════════════════════════════════════════
-# מטרה: לבחון השפעה של הגבלה סקטוריאלית על MaxDD/Sharpe.
-# ללא Stop Loss וללא Regime Filter — כדי לבודד את אפקט הפיזור.
-# מקבילה ישירה ל-TOPN_PARAM_SPACE עם תוספת max_per_sector.
 
 TOPN_SECTOR_PARAM_SPACE = ParamSpace({
     "top_n":           ParamSpec("int_uniform", (5, 20)),
@@ -181,7 +175,6 @@ TOPN_SECTOR_PARAM_SPACE = ParamSpace({
 })
 
 def build_topn_sector_strategy(params: Dict[str, Any]):
-    """Factory function — creates a TopNVolumeSectorStrategy from sampled params."""
     return TopNVolumeSectorStrategy(
         top_n=int(params["top_n"]),
         hold_days=int(params["hold_days"]),
@@ -191,9 +184,8 @@ def build_topn_sector_strategy(params: Dict[str, Any]):
         use_regime_filter=False,
     )
 
-# הסטרטגיה צריכה את עמודת Sector. עמודות SPY רק לשם תאימות עם use_regime_filter
-# שאינו פעיל פה — נשמיט אותן.
-TOPN_SECTOR_COLS_NEEDED = TOPN_COLS_NEEDED + ["Sector"]
+# הבטחת ייחודיות של שמות העמודות כדי למנוע קריסות בקריאת Parquet
+TOPN_SECTOR_COLS_NEEDED = list(set(TOPN_COLS_NEEDED + ["Sector"]))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -214,7 +206,6 @@ MOMENTUM_PARAM_SPACE = ParamSpace({
 })
 
 def build_momentum_strategy(params: Dict[str, Any]):
-    """Factory function — creates a MomentumStrategy from sampled params."""
     return MomentumStrategy(
         top_n=int(params["top_n"]),
         momentum_col=params["momentum_col"],
@@ -260,7 +251,8 @@ STRATEGIES = {
     "topn_regime": {
         "param_space": TOPN_REGIME_PARAM_SPACE,
         "builder": build_topn_regime_strategy,
-        "cols_needed": TOPN_COLS_NEEDED + ["SPY_Close", "SPY_SMA_200"],
+        # התיקון בוצע כאן: במקור שורשר כאן שוב עמודות ה-SPY שכבר נמצאות ב-TOPN_COLS_NEEDED
+        "cols_needed": TOPN_COLS_NEEDED,
         "display_name": "TopN Volume + Stop Loss + Regime",
     },
     "topn_sector": {

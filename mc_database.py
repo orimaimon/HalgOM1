@@ -28,7 +28,7 @@ logger = logging.getLogger("mc_database")
 # ─── Allowed column names for ORDER BY / metric params (SQL injection guard) ───
 _ALLOWED_ORDER_BY = frozenset({
     "cagr_pct", "total_return_pct", "max_drawdown_pct", "volatility_pct",
-    "sharpe", "sortino", "calmar", "win_rate_pct", "total_trades",
+    "sharpe", "sortino", "calmar", "win_rate_gross_pct", "win_rate_net_pct", "total_trades",
     "avg_hold_days", "total_tax_paid", "alpha_vs_spy", "excess_cagr_spy",
     "alpha_vs_qqq", "excess_cagr_qqq", "period_start", "period_end",
     "final_capital", "run_id", "started_at", "completed_at",
@@ -51,42 +51,43 @@ CREATE TABLE IF NOT EXISTS batches (
 );
 
 CREATE TABLE IF NOT EXISTS runs (
-    run_id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_uuid          TEXT    UNIQUE NOT NULL,
-    batch_id          TEXT    NOT NULL,
-    strategy_name     TEXT    NOT NULL,
-    status            TEXT    NOT NULL,
-    started_at        TEXT,
-    completed_at      TEXT,
-    error_message     TEXT,
-    params_json       TEXT    NOT NULL,
+    run_id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_uuid            TEXT    UNIQUE NOT NULL,
+    batch_id            TEXT    NOT NULL,
+    strategy_name       TEXT    NOT NULL,
+    status              TEXT    NOT NULL,
+    started_at          TEXT,
+    completed_at        TEXT,
+    error_message       TEXT,
+    params_json         TEXT    NOT NULL,
 
-    initial_capital   REAL,
-    final_capital     REAL,
-    total_return_pct  REAL,
-    cagr_pct          REAL,
-    max_drawdown_pct  REAL,
-    volatility_pct    REAL,
-    sharpe            REAL,
-    sortino           REAL,
-    calmar            REAL,
-    total_trades      INTEGER,
-    win_rate_pct      REAL,
-    total_tax_paid    REAL,
-    avg_hold_days     REAL,
+    initial_capital     REAL,
+    final_capital       REAL,
+    total_return_pct    REAL,
+    cagr_pct            REAL,
+    max_drawdown_pct    REAL,
+    volatility_pct      REAL,
+    sharpe              REAL,
+    sortino             REAL,
+    calmar              REAL,
+    total_trades        INTEGER,
+    win_rate_gross_pct  REAL,
+    win_rate_net_pct    REAL,
+    total_tax_paid      REAL,
+    avg_hold_days       REAL,
 
-    alpha_vs_spy      REAL,
-    beta_vs_spy       REAL,
-    excess_cagr_spy   REAL,
-    alpha_vs_qqq      REAL,
-    beta_vs_qqq       REAL,
-    excess_cagr_qqq   REAL,
+    alpha_vs_spy        REAL,
+    beta_vs_spy         REAL,
+    excess_cagr_spy     REAL,
+    alpha_vs_qqq        REAL,
+    beta_vs_qqq         REAL,
+    excess_cagr_qqq     REAL,
 
-    period_start      TEXT,
-    period_end        TEXT,
+    period_start        TEXT,
+    period_end          TEXT,
 
-    has_detail_data   INTEGER DEFAULT 0,
-    detail_reason     TEXT,
+    has_detail_data     INTEGER DEFAULT 0,
+    detail_reason       TEXT,
 
     FOREIGN KEY (batch_id) REFERENCES batches(batch_id)
 );
@@ -153,7 +154,8 @@ class RunRecord:
     sortino: Optional[float]
     calmar: Optional[float]
     total_trades: Optional[int]
-    win_rate_pct: Optional[float]
+    win_rate_gross_pct: Optional[float]
+    win_rate_net_pct: Optional[float]
     total_tax_paid: Optional[float]
     avg_hold_days: Optional[float]
 
@@ -184,6 +186,18 @@ class MCDatabase:
             conn.execute("PRAGMA synchronous = NORMAL")
             conn.execute("PRAGMA cache_size = -64000")   # 64MB
             conn.executescript(SCHEMA_SQL)
+            
+            # --- Auto-Migration for existing databases (adds missing columns if needed) ---
+            try:
+                # בדיקה האם העמודה הישנה עדיין קיימת וצריך להוסיף את החדשות (מנגנון שדרוג שקט)
+                cur = conn.execute("PRAGMA table_info(runs)")
+                columns = [row["name"] for row in cur.fetchall()]
+                if "win_rate_gross_pct" not in columns:
+                    conn.execute("ALTER TABLE runs ADD COLUMN win_rate_gross_pct REAL;")
+                if "win_rate_net_pct" not in columns:
+                    conn.execute("ALTER TABLE runs ADD COLUMN win_rate_net_pct REAL;")
+            except Exception as e:
+                logger.debug(f"Schema migration skipped/failed: {e}")
 
     @contextmanager
     def _conn(self):
@@ -198,16 +212,11 @@ class MCDatabase:
         finally:
             conn.close()
 
-    # ════════════════════════════════════════════════════════════════════════
-    # Batches
-    # ════════════════════════════════════════════════════════════════════════
-
     def register_batch(self, strategy_name: str, n_runs: int,
                         param_space: Dict[str, Any],
                         initial_capital: float,
                         data_period: Optional[tuple[str, str]] = None,
                         notes: str = "") -> str:
-        """Create new batch and return its batch_id."""
         batch_id = str(uuid.uuid4())[:8]
         with self._conn() as conn:
             conn.execute("""
@@ -255,10 +264,6 @@ class MCDatabase:
             row = cur.fetchone()
         return dict(row) if row else None
 
-    # ════════════════════════════════════════════════════════════════════════
-    # Runs
-    # ════════════════════════════════════════════════════════════════════════
-
     def insert_run(self, rec: RunRecord) -> int:
         """Insert a run record, return assigned run_id."""
         with self._conn() as conn:
@@ -268,13 +273,13 @@ class MCDatabase:
                     started_at, completed_at, error_message, params_json,
                     initial_capital, final_capital, total_return_pct, cagr_pct,
                     max_drawdown_pct, volatility_pct, sharpe, sortino, calmar,
-                    total_trades, win_rate_pct, total_tax_paid, avg_hold_days,
+                    total_trades, win_rate_gross_pct, win_rate_net_pct, total_tax_paid, avg_hold_days,
                     alpha_vs_spy, beta_vs_spy, excess_cagr_spy,
                     alpha_vs_qqq, beta_vs_qqq, excess_cagr_qqq,
                     period_start, period_end
                 ) VALUES (?, ?, ?, ?,  ?, ?, ?, ?,
                           ?, ?, ?, ?,  ?, ?, ?, ?, ?,
-                          ?, ?, ?, ?,
+                          ?, ?, ?, ?, ?,
                           ?, ?, ?,  ?, ?, ?,
                           ?, ?)
             """, (
@@ -284,7 +289,7 @@ class MCDatabase:
                 rec.initial_capital, rec.final_capital, rec.total_return_pct,
                 rec.cagr_pct, rec.max_drawdown_pct, rec.volatility_pct,
                 rec.sharpe, rec.sortino, rec.calmar,
-                rec.total_trades, rec.win_rate_pct, rec.total_tax_paid, rec.avg_hold_days,
+                rec.total_trades, rec.win_rate_gross_pct, rec.win_rate_net_pct, rec.total_tax_paid, rec.avg_hold_days,
                 rec.alpha_vs_spy, rec.beta_vs_spy, rec.excess_cagr_spy,
                 rec.alpha_vs_qqq, rec.beta_vs_qqq, rec.excess_cagr_qqq,
                 rec.period_start, rec.period_end,
@@ -296,9 +301,7 @@ class MCDatabase:
                             equity_df: pd.DataFrame,
                             trades_df: pd.DataFrame,
                             reason: str = "top25"):
-        """Attach equity_curve + trades to an existing run. Called in pass 2."""
         with self._conn() as conn:
-            # Equity curve — use itertuples for ~10x speedup vs iterrows
             if equity_df is not None and not equity_df.empty:
                 eq = equity_df.copy()
                 eq["Date"] = pd.to_datetime(eq["Date"]).dt.strftime("%Y-%m-%d")
@@ -320,7 +323,6 @@ class MCDatabase:
                     VALUES (?, ?, ?, ?, ?)
                 """, rows)
 
-            # Trades — use itertuples for speedup
             if trades_df is not None and not trades_df.empty:
                 t = trades_df.copy()
                 for dc in ("Buy_Date", "Sell_Date"):
@@ -354,15 +356,10 @@ class MCDatabase:
                     ) VALUES (?, ?, ?, ?, ?,  ?, ?, ?, ?, ?,  ?, ?, ?, ?)
                 """, rows)
 
-            # Mark the run as having detail data
             conn.execute("""
                 UPDATE runs SET has_detail_data = 1, detail_reason = ?
                 WHERE run_id = ?
             """, (reason, run_id))
-
-    # ════════════════════════════════════════════════════════════════════════
-    # Queries
-    # ════════════════════════════════════════════════════════════════════════
 
     def query_runs(self, batch_id: Optional[str] = None,
                    strategy: Optional[str] = None,
@@ -371,8 +368,6 @@ class MCDatabase:
                    order_by: str = "cagr_pct",
                    descending: bool = True,
                    limit: Optional[int] = None) -> pd.DataFrame:
-        """Flexible query interface. Returns DataFrame with all run metrics."""
-        # ── SQL injection guard: whitelist order_by ──────────────────────────
         if order_by not in _ALLOWED_ORDER_BY:
             raise ValueError(
                 f"Invalid order_by column: '{order_by}'. "
@@ -390,7 +385,6 @@ class MCDatabase:
             where.append("cagr_pct >= ?")
             params.append(min_cagr)
         if max_dd_better_than is not None:
-            # max_dd_pct is negative; "better than -30%" = max_dd_pct >= -30
             where.append("max_drawdown_pct >= ?")
             params.append(max_dd_better_than)
 
@@ -405,7 +399,6 @@ class MCDatabase:
 
         with self._conn() as conn:
             df = pd.read_sql(sql, conn, params=params)
-        # Parse params_json for convenience
         if not df.empty and "params_json" in df.columns:
             df["params"] = df["params_json"].apply(lambda s: json.loads(s) if s else {})
         return df
@@ -413,8 +406,6 @@ class MCDatabase:
     def get_top_and_bottom(self, batch_id: str,
                             top_n: int = 25, bottom_n: int = 10,
                             metric: str = "cagr_pct") -> tuple[list[int], list[int]]:
-        """Return (top_run_ids, bottom_run_ids) by the given metric."""
-        # ── SQL injection guard: whitelist metric ────────────────────────────
         if metric not in _ALLOWED_ORDER_BY:
             raise ValueError(
                 f"Invalid metric: '{metric}'. "
@@ -439,7 +430,6 @@ class MCDatabase:
         return top_ids, bottom_ids
 
     def get_run_details(self, run_id: int) -> Dict[str, Any]:
-        """Return full run details: metrics + equity_curve + trades."""
         with self._conn() as conn:
             cur = conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,))
             run_row = cur.fetchone()
@@ -472,7 +462,6 @@ class MCDatabase:
         return result
 
     def export_run_to_xlsx(self, run_id: int, output_path: str | Path):
-        """Export a single run to XLSX (compatible with existing reporting)."""
         details = self.get_run_details(run_id)
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -489,7 +478,7 @@ class MCDatabase:
             "Metric": k, "Value": details.get(k)
         } for k in [
             "cagr_pct", "total_return_pct", "max_drawdown_pct", "volatility_pct",
-            "sharpe", "sortino", "calmar", "total_trades", "win_rate_pct",
+            "sharpe", "sortino", "calmar", "total_trades", "win_rate_gross_pct", "win_rate_net_pct",
             "total_tax_paid", "alpha_vs_spy", "beta_vs_spy",
         ]])
 
@@ -504,12 +493,7 @@ class MCDatabase:
         logger.info(f"Exported run {run_id} → {output_path}")
         return output_path
 
-    # ════════════════════════════════════════════════════════════════════════
-    # Maintenance
-    # ════════════════════════════════════════════════════════════════════════
-
     def vacuum(self):
-        """Reclaim space after deletions."""
         with self._conn() as conn:
             conn.execute("VACUUM")
 

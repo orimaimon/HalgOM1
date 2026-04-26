@@ -48,7 +48,7 @@ class TaxLedger:
                     loss_offset = gross_pnl
                     taxable_amount = 0.0
                     self.loss_carryforward -= gross_pnl
-                    status = "רווח (קופז במלואו)"
+                    status = "רווח (קוזז במלואו)"
             else:
                 taxable_amount = gross_pnl
                 status = "רווח חייב במס"
@@ -98,19 +98,28 @@ class Portfolio:
                 "buy_commission": self.commission # שומרים את עמלת הקנייה
             }
         else:
-            logger.debug(f"Rejected BUY {order.ticker}: Need {cost:.2f}$, Have {self.cash:.2f}$")
+            # שימוש בפורמט יעיל יותר עבור לוגים
+            logger.debug("Rejected BUY %s: Need %.2f$, Have %.2f$", order.ticker, cost, self.cash)
 
     def execute_sell(self, order: Order):
         if order.ticker in self.positions:
-            pos = self.positions.pop(order.ticker)
+            pos = self.positions[order.ticker]
             
+            # הגנה: לא ניתן למכור יותר מניות ממה שקיים בפוזיציה
+            if order.shares > pos["shares"]:
+                logger.warning(f"Attempted to sell {order.shares} of {order.ticker}, but only own {pos['shares']}. Adjusting to max.")
+                order.shares = pos["shares"]
+                
             actual_price = order.price * (1 - self.slippage_pct)
             proceeds = (order.shares * actual_price) - self.commission
             self.cash += proceeds
             
-            # חישוב רווח/הפסד מתוקן (כולל עמלת קנייה)
-            buy_cost = (pos["shares"] * pos["buy_price"]) + pos.get("buy_commission", self.commission)
-            gross_pnl = proceeds - buy_cost
+            # חישוב רווח/הפסד (PnL) יחסי לפי כמות המניות שנמכרה
+            buy_cost_per_share = pos["buy_price"]
+            buy_commission_ratio = pos.get("buy_commission", self.commission) * (order.shares / pos["shares"])
+            buy_cost_total = (order.shares * buy_cost_per_share) + buy_commission_ratio
+            
+            gross_pnl = proceeds - buy_cost_total
             net_pnl = self.tax_ledger.process_realized_pnl(order.date, gross_pnl, order.ticker)
             
             hold_days = (pd.to_datetime(order.date) - pd.to_datetime(pos["buy_date"])).days
@@ -122,12 +131,17 @@ class Portfolio:
                 "Hold_Days": hold_days,
                 "Buy_Price": round(pos["buy_price"], 2),
                 "Sell_Price": round(actual_price, 2),
-                "Shares": round(pos["shares"], 4),
+                "Shares": round(order.shares, 4),
                 "Gross_PnL": round(gross_pnl, 2),
                 "Net_PnL": round(net_pnl, 2),
                 "Buy_Reason": pos["reason"],
                 "Sell_Reason": order.reason
             })
+            
+            # עדכון יתרת המניות בפוזיציה או הסרתה לחלוטין
+            pos["shares"] -= order.shares
+            if pos["shares"] <= 0:
+                self.positions.pop(order.ticker)
 
     def get_equity(self, current_prices: Dict[str, float]) -> float:
         pos_value = sum(pos["shares"] * current_prices.get(ticker, pos["buy_price"]) 
@@ -155,15 +169,15 @@ class BaseEquityStrategy(BaseStrategy):
         """מייצר מילון שליפות מהיר (O(1)) במקום חיפושי שורות כבדים (O(N)) בתוך הדאטהפריים"""
         return {row['Ticker']: row for _, row in day_data.iterrows()}
 
-    def _is_bull_regime(self, day_data: pd.DataFrame) -> bool:
-        """בודק האם השוק במצב חיובי על פי נתוני תעודת הסל של המדד (SPY)"""
-        spy_row = day_data[day_data['Ticker'] == 'SPY']
-        if not spy_row.empty:
-            spy_close = spy_row.iloc[0]['Adj_Close']
-            spy_sma = spy_row.iloc[0]['SPY_SMA_200']
-            if pd.notna(spy_close) and pd.notna(spy_sma):
-                return spy_close > spy_sma
-        return True # Default to True if SPY data is missing
+    def _is_bull_regime(self, day_data: pd.DataFrame, benchmark_ticker: str = 'SPY', sma_col: str = 'SPY_SMA_200') -> bool:
+        """בודק האם השוק במצב חיובי על פי נתוני מדד היחס המוגדר"""
+        benchmark_row = day_data[day_data['Ticker'] == benchmark_ticker]
+        if not benchmark_row.empty:
+            benchmark_close = benchmark_row.iloc[0]['Adj_Close']
+            benchmark_sma = benchmark_row.iloc[0][sma_col]
+            if pd.notna(benchmark_close) and pd.notna(benchmark_sma):
+                return benchmark_close > benchmark_sma
+        return True # Default to True if benchmark data is missing
 
     def _get_stocks_only(self, day_data: pd.DataFrame) -> pd.DataFrame:
         """מסנן החוצה אינדקסים ותעודות סל"""
@@ -174,7 +188,7 @@ class BaseEquityStrategy(BaseStrategy):
     def _calculate_position_size(self, virtual_cash: float, target_positions: int, current_positions: int, price: float) -> float:
         """מחשב כמות מניות לרכישה מתוך המזומן הפנוי, מגן מפני דחיות פקודה בשל עמלות והחלקה"""
         slots_available = target_positions - current_positions
-        if slots_available <= 0 or virtual_cash <= 0:
+        if slots_available <= 0 or virtual_cash <= 0 or price <= 0:
             return 0.0
             
         cash_allocated = (virtual_cash * 0.98) / slots_available # 2% באפר לעמלות והחלקה

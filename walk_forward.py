@@ -17,15 +17,6 @@ Workflow:
 
 If train CAGR is 22% and test CAGR is 8%, you have curve-fitting.
 If train is 22% and test is 19%, you have something real.
-
-Usage:
-    python walk_forward.py \\
-        --strategy topn \\
-        --n-runs 200 \\
-        --train-start 2006-04-21 --train-end 2016-04-20 \\
-        --test-start 2016-04-21  --test-end 2026-04-20 \\
-        --top-k 10 \\
-        --workers 8
 """
 from __future__ import annotations
 
@@ -126,10 +117,6 @@ class WalkForwardRunner:
         self.train_batch_id: Optional[str] = None
         self.test_batch_id: Optional[str] = None
 
-    # ────────────────────────────────────────────────────────────────────────
-    # Phase 1: TRAIN — run MC on the train window
-    # ────────────────────────────────────────────────────────────────────────
-
     def _run_train_phase(self) -> str:
         cfg = self.cfg
         train_notes = (
@@ -149,8 +136,8 @@ class WalkForwardRunner:
             db_path=cfg.db_path,
             start_date=cfg.train_start,
             end_date=cfg.train_end,
-            top_n_detail=cfg.top_k,   # save detail for top-K we'll re-test
-            bottom_n_detail=0,         # don't waste pass-2 budget on bottoms
+            top_n_detail=cfg.top_k,
+            bottom_n_detail=0,
             worker_timeout=cfg.worker_timeout,
             notes=train_notes,
         )
@@ -163,10 +150,6 @@ class WalkForwardRunner:
         runner = MCRunner(mc_config)
         return runner.run()
 
-    # ────────────────────────────────────────────────────────────────────────
-    # Phase 2: SELECT top-K from train by excess_cagr_qqq (or whatever metric)
-    # ────────────────────────────────────────────────────────────────────────
-
     def _select_top_k(self, train_batch_id: str) -> pd.DataFrame:
         cfg = self.cfg
         descending = cfg.selection_metric != "max_drawdown_pct"
@@ -176,7 +159,7 @@ class WalkForwardRunner:
             descending=descending,
             limit=cfg.top_k,
         )
-        # Drop runs missing the selection metric (NaN -> useless)
+        
         selected = selected[selected[cfg.selection_metric].notna()].reset_index(drop=True)
         if selected.empty:
             raise RuntimeError(
@@ -196,15 +179,10 @@ class WalkForwardRunner:
             )
         return selected
 
-    # ────────────────────────────────────────────────────────────────────────
-    # Phase 3: TEST — re-run frozen configs on test window
-    # ────────────────────────────────────────────────────────────────────────
-
     def _run_test_phase(self, selected: pd.DataFrame) -> str:
         cfg = self.cfg
         strat_cfg = get_strategy_config(cfg.strategy_name)
 
-        # Register a NEW batch for the test results so dashboards / queries work
         test_batch_id = self.db.register_batch(
             strategy_name=strat_cfg["display_name"] + " (WF-TEST)",
             n_runs=len(selected),
@@ -225,7 +203,6 @@ class WalkForwardRunner:
             + "═" * 70
         )
 
-        # Build test tasks — same params, different date window
         tasks: List[Dict[str, Any]] = []
         for _, row in selected.iterrows():
             tasks.append({
@@ -239,7 +216,7 @@ class WalkForwardRunner:
                 "commission": cfg.commission,
                 "slippage": cfg.slippage,
                 "benchmarks_path": cfg.benchmarks_path,
-                "return_details": True,   # keep equity for the report
+                "return_details": True,   
                 "date_filter": (cfg.test_start, cfg.test_end),
             })
 
@@ -248,7 +225,6 @@ class WalkForwardRunner:
         t0 = time.time()
 
         with ProcessPoolExecutor(max_workers=workers) as ex:
-            # Strip our private key before sending to worker
             fut_to_task = {}
             for task in tasks:
                 worker_task = {k: v for k, v in task.items() if not k.startswith("_")}
@@ -273,7 +249,6 @@ class WalkForwardRunner:
         elapsed = time.time() - t0
         logger.info(f"Test phase completed in {elapsed:.1f}s")
 
-        # Persist to DB under the test batch
         for train_run_id, result in results:
             self._persist_test_result(test_batch_id, train_run_id, result)
         self.db.finalize_batch(test_batch_id, len([r for _, r in results if r["status"] == "completed"]))
@@ -282,6 +257,8 @@ class WalkForwardRunner:
     def _persist_test_result(self, test_batch_id: str, train_run_id: int,
                               result: Dict[str, Any]) -> None:
         m = result.get("metrics", {})
+        
+        # 🟢 התיקון הקריטי בוצע כאן: התאמת שמות המשתנים של ה-Win Rate למה שחוזר מהמנוע 🟢
         rec = RunRecord(
             run_uuid=result["run_uuid"],
             batch_id=test_batch_id,
@@ -302,7 +279,11 @@ class WalkForwardRunner:
             sortino=m.get("sortino"),
             calmar=m.get("calmar"),
             total_trades=m.get("total_trades"),
-            win_rate_pct=m.get("win_rate_pct"),
+            
+            # השינוי (פיצול לברוטו/נטו בהתאם לקוד המנוע)
+            win_rate_gross_pct=m.get("win_rate_gross_pct"),
+            win_rate_net_pct=m.get("win_rate_net_pct"),
+            
             total_tax_paid=m.get("total_tax_paid"),
             avg_hold_days=m.get("avg_hold_days"),
             alpha_vs_spy=m.get("alpha_vs_spy"),
@@ -316,7 +297,6 @@ class WalkForwardRunner:
         )
         try:
             run_id = self.db.insert_run(rec)
-            # Also save the equity/trades for visualization later
             if result["status"] == "completed" and result.get("equity_curve") is not None:
                 self.db.insert_detail_data(
                     run_id=run_id,
@@ -327,15 +307,10 @@ class WalkForwardRunner:
         except Exception as e:
             logger.error(f"Failed to persist test result for train_run_id={train_run_id}: {e}")
 
-    # ────────────────────────────────────────────────────────────────────────
-    # Phase 4: REPORT — compare train vs test
-    # ────────────────────────────────────────────────────────────────────────
-
     def _build_report(self, train_selected: pd.DataFrame,
                        test_batch_id: str) -> pd.DataFrame:
         test_runs = self.db.query_runs(batch_id=test_batch_id)
 
-        # Match train runs to test runs by params (deterministic re-run preserves params JSON)
         train_lookup = {
             json.dumps(r["params"], sort_keys=True): r
             for _, r in train_selected.iterrows()
@@ -351,23 +326,19 @@ class WalkForwardRunner:
                 "params": t["params"],
                 "train_run_id": int(tr["run_id"]),
                 "test_run_id": int(t["run_id"]),
-                # Headline metric
                 "train_cagr": tr.get("cagr_pct"),
                 "test_cagr":  t.get("cagr_pct"),
                 "cagr_degradation": (
                     (t.get("cagr_pct", 0) or 0) - (tr.get("cagr_pct", 0) or 0)
                 ),
-                # Alpha vs QQQ — the metric that actually matters
                 "train_excess_qqq": tr.get("excess_cagr_qqq"),
                 "test_excess_qqq":  t.get("excess_cagr_qqq"),
                 "excess_qqq_degradation": (
                     (t.get("excess_cagr_qqq", 0) or 0) -
                     (tr.get("excess_cagr_qqq", 0) or 0)
                 ),
-                # Drawdown
                 "train_maxdd": tr.get("max_drawdown_pct"),
                 "test_maxdd":  t.get("max_drawdown_pct"),
-                # Sharpe
                 "train_sharpe": tr.get("sharpe"),
                 "test_sharpe":  t.get("sharpe"),
             })
@@ -406,7 +377,6 @@ class WalkForwardRunner:
         print(f"  Configs with test alpha ≥ +2pp  : {kept_2pct}/{n}  ({100*kept_2pct/n:.0f}%)")
         print()
 
-        # Per-config table
         print("  Per-config breakdown:")
         print("  " + "─" * 73)
         cols = ["test_cagr", "test_excess_qqq", "excess_qqq_degradation",
@@ -417,7 +387,6 @@ class WalkForwardRunner:
         print(sub.to_string(index=False))
         print()
 
-        # Verdict
         print("  VERDICT:")
         if median_test_qqq >= 2 and kept_alpha >= 0.7 * n:
             print("  ✓ Strategy holds up out-of-sample. Real alpha plausible.")
@@ -434,7 +403,6 @@ class WalkForwardRunner:
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / f"wf_report_{self.cfg.strategy_name}_{ts}.csv"
         report.to_csv(path, index=False)
-        # Also stash the config + batch IDs alongside so this is reproducible
         sidecar = path.with_suffix(".meta.json")
         with open(sidecar, "w") as f:
             json.dump({
@@ -447,10 +415,6 @@ class WalkForwardRunner:
         logger.info(f"Report saved: {path}")
         logger.info(f"Metadata:    {sidecar}")
         return path
-
-    # ────────────────────────────────────────────────────────────────────────
-    # Orchestration
-    # ────────────────────────────────────────────────────────────────────────
 
     def run(self, report_dir: Path = Path("reports/walk_forward")) -> Dict[str, Any]:
         t0 = time.time()
@@ -468,11 +432,6 @@ class WalkForwardRunner:
             "report_path": str(report_path),
             "report": report,
         }
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# CLI
-# ════════════════════════════════════════════════════════════════════════════
 
 def main():
     p = argparse.ArgumentParser(
