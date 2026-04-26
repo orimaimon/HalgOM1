@@ -1,0 +1,277 @@
+"""
+mc_strategies.py — ParamSpace definitions for each strategy.
+
+Each strategy has its own search space. The MC runner uses these to sample
+random configurations.
+"""
+from __future__ import annotations
+
+import math
+import random
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Tuple, Union
+
+# יבוא האסטרטגיות
+from strategies.top_n_volume import TopNVolumeStrategy
+from strategies.top_n_volume_sl import TopNVolumeSLStrategy
+from strategies.top_n_volume_regime import TopNVolumeRegimeStrategy
+from strategies.top_n_volume_sector import TopNVolumeSectorStrategy
+from strategies.momentum_classic import MomentumStrategy
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ParamSpec — a single parameter's distribution
+# ══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class ParamSpec:
+    """
+    Specification for a parameter's distribution.
+
+    dist types:
+      'uniform'      — uniform continuous [lo, hi]
+      'loguniform'   — log-uniform continuous [lo, hi] (for scale-free ranges)
+      'int_uniform'  — uniform integer [lo, hi] inclusive
+      'choice'       — categorical choice from tuple of values
+      'constant'     — fixed value (not sampled)
+    """
+    dist: str
+    values: Union[Tuple[float, float], Tuple[Any, ...], Any]
+
+    def sample(self, rng: random.Random) -> Any:
+        if self.dist == "uniform":
+            lo, hi = self.values
+            return rng.uniform(lo, hi)
+        elif self.dist == "loguniform":
+            lo, hi = self.values
+            log_val = rng.uniform(math.log(lo), math.log(hi))
+            return math.exp(log_val)
+        elif self.dist == "int_uniform":
+            lo, hi = self.values
+            return rng.randint(int(lo), int(hi))
+        elif self.dist == "choice":
+            return rng.choice(self.values)
+        elif self.dist == "constant":
+            return self.values
+        else:
+            raise ValueError(f"Unknown dist: {self.dist}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """For storage in DB."""
+        return {"dist": self.dist, "values": self.values}
+
+
+@dataclass
+class ParamSpace:
+    """A named collection of ParamSpecs."""
+    specs: Dict[str, ParamSpec]
+
+    def sample(self, rng: random.Random) -> Dict[str, Any]:
+        """Draw one random configuration."""
+        result = {}
+        for name, spec in self.specs.items():
+            val = spec.sample(rng)
+            # Round certain params for cleaner display
+            if spec.dist == "loguniform":
+                # Round to 2 significant figures for reproducibility/readability
+                if val >= 1000:
+                    val = round(val, -int(math.floor(math.log10(abs(val)))) + 2)
+                else:
+                    val = round(val, 2)
+            elif spec.dist == "uniform":
+                val = round(val, 3)
+            result[name] = val
+        return result
+
+    def to_dict(self) -> Dict[str, Dict[str, Any]]:
+        return {name: spec.to_dict() for name, spec in self.specs.items()}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TopN Volume — parameter space
+# ══════════════════════════════════════════════════════════════════════════════
+
+TOPN_PARAM_SPACE = ParamSpace({
+    "top_n":              ParamSpec("int_uniform", (3, 25)),
+    "hold_days":          ParamSpec("int_uniform", (5, 180)),
+    "sizing_method":      ParamSpec("choice", ("equal", "relative_dv")),
+    "min_price":          ParamSpec("loguniform", (1.0, 50.0)),
+    "use_regime_filter":  ParamSpec("choice", (True, False)),
+})
+
+def build_topn_strategy(params: Dict[str, Any]):
+    """Factory function — creates a TopNVolumeStrategy from sampled params."""
+    return TopNVolumeStrategy(
+        top_n=int(params["top_n"]),
+        hold_days=int(params["hold_days"]),
+        sizing_method=params["sizing_method"],
+        min_price=float(params["min_price"]),
+        use_regime_filter=bool(params["use_regime_filter"]),
+    )
+
+TOPN_COLS_NEEDED = [
+    'Date', 'Ticker', 'Type', 'Adj_Close', 'Dollar_Volume_20d_Avg',
+    'SPY_Close', 'SPY_SMA_200'
+]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TopN Volume SL (With Stop Loss) — parameter space
+# ══════════════════════════════════════════════════════════════════════════════
+
+TOPN_SL_PARAM_SPACE = ParamSpace({
+    "top_n":              ParamSpec("int_uniform", (5, 25)),
+    "hold_days":          ParamSpec("int_uniform", (5, 180)),
+    "sizing_method":      ParamSpec("choice", ("equal", "relative_dv")),
+    "min_price":          ParamSpec("loguniform", (1.0, 50.0)),
+    "stop_loss_pct":      ParamSpec("uniform", (0.05, 0.30)),
+    "use_regime_filter":  ParamSpec("choice", (True, False)),
+})
+
+def build_topn_sl_strategy(params: Dict[str, Any]):
+    """Factory function — creates a TopNVolumeSLStrategy from sampled params."""
+    return TopNVolumeSLStrategy(
+        top_n=int(params["top_n"]),
+        hold_days=int(params["hold_days"]),
+        sizing_method=params["sizing_method"],
+        min_price=float(params["min_price"]),
+        stop_loss_pct=float(params["stop_loss_pct"]),
+        use_regime_filter=bool(params["use_regime_filter"])
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TopN Volume Regime (With Stop Loss + Regime Filter) — parameter space
+# ══════════════════════════════════════════════════════════════════════════════
+
+TOPN_REGIME_PARAM_SPACE = ParamSpace({
+    "top_n":              ParamSpec("int_uniform", (5, 25)),
+    "hold_days":          ParamSpec("int_uniform", (5, 180)),
+    "sizing_method":      ParamSpec("choice", ("equal", "relative_dv")),
+    "min_price":          ParamSpec("loguniform", (1.0, 50.0)),
+    "stop_loss_pct":      ParamSpec("uniform", (0.05, 0.30)),
+    "use_regime_filter":  ParamSpec("choice", (True, False)),
+})
+
+def build_topn_regime_strategy(params: Dict[str, Any]):
+    """Factory function — creates a TopNVolumeRegimeStrategy from sampled params."""
+    return TopNVolumeRegimeStrategy(
+        top_n=int(params["top_n"]),
+        hold_days=int(params["hold_days"]),
+        sizing_method=params["sizing_method"],
+        min_price=float(params["min_price"]),
+        stop_loss_pct=float(params["stop_loss_pct"]),
+        use_regime_filter=bool(params["use_regime_filter"])
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TopN Volume Sector (Sector-Diversified, Block) — parameter space
+# ══════════════════════════════════════════════════════════════════════════════
+# מטרה: לבחון השפעה של הגבלה סקטוריאלית על MaxDD/Sharpe.
+# ללא Stop Loss וללא Regime Filter — כדי לבודד את אפקט הפיזור.
+# מקבילה ישירה ל-TOPN_PARAM_SPACE עם תוספת max_per_sector.
+
+TOPN_SECTOR_PARAM_SPACE = ParamSpace({
+    "top_n":           ParamSpec("int_uniform", (5, 20)),
+    "hold_days":       ParamSpec("int_uniform", (5, 180)),
+    "sizing_method":   ParamSpec("choice", ("equal", "relative_dv")),
+    "min_price":       ParamSpec("loguniform", (1.0, 50.0)),
+    "max_per_sector":  ParamSpec("int_uniform", (1, 4)),
+})
+
+def build_topn_sector_strategy(params: Dict[str, Any]):
+    """Factory function — creates a TopNVolumeSectorStrategy from sampled params."""
+    return TopNVolumeSectorStrategy(
+        top_n=int(params["top_n"]),
+        hold_days=int(params["hold_days"]),
+        sizing_method=params["sizing_method"],
+        min_price=float(params["min_price"]),
+        max_per_sector=int(params["max_per_sector"]),
+        use_regime_filter=False,
+    )
+
+# הסטרטגיה צריכה את עמודת Sector. עמודות SPY רק לשם תאימות עם use_regime_filter
+# שאינו פעיל פה — נשמיט אותן.
+TOPN_SECTOR_COLS_NEEDED = TOPN_COLS_NEEDED + ["Sector"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Momentum — parameter space
+# ══════════════════════════════════════════════════════════════════════════════
+
+MOMENTUM_PARAM_SPACE = ParamSpace({
+    "top_n":              ParamSpec("int_uniform", (5, 20)),
+    "rebalance_days":     ParamSpec("int_uniform", (10, 90)),
+    "atr_stop_mult":      ParamSpec("uniform", (2.0, 8.0)),
+    "momentum_col":       ParamSpec("choice", (
+        "Return_60d_Pct", "Return_120d_Pct", "Return_252d_Pct"
+    )),
+    "max_momentum_pct":   ParamSpec("uniform", (100.0, 500.0)),
+    "min_dollar_volume":  ParamSpec("loguniform", (1_000_000, 50_000_000)),
+    "min_price":          ParamSpec("loguniform", (1.0, 20.0)),
+    "use_regime_filter":  ParamSpec("choice", (True, False)),
+})
+
+def build_momentum_strategy(params: Dict[str, Any]):
+    """Factory function — creates a MomentumStrategy from sampled params."""
+    return MomentumStrategy(
+        top_n=int(params["top_n"]),
+        momentum_col=params["momentum_col"],
+        rebalance_days=int(params["rebalance_days"]),
+        min_price=float(params["min_price"]),
+        min_dollar_volume=float(params["min_dollar_volume"]),
+        atr_stop_mult=float(params["atr_stop_mult"]),
+        max_momentum_pct=float(params["max_momentum_pct"]),
+        use_regime_filter=bool(params["use_regime_filter"]),
+    )
+
+MOMENTUM_COLS_NEEDED = [
+    'Date', 'Ticker', 'Type', 'Adj_Close', 'Dollar_Volume_20d_Avg',
+    'Return_60d_Pct', 'Return_120d_Pct', 'Return_252d_Pct',
+    'ATR_14',
+    'SPY_Close', 'SPY_SMA_200',
+]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Registry
+# ══════════════════════════════════════════════════════════════════════════════
+
+STRATEGIES = {
+    "topn": {
+        "param_space": TOPN_PARAM_SPACE,
+        "builder": build_topn_strategy,
+        "cols_needed": TOPN_COLS_NEEDED,
+        "display_name": "TopNVolumeStrategy",
+    },
+    "momentum": {
+        "param_space": MOMENTUM_PARAM_SPACE,
+        "builder": build_momentum_strategy,
+        "cols_needed": MOMENTUM_COLS_NEEDED,
+        "display_name": "MomentumStrategy",
+    },
+    "topn_sl": {
+        "param_space": TOPN_SL_PARAM_SPACE,
+        "builder": build_topn_sl_strategy,
+        "cols_needed": TOPN_COLS_NEEDED,
+        "display_name": "TopN Volume + Stop Loss",
+    },
+    "topn_regime": {
+        "param_space": TOPN_REGIME_PARAM_SPACE,
+        "builder": build_topn_regime_strategy,
+        "cols_needed": TOPN_COLS_NEEDED + ["SPY_Close", "SPY_SMA_200"],
+        "display_name": "TopN Volume + Stop Loss + Regime",
+    },
+    "topn_sector": {
+        "param_space": TOPN_SECTOR_PARAM_SPACE,
+        "builder": build_topn_sector_strategy,
+        "cols_needed": TOPN_SECTOR_COLS_NEEDED,
+        "display_name": "TopN Volume + Sector Diversified",
+    },
+}
+
+def get_strategy_config(name: str) -> Dict[str, Any]:
+    if name not in STRATEGIES:
+        raise ValueError(f"Unknown strategy: {name}. Available: {list(STRATEGIES.keys())}")
+    return STRATEGIES[name]

@@ -1,0 +1,15 @@
+# --- Core Data & Math ---
+pandas>=2.0.0
+numpy>=1.24.0
+
+# --- File Formats & Storage ---
+pyarrow>=14.0.0
+openpyxl>=3.1.0
+
+# --- Market Data Downloading ---
+yfinance>=0.2.36
+requests>=2.31.0
+
+# --- GUI & Visualization ---
+ttkbootstrap>=1.1.0
+matplotlib>=3.8.0

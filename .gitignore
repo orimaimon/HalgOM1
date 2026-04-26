@@ -1,0 +1,4 @@
+*.gdoc
+*.gsheet
+__pycache__/
+.vscode/
