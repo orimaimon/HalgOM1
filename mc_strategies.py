@@ -139,10 +139,9 @@ def build_topn_sl_strategy(params: Dict[str, Any]):
         use_regime_filter=bool(params["use_regime_filter"])
     )
 
-
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 # TopN Volume Regime (With Stop Loss + Regime Filter) — parameter space
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 TOPN_REGIME_PARAM_SPACE = ParamSpace({
     "top_n":              ParamSpec("int_uniform", (5, 25)),
@@ -150,8 +149,9 @@ TOPN_REGIME_PARAM_SPACE = ParamSpace({
     "sizing_method":      ParamSpec("choice", ("equal", "relative_dv")),
     "min_price":          ParamSpec("loguniform", (1.0, 50.0)),
     "stop_loss_pct":      ParamSpec("uniform", (0.05, 0.30)),
-    "use_regime_filter":  ParamSpec("choice", (True, False)),
+    "use_regime_filter":  ParamSpec("constant", True), # FIX: Hardcoded to True!
 })
+
 
 def build_topn_regime_strategy(params: Dict[str, Any]):
     """Factory function — creates a TopNVolumeRegimeStrategy from sampled params."""

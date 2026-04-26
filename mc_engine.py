@@ -4,7 +4,7 @@ mc_engine.py — The Monte Carlo orchestrator.
 Two-pass architecture:
   Pass 1 — Random search with parallel workers, metrics only.
   Pass 2 — Re-run Top-N + Bottom-M with detail tracking (equity + trades),
-             saved to SQLite.
+           saved to SQLite.
 
 Why two passes?
   - Pass 1 is fast (metrics only, zero serialization overhead)
@@ -130,7 +130,7 @@ def _compute_metrics(equity_df: pd.DataFrame,
         "final_capital": None, "total_return_pct": None, "cagr_pct": None,
         "max_drawdown_pct": None, "volatility_pct": None,
         "sharpe": None, "sortino": None, "calmar": None,
-        "total_trades": 0, "win_rate_pct": 0.0,
+        "total_trades": 0, "win_rate_gross_pct": 0.0, "win_rate_net_pct": 0.0,
         "total_tax_paid": 0.0, "avg_hold_days": None,
         "alpha_vs_spy": None, "beta_vs_spy": None, "excess_cagr_spy": None,
         "alpha_vs_qqq": None, "beta_vs_qqq": None, "excess_cagr_qqq": None,
@@ -183,8 +183,14 @@ def _compute_metrics(equity_df: pd.DataFrame,
     # Trades
     if trades_df is not None and not trades_df.empty:
         metrics["total_trades"] = int(len(trades_df))
-        wins = (trades_df["Gross_PnL"] > 0).sum()
-        metrics["win_rate_pct"] = round(float(wins / len(trades_df) * 100), 2)
+        
+        # חישוב נכון של ה-Win Rate (ברוטו ונטו)
+        metrics["win_rate_gross_pct"] = round(float((trades_df["Gross_PnL"] > 0).mean() * 100), 2)
+        if "Net_PnL" in trades_df.columns:
+            metrics["win_rate_net_pct"] = round(float((trades_df["Net_PnL"] > 0).mean() * 100), 2)
+        else:
+            metrics["win_rate_net_pct"] = metrics["win_rate_gross_pct"]
+
         if "Hold_Days" in trades_df.columns:
             metrics["avg_hold_days"] = round(float(trades_df["Hold_Days"].mean()), 1)
         # Sum of taxes (from Net_PnL vs Gross_PnL diff)
@@ -499,7 +505,11 @@ class MCRunner:
             sortino=m.get("sortino"),
             calmar=m.get("calmar"),
             total_trades=m.get("total_trades"),
-            win_rate_pct=m.get("win_rate_pct"),
+
+            # שליפה ישירה מתוך המילון ללא חישובים (החישוב נעשה כבר ב-compute_metrics)
+            win_rate_gross_pct=m.get("win_rate_gross_pct"),
+            win_rate_net_pct=m.get("win_rate_net_pct"),
+            
             total_tax_paid=m.get("total_tax_paid"),
             avg_hold_days=m.get("avg_hold_days"),
 

@@ -75,7 +75,7 @@ def generate_dashboard_json(backtest_results: dict, benchmark_results: dict, str
     }
 
     out_dir = Path(output_dir)
-    out_dir.mkdir(exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     json_path = out_dir / f"dashboard_data_{strategy_name}.json"
     
     with open(json_path, 'w', encoding='utf-8') as f:

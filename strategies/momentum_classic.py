@@ -1,185 +1,106 @@
 import pandas as pd
-import numpy as np
-from typing import List, Dict
+from typing import List, Dict, Any
 import logging
-from core_engine import BaseStrategy, Portfolio, Order
+from core_engine import BaseEquityStrategy, Order, Portfolio
 
 logger = logging.getLogger("MomentumStrategy")
 
-
-class MomentumStrategy(BaseStrategy):
-    """
-    Momentum Strategy V3.4 — The Filtered Protector
-
-    שינויים מ-v3.3:
-      + סינון Type == 'stock' (ללא אינדקסים/ETFs)
-      + max_momentum_pct — זריקת "parabolic blowoffs" (מניות שעלו 300%+ ב-120d)
-      + use_regime_filter — בזמן bear market (SPY < SMA200): exit all & stay cash
-      + days_since_rebalance מונה רק כשבפוזיציה (היה באג — מנה גם בימים לא רלוונטיים)
-
-    לוגיקה עקרונית:
-      1. סינון יקום: Type='stock', min_price, min_dv, momentum lookback קיים
-      2. Regime check (אופציונלי): אם bear → sell all, don't re-enter
-      3. Rebalance כל N ימים: sell all → buy top-N momentum
-      4. ATR Trailing Stop על כל פוזיציה בודדת
-
-    פרמטרים חשובים:
-      top_n             — כמה פוזיציות להחזיק במקביל
-      momentum_col      — שדה המיון ('Return_60d_Pct' / '120d' / '252d')
-      rebalance_days    — תדירות רה-באלאנס (20=חודשי, 60=רבעוני)
-      max_momentum_pct  — תקרת מומנטום (None=ללא). 300 = נזרק אם עלה 300%+
-      use_regime_filter — True = יציאה ל-cash ב-bear markets
-      atr_stop_mult     — רוחב trailing stop (3 = שיא מינוס 3 ATRs)
-    """
-    def __init__(self,
-                 top_n: int = 10,
-                 momentum_col: str = "Return_120d_Pct",
-                 rebalance_days: int = 20,
-                 min_price: float = 5.0,
-                 min_dollar_volume: float = 10_000_000,
-                 atr_stop_mult: float = 3.0,
-                 max_momentum_pct: float = 300.0,
-                 use_regime_filter: bool = True):
-
+class MomentumStrategy(BaseEquityStrategy):
+    def __init__(self, top_n: int = 10, momentum_col: str = "Return_120d_Pct", 
+                 rebalance_days: int = 20, min_price: float = 5.0, 
+                 min_dollar_volume: float = 10_000_000.0, atr_stop_mult: float = 3.0, 
+                 max_momentum_pct: float = 300.0, use_regime_filter: bool = True):
         self.top_n = top_n
         self.momentum_col = momentum_col
         self.rebalance_days = rebalance_days
         self.min_price = min_price
-        self.min_dv = min_dollar_volume
+        self.min_dollar_volume = min_dollar_volume
         self.atr_stop_mult = atr_stop_mult
         self.max_momentum_pct = max_momentum_pct
         self.use_regime_filter = use_regime_filter
+        
+        self.peak_prices: Dict[str, float] = {} # למעקב אחרי Trailing Stop
 
-        self.days_since_rebalance = 0
-        self.position_peaks: Dict[str, float] = {}
-        self._regime_block_logged_date = None
+    def generate_sells(self, current_date: str, day_data: pd.DataFrame, portfolio: Portfolio) -> List[Order]:
+        sells = []
+        if not portfolio.positions:
+            return sells
 
-    def _is_bull_regime(self, day_data: pd.DataFrame) -> bool:
-        """
-        בודק SPY vs SMA200. החזרה True = אפשר להיות long.
-        אם הנתונים לא קיימים — default True (אל תחסום בהיעדר מידע).
-        """
-        if 'SPY_Close' not in day_data.columns or 'SPY_SMA_200' not in day_data.columns:
-            return True
-        # SPY_Close ו-SPY_SMA_200 מקודקדים לכל השורות באותו יום — קח את הראשון שאינו NaN
-        row = day_data[['SPY_Close', 'SPY_SMA_200']].dropna()
-        if row.empty:
-            return True
-        spy = row.iloc[0]['SPY_Close']
-        sma = row.iloc[0]['SPY_SMA_200']
-        return bool(spy > sma)
+        ticker_index = self._build_ticker_index(day_data)
+        is_bull = self._is_bull_regime(day_data) if self.use_regime_filter else True
 
-    def _stocks_only(self, day_data: pd.DataFrame) -> pd.DataFrame:
-        if 'Type' in day_data.columns:
-            return day_data[day_data['Type'] == 'stock']
-        return day_data[~day_data['Ticker'].str.startswith('^', na=False)]
-
-    def generate_sells(self, current_date, day_data, portfolio) -> List[Order]:
-        orders = []
-
-        # מונה rebalance רץ רק כשבפוזיציה
-        if portfolio.positions:
-            self.days_since_rebalance += 1
-
-        # ── 1. Regime filter — יציאה כוללת ב-bear market ──────────────────────
-        regime_exit = False
-        if self.use_regime_filter and portfolio.positions and not self._is_bull_regime(day_data):
-            regime_exit = True
-            for ticker, pos in list(portfolio.positions.items()):
-                ticker_row = day_data[day_data['Ticker'] == ticker]
-                price = ticker_row.iloc[0]['Adj_Close'] if not ticker_row.empty else pos['buy_price']
-                orders.append(Order(ticker, current_date, price, pos['shares'],
-                                    "SELL", "Regime Exit (SPY < SMA200)"))
-            self.position_peaks = {}
-            self.days_since_rebalance = 0
-            # Log once per bear-market entry
-            if self._regime_block_logged_date != current_date:
-                logger.info(f"{current_date}: Regime → BEAR, exiting all positions")
-                self._regime_block_logged_date = current_date
-            return orders
-
-        # ── 2. ATR Trailing Stop לכל פוזיציה ──────────────────────────────────
         for ticker, pos in list(portfolio.positions.items()):
-            ticker_row = day_data[day_data['Ticker'] == ticker]
-            if ticker_row.empty:
+            row = ticker_index.get(ticker)
+            if row is None:
+                continue
+            
+            current_price = row['Adj_Close']
+            hold_days = (pd.to_datetime(current_date) - pd.to_datetime(pos["buy_date"])).days
+            
+            # עדכון מחיר שיא ל-Trailing Stop
+            if current_price > self.peak_prices.get(ticker, pos["buy_price"]):
+                self.peak_prices[ticker] = current_price
+
+            # תנאי 1: פילטר שוק (Regime) - בורחים הכל כשמתחיל Bear Market
+            if self.use_regime_filter and not is_bull:
+                sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "Regime Exit"))
+                self.peak_prices.pop(ticker, None)
                 continue
 
-            curr_price = ticker_row.iloc[0]['Adj_Close']
-            curr_atr = ticker_row.iloc[0].get('ATR_14', 0) or 0
-            if pd.isna(curr_atr):
-                curr_atr = 0
+            # תנאי 2: ATR Trailing Stop - חיתוך הפסדים
+            atr = row.get('ATR_14', 0)
+            if pd.notna(atr) and atr > 0:
+                stop_price = self.peak_prices[ticker] - (atr * self.atr_stop_mult)
+                if current_price <= stop_price:
+                    sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "ATR Trailing Stop"))
+                    self.peak_prices.pop(ticker, None)
+                    continue
 
-            # עדכון שיא מחיר
-            if ticker not in self.position_peaks:
-                self.position_peaks[ticker] = pos['buy_price']
-            self.position_peaks[ticker] = max(self.position_peaks[ticker], curr_price)
+            # תנאי 3: ריבלנס מבוסס זמן
+            if hold_days >= self.rebalance_days:
+                sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "Rebalance"))
+                self.peak_prices.pop(ticker, None)
+        
+        return sells
 
-            # חישוב stop
-            stop_price = self.position_peaks[ticker] - (curr_atr * self.atr_stop_mult)
-            if curr_price <= stop_price and curr_atr > 0:
-                orders.append(Order(ticker, current_date, curr_price, pos['shares'],
-                                    "SELL", f"ATR Stop (ATR:{curr_atr:.2f})"))
-                self.position_peaks.pop(ticker, None)
+    def generate_buys(self, current_date: str, day_data: pd.DataFrame, portfolio: Portfolio) -> List[Order]:
+        buys = []
+        if len(portfolio.positions) >= self.top_n:
+            return buys
 
-        # ── 3. Rebalance תקופתי ───────────────────────────────────────────────
-        if self.days_since_rebalance >= self.rebalance_days and portfolio.positions:
-            for ticker, pos in portfolio.positions.items():
-                if not any(o.ticker == ticker for o in orders):
-                    ticker_row = day_data[day_data['Ticker'] == ticker]
-                    price = ticker_row.iloc[0]['Adj_Close'] if not ticker_row.empty else pos['buy_price']
-                    orders.append(Order(ticker, current_date, price, pos['shares'],
-                                        "SELL", "Rebalance"))
-            self.days_since_rebalance = 0
-            self.position_peaks = {}
+        is_bull = self._is_bull_regime(day_data) if self.use_regime_filter else True
+        if self.use_regime_filter and not is_bull:
+            return buys
 
-        return orders
-
-    def generate_buys(self, current_date, day_data, portfolio) -> List[Order]:
-        orders = []
-        slots_available = self.top_n - len(portfolio.positions)
-        if slots_available <= 0:
-            return orders
-
-        # ── Regime check לפני קנייה ────────────────────────────────────────────
-        if self.use_regime_filter and not self._is_bull_regime(day_data):
-            return orders
-
-        # ── חלוקת הון לפי equity כולל ─────────────────────────────────────────
-        current_prices = dict(zip(day_data['Ticker'], day_data['Adj_Close']))
-        total_equity = portfolio.get_equity(current_prices)
-        target_pos_size = (total_equity * 0.95) / self.top_n
-
-        # ── סינון יקום ────────────────────────────────────────────────────────
-        candidates = self._stocks_only(day_data).copy()
-        candidates = candidates[
-            (candidates['Adj_Close'] >= self.min_price) &
-            (candidates['Dollar_Volume_20d_Avg'] >= self.min_dv) &
-            (candidates[self.momentum_col].notna())
+        stocks = self._get_stocks_only(day_data)
+        valid = stocks[
+            (stocks['Adj_Close'] >= self.min_price) & 
+            (stocks['Dollar_Volume_20d_Avg'] >= self.min_dollar_volume) &
+            (stocks[self.momentum_col].notna()) &
+            (stocks[self.momentum_col] <= self.max_momentum_pct)
         ]
+        
+        # סינון מניות שכבר קיימות בתיק
+        valid = valid[~valid['Ticker'].isin(portfolio.positions.keys())]
+        if valid.empty:
+            return buys
 
-        # תקרת מומנטום: זריקת parabolic blowoffs
-        if self.max_momentum_pct is not None:
-            candidates = candidates[candidates[self.momentum_col] <= self.max_momentum_pct]
-
-        # חייב מומנטום חיובי (אין טעם לקנות מה"top 10" אם כולם אדומים)
-        candidates = candidates[candidates[self.momentum_col] > 0]
-
-        if candidates.empty:
-            return orders
-
-        # מיון → top N
-        top_momentum = candidates.sort_values(by=self.momentum_col, ascending=False).head(slots_available)
-
-        for _, row in top_momentum.iterrows():
+        top_candidates = valid.nlargest(self.top_n - len(portfolio.positions), self.momentum_col)
+        
+        # שימוש במזומן וירטואלי כדי להבטיח שלא נחרוג בעמלות
+        virtual_cash = portfolio.cash
+        
+        for _, row in top_candidates.iterrows():
             ticker = row['Ticker']
-            if ticker in portfolio.positions:
-                continue
             price = row['Adj_Close']
-            shares = int(target_pos_size // price)
-            cost = shares * price
-            if shares > 0 and cost <= portfolio.cash:
-                mom_val = row[self.momentum_col]
-                orders.append(Order(ticker, current_date, price, shares,
-                                    "BUY", f"Momentum {mom_val:+.0f}%"))
+            
+            shares = self._calculate_position_size(virtual_cash, self.top_n, len(portfolio.positions) + len(buys), price)
+            
+            if shares > 0:
+                cost = (price * shares * (1 + portfolio.slippage_pct)) + portfolio.commission
+                if virtual_cash >= cost:
+                    buys.append(Order(ticker, current_date, price, shares, "BUY", "Momentum Entry"))
+                    self.peak_prices[ticker] = price
+                    virtual_cash -= cost
 
-        return orders
+        return buys

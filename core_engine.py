@@ -5,12 +5,10 @@ from typing import List, Dict, Any, Optional
 import pandas as pd
 import numpy as np
 
-# הגדרת מערכת הלוגים של המנוע
-logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)-8s | %(message)s')
 logger = logging.getLogger("CoreEngine")
 
 # =============================================================================
-# 1. מודל הנתונים: פקודת מסחר (Order)
+# 1. Data Model: Order
 # =============================================================================
 @dataclass
 class Order:
@@ -18,18 +16,13 @@ class Order:
     date: str
     price: float
     shares: float
-    order_type: str  # "BUY" או "SELL"
-    reason: str = "" # סיבת הפעולה (למשל: "Stop Loss", "Top N Momentum")
+    order_type: str  # "BUY" or "SELL"
+    reason: str = ""
 
 # =============================================================================
-# 2. מנהל המיסים (Tax Ledger)
+# 2. Tax Ledger
 # =============================================================================
 class TaxLedger:
-    """
-    מנהל את חישובי המס באופן ריאליסטי:
-    - גובה 25% מס על רווחי הון ריאליים.
-    - שומר הפסדים ב'פנקס' (Loss Carryforward) לקיזוז מול רווחים עתידיים.
-    """
     def __init__(self, tax_rate: float = 0.25):
         self.tax_rate = tax_rate
         self.loss_carryforward = 0.0
@@ -41,27 +34,22 @@ class TaxLedger:
         loss_offset = 0.0
         
         if gross_pnl < 0:
-            # במקרה של הפסד, מוסיפים אותו למגן המס שלנו
             self.loss_carryforward += abs(gross_pnl)
             net_pnl = gross_pnl
             status = "הפסד (נצבר לקיזוז)"
         else:
-            # במקרה של רווח, בודקים אם יש לנו הפסדים קודמים לקזז
             if self.loss_carryforward > 0:
                 if gross_pnl >= self.loss_carryforward:
-                    # הרווח גדול ממגן המס - מקזזים את כולו ומשלמים מס על השארית
                     loss_offset = self.loss_carryforward
                     taxable_amount = gross_pnl - self.loss_carryforward
                     self.loss_carryforward = 0.0
                     status = "רווח (קיזוז חלקי)"
                 else:
-                    # הרווח קטן ממגן המס - אין תשלום מס, מעדכנים את היתרה
                     loss_offset = gross_pnl
                     taxable_amount = 0.0
                     self.loss_carryforward -= gross_pnl
                     status = "רווח (קופז במלואו)"
             else:
-                # אין מגן מס - משלמים מס על כל הרווח
                 taxable_amount = gross_pnl
                 status = "רווח חייב במס"
             
@@ -69,7 +57,6 @@ class TaxLedger:
             self.total_tax_paid += tax_paid
             net_pnl = gross_pnl - tax_paid
 
-        # תיעוד הפעולה לצורך דוחות ודיבוג
         self.history.append({
             "Date": date,
             "Ticker": ticker,
@@ -84,13 +71,9 @@ class TaxLedger:
         return net_pnl
 
 # =============================================================================
-# 3. מנהל התיק (Portfolio)
+# 3. Portfolio
 # =============================================================================
 class Portfolio:
-    """
-    מנהל את המזומן והפוזיציות של התיק.
-    כולל התחשבות בעמלות ברוקר (Commissions) והחלקת מחירים (Slippage) לדימוי שוק אמיתי.
-    """
     def __init__(self, initial_capital: float, tax_ledger: TaxLedger, commission_per_trade: float = 1.0, slippage_pct: float = 0.001):
         self.initial_capital = initial_capital
         self.cash = initial_capital
@@ -102,7 +85,6 @@ class Portfolio:
         self.slippage_pct = slippage_pct
 
     def execute_buy(self, order: Order):
-        # החלקה: קונים קצת יותר ביוקר ממחיר הסגירה
         actual_price = order.price * (1 + self.slippage_pct)
         cost = (actual_price * order.shares) + self.commission
         
@@ -112,25 +94,25 @@ class Portfolio:
                 "shares": order.shares,
                 "buy_price": actual_price,
                 "buy_date": order.date,
-                "reason": order.reason
+                "reason": order.reason,
+                "buy_commission": self.commission # שומרים את עמלת הקנייה
             }
         else:
-            logger.warning(f"Rejected BUY {order.ticker}: Need {cost:.2f}$, Have {self.cash:.2f}$")
+            logger.debug(f"Rejected BUY {order.ticker}: Need {cost:.2f}$, Have {self.cash:.2f}$")
 
     def execute_sell(self, order: Order):
         if order.ticker in self.positions:
             pos = self.positions.pop(order.ticker)
             
-            # החלקה: מוכרים קצת יותר בזול ממחיר הסגירה
             actual_price = order.price * (1 - self.slippage_pct)
             proceeds = (order.shares * actual_price) - self.commission
             self.cash += proceeds
             
-            # חישוב רווח/הפסד ומיסוי
-            gross_pnl = proceeds - (pos["shares"] * pos["buy_price"])
+            # חישוב רווח/הפסד מתוקן (כולל עמלת קנייה)
+            buy_cost = (pos["shares"] * pos["buy_price"]) + pos.get("buy_commission", self.commission)
+            gross_pnl = proceeds - buy_cost
             net_pnl = self.tax_ledger.process_realized_pnl(order.date, gross_pnl, order.ticker)
             
-            # חישוב ימי החזקה
             hold_days = (pd.to_datetime(order.date) - pd.to_datetime(pos["buy_date"])).days
             
             self.trade_history.append({
@@ -148,19 +130,14 @@ class Portfolio:
             })
 
     def get_equity(self, current_prices: Dict[str, float]) -> float:
-        """שערוך התיק הנוכחי (Mark-to-Market)"""
         pos_value = sum(pos["shares"] * current_prices.get(ticker, pos["buy_price"]) 
                         for ticker, pos in self.positions.items())
         return self.cash + pos_value
 
 # =============================================================================
-# 4. מחלקת האב לאסטרטגיות (Base Strategy)
+# 4. Base Equity Strategy (Refactored)
 # =============================================================================
 class BaseStrategy(ABC):
-    """
-    ממשק מופשט שכל אסטרטגיה חייבת לממש.
-    המנוע רק שואל את האסטרטגיה מה לעשות, ולא יודע איך היא מקבלת את ההחלטה.
-    """
     @abstractmethod
     def generate_sells(self, current_date: str, day_data: pd.DataFrame, portfolio: Portfolio) -> List[Order]:
         pass
@@ -169,14 +146,45 @@ class BaseStrategy(ABC):
     def generate_buys(self, current_date: str, day_data: pd.DataFrame, portfolio: Portfolio) -> List[Order]:
         pass
 
+class BaseEquityStrategy(BaseStrategy):
+    """
+    מחלקת אב מורחבת הכוללת פונקציות עזר משותפות לכלל אסטרטגיות האקוויטי
+    (סינון משטר שוק, הקצאת מזומן וירטואלי, ואינדוקס נתונים מהיר).
+    """
+    def _build_ticker_index(self, day_data: pd.DataFrame) -> Dict[str, pd.Series]:
+        """מייצר מילון שליפות מהיר (O(1)) במקום חיפושי שורות כבדים (O(N)) בתוך הדאטהפריים"""
+        return {row['Ticker']: row for _, row in day_data.iterrows()}
+
+    def _is_bull_regime(self, day_data: pd.DataFrame) -> bool:
+        """בודק האם השוק במצב חיובי על פי נתוני תעודת הסל של המדד (SPY)"""
+        spy_row = day_data[day_data['Ticker'] == 'SPY']
+        if not spy_row.empty:
+            spy_close = spy_row.iloc[0]['Adj_Close']
+            spy_sma = spy_row.iloc[0]['SPY_SMA_200']
+            if pd.notna(spy_close) and pd.notna(spy_sma):
+                return spy_close > spy_sma
+        return True # Default to True if SPY data is missing
+
+    def _get_stocks_only(self, day_data: pd.DataFrame) -> pd.DataFrame:
+        """מסנן החוצה אינדקסים ותעודות סל"""
+        if 'Type' in day_data.columns:
+            return day_data[day_data['Type'] == 'Stock']
+        return day_data
+
+    def _calculate_position_size(self, virtual_cash: float, target_positions: int, current_positions: int, price: float) -> float:
+        """מחשב כמות מניות לרכישה מתוך המזומן הפנוי, מגן מפני דחיות פקודה בשל עמלות והחלקה"""
+        slots_available = target_positions - current_positions
+        if slots_available <= 0 or virtual_cash <= 0:
+            return 0.0
+            
+        cash_allocated = (virtual_cash * 0.98) / slots_available # 2% באפר לעמלות והחלקה
+        shares = cash_allocated / price
+        return shares
+
 # =============================================================================
-# 5. ליבת הסימולטור (The Backtest Engine)
+# 5. The Backtest Engine
 # =============================================================================
 class BacktestEngine:
-    """
-    המנוע הראשי. מריץ את הסימולציה יום אחרי יום בצורה כרונולוגית,
-    מבצע קודם מכירות כדי לשחרר מזומן, ואז קניות, ומתעד את עקומת ההון.
-    """
     def __init__(self, data: pd.DataFrame, strategy: BaseStrategy, 
                  initial_capital: float = 100000.0, 
                  commission: float = 1.0, 
@@ -187,33 +195,27 @@ class BacktestEngine:
         self.tax_ledger = TaxLedger()
         self.portfolio = Portfolio(initial_capital, self.tax_ledger, commission, slippage)
         self.equity_curve: List[Dict[str, Any]] = []
-        
-        # יצירת ציר זמן ייחודי וממוין (חשוב מאוד למניעת Look-ahead)
-        self.dates = sorted(self.data['Date'].unique())
 
     def run(self) -> Dict[str, pd.DataFrame]:
         logger.info(f"🚀 Starting Engine with Strategy: {self.strategy.__class__.__name__}")
         
-        for current_date in self.dates:
-            # חילוץ נתוני היום הנוכחי בלבד
-            day_data = self.data[self.data['Date'] == current_date]
-            if day_data.empty:
-                continue
-                
-            # מחירון עדכני לשערוך התיק
+        # O(N) grouping instead of O(N^2) masking - Massive Speedup
+        grouped_data = self.data.groupby('Date')
+        
+        for current_date, day_data in grouped_data:
             current_prices = dict(zip(day_data['Ticker'], day_data['Adj_Close']))
             
-            # שלב 1: איסוף וביצוע פקודות מכירה (מפנה מזומן לקניות)
+            # Step 1: Sells
             sells = self.strategy.generate_sells(current_date, day_data, self.portfolio)
             for sell in sells:
                 self.portfolio.execute_sell(sell)
                 
-            # שלב 2: איסוף וביצוע פקודות קנייה (עם המזומן הפנוי)
+            # Step 2: Buys
             buys = self.strategy.generate_buys(current_date, day_data, self.portfolio)
             for buy in buys:
                 self.portfolio.execute_buy(buy)
                 
-            # שלב 3: צילום מצב סוף יום (Snapshot)
+            # Step 3: Snapshot
             equity = self.portfolio.get_equity(current_prices)
             self.equity_curve.append({
                 "Date": current_date,
@@ -224,7 +226,6 @@ class BacktestEngine:
             
         logger.info("✅ Backtest Completed.")
         
-        # החזרת התוצאות בפורמט שמוכן לייצוא לאקסל
         return {
             "Equity_Curve": pd.DataFrame(self.equity_curve),
             "Trades": pd.DataFrame(self.portfolio.trade_history),
