@@ -92,10 +92,14 @@ CREATE TABLE IF NOT EXISTS runs (
     FOREIGN KEY (batch_id) REFERENCES batches(batch_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_runs_batch      ON runs(batch_id);
-CREATE INDEX IF NOT EXISTS idx_runs_cagr       ON runs(cagr_pct);
-CREATE INDEX IF NOT EXISTS idx_runs_strategy   ON runs(strategy_name);
-CREATE INDEX IF NOT EXISTS idx_runs_has_detail ON runs(has_detail_data);
+CREATE INDEX IF NOT EXISTS idx_runs_batch        ON runs(batch_id);
+CREATE INDEX IF NOT EXISTS idx_runs_cagr         ON runs(cagr_pct);
+CREATE INDEX IF NOT EXISTS idx_runs_strategy     ON runs(strategy_name);
+CREATE INDEX IF NOT EXISTS idx_runs_has_detail   ON runs(has_detail_data);
+CREATE INDEX IF NOT EXISTS idx_runs_batch_cagr   ON runs(batch_id, cagr_pct);
+CREATE INDEX IF NOT EXISTS idx_runs_batch_status ON runs(batch_id, status);
+CREATE INDEX IF NOT EXISTS idx_runs_sharpe       ON runs(sharpe);
+CREATE INDEX IF NOT EXISTS idx_runs_win_rate     ON runs(win_rate_gross_pct);
 
 CREATE TABLE IF NOT EXISTS equity_curves (
     run_id         INTEGER NOT NULL,

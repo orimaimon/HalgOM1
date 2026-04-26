@@ -1,12 +1,12 @@
 import pandas as pd
 from typing import List
 import logging
-from core_engine import BaseStrategy, Portfolio, Order
+from core_engine import BaseEquityStrategy, Portfolio, Order
 
 logger = logging.getLogger("TopNVolumeStrategy")
 
 
-class TopNVolumeStrategy(BaseStrategy):
+class TopNVolumeStrategy(BaseEquityStrategy):
     """
     אסטרטגיית מחזור דולרי (דור 1) — v1.1
 
@@ -36,24 +36,6 @@ class TopNVolumeStrategy(BaseStrategy):
         self.in_position = False
         self._regime_block_logged_date = None
 
-    def _stocks_only(self, day_data: pd.DataFrame) -> pd.DataFrame:
-        """מסנן אינדקסים ו-ETFs מהיקום — רק מניות רגילות."""
-        if 'Type' in day_data.columns:
-            return day_data[day_data['Type'] == 'stock']
-        # Fallback: סינון לפי תחילית ^ לטיקרים של אינדקסים
-        return day_data[~day_data['Ticker'].str.startswith('^', na=False)]
-
-    def _is_bull_regime(self, day_data: pd.DataFrame) -> bool:
-        """בודק אם השוק במגמת עלייה (SPY > SMA200)."""
-        if 'SPY_Close' not in day_data.columns or 'SPY_SMA_200' not in day_data.columns:
-            return True
-        row = day_data[['SPY_Close', 'SPY_SMA_200']].dropna()
-        if row.empty:
-            return True
-        spy = row.iloc[0]['SPY_Close']
-        sma = row.iloc[0]['SPY_SMA_200']
-        return bool(spy > sma)
-
     def generate_sells(self, current_date, day_data, portfolio) -> List[Order]:
         orders = []
         if not self.in_position:
@@ -64,10 +46,12 @@ class TopNVolumeStrategy(BaseStrategy):
             for ticker, pos in portfolio.positions.items():
                 ticker_data = day_data[day_data['Ticker'] == ticker]
                 price = ticker_data.iloc[0]['Adj_Close'] if not ticker_data.empty else pos['buy_price']
+                dv = float(ticker_data.iloc[0]['Dollar_Volume_20d_Avg']) if not ticker_data.empty else None
                 orders.append(Order(
                     ticker=ticker, date=current_date, price=price,
                     shares=pos["shares"], order_type="SELL",
-                    reason="Regime Exit (SPY < SMA200)"
+                    reason="Regime Exit (SPY < SMA200)",
+                    avg_dollar_volume=dv,
                 ))
             
             self.in_position = False
@@ -85,10 +69,12 @@ class TopNVolumeStrategy(BaseStrategy):
                 ticker_data = day_data[day_data['Ticker'] == ticker]
                 if not ticker_data.empty:
                     current_price = ticker_data.iloc[0]['Adj_Close']
+                    dv = float(ticker_data.iloc[0]['Dollar_Volume_20d_Avg'])
                     orders.append(Order(
                         ticker=ticker, date=current_date, price=current_price,
                         shares=pos["shares"], order_type="SELL",
-                        reason=f"Time Exit ({self.hold_days} days)"
+                        reason=f"Time Exit ({self.hold_days} days)",
+                        avg_dollar_volume=dv,
                     ))
                 else:
                     logger.warning(f"Ticker {ticker} missing data on exit day {current_date}")
@@ -110,7 +96,7 @@ class TopNVolumeStrategy(BaseStrategy):
             return orders
 
         # ── v1.1: סינון אינדקסים/ETFs לפני כל דבר אחר ──
-        valid_data = self._stocks_only(day_data)
+        valid_data = self._get_stocks_only(day_data)
         valid_data = valid_data.dropna(subset=[self.measure_column, 'Adj_Close']).copy()
         valid_data = valid_data[valid_data['Adj_Close'] >= self.min_price]
 
@@ -143,7 +129,8 @@ class TopNVolumeStrategy(BaseStrategy):
                 orders.append(Order(
                     ticker=ticker, date=current_date, price=price,
                     shares=shares, order_type="BUY",
-                    reason=f"Top {self.top_n} {self.measure_column} ({self.sizing_method})"
+                    reason=f"Top {self.top_n} {self.measure_column} ({self.sizing_method})",
+                    avg_dollar_volume=float(dv),
                 ))
 
         if orders:

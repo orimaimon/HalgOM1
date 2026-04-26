@@ -316,6 +316,11 @@ class WalkForwardRunner:
             for _, r in train_selected.iterrows()
         }
 
+        def _diff(a, b):
+            if a is None or b is None:
+                return np.nan
+            return a - b
+
         rows = []
         for _, t in test_runs.iterrows():
             key = json.dumps(t["params"], sort_keys=True)
@@ -328,15 +333,10 @@ class WalkForwardRunner:
                 "test_run_id": int(t["run_id"]),
                 "train_cagr": tr.get("cagr_pct"),
                 "test_cagr":  t.get("cagr_pct"),
-                "cagr_degradation": (
-                    (t.get("cagr_pct", 0) or 0) - (tr.get("cagr_pct", 0) or 0)
-                ),
+                "cagr_degradation": _diff(t.get("cagr_pct"), tr.get("cagr_pct")),
                 "train_excess_qqq": tr.get("excess_cagr_qqq"),
                 "test_excess_qqq":  t.get("excess_cagr_qqq"),
-                "excess_qqq_degradation": (
-                    (t.get("excess_cagr_qqq", 0) or 0) -
-                    (tr.get("excess_cagr_qqq", 0) or 0)
-                ),
+                "excess_qqq_degradation": _diff(t.get("excess_cagr_qqq"), tr.get("excess_cagr_qqq")),
                 "train_maxdd": tr.get("max_drawdown_pct"),
                 "test_maxdd":  t.get("max_drawdown_pct"),
                 "train_sharpe": tr.get("sharpe"),

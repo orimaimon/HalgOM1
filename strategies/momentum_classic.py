@@ -41,9 +41,12 @@ class MomentumStrategy(BaseEquityStrategy):
             if current_price > self.peak_prices.get(ticker, pos["buy_price"]):
                 self.peak_prices[ticker] = current_price
 
+            dv = float(row['Dollar_Volume_20d_Avg']) if pd.notna(row.get('Dollar_Volume_20d_Avg')) else None
+
             # תנאי 1: פילטר שוק (Regime) - בורחים הכל כשמתחיל Bear Market
             if self.use_regime_filter and not is_bull:
-                sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "Regime Exit"))
+                sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "Regime Exit",
+                                   avg_dollar_volume=dv))
                 self.peak_prices.pop(ticker, None)
                 continue
 
@@ -52,13 +55,15 @@ class MomentumStrategy(BaseEquityStrategy):
             if pd.notna(atr) and atr > 0:
                 stop_price = self.peak_prices[ticker] - (atr * self.atr_stop_mult)
                 if current_price <= stop_price:
-                    sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "ATR Trailing Stop"))
+                    sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "ATR Trailing Stop",
+                                       avg_dollar_volume=dv))
                     self.peak_prices.pop(ticker, None)
                     continue
 
             # תנאי 3: ריבלנס מבוסס זמן
             if hold_days >= self.rebalance_days:
-                sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "Rebalance"))
+                sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "Rebalance",
+                                   avg_dollar_volume=dv))
                 self.peak_prices.pop(ticker, None)
         
         return sells
@@ -99,7 +104,9 @@ class MomentumStrategy(BaseEquityStrategy):
             if shares > 0:
                 cost = (price * shares * (1 + portfolio.slippage_pct)) + portfolio.commission
                 if virtual_cash >= cost:
-                    buys.append(Order(ticker, current_date, price, shares, "BUY", "Momentum Entry"))
+                    dv = float(row['Dollar_Volume_20d_Avg']) if pd.notna(row.get('Dollar_Volume_20d_Avg')) else None
+                    buys.append(Order(ticker, current_date, price, shares, "BUY", "Momentum Entry",
+                                     avg_dollar_volume=dv))
                     self.peak_prices[ticker] = price
                     virtual_cash -= cost
 

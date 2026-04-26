@@ -31,12 +31,16 @@ class TopNVolumeSectorStrategy(BaseEquityStrategy):
             current_price = row['Adj_Close']
             hold_days = (pd.to_datetime(current_date) - pd.to_datetime(pos["buy_date"])).days
             
+            dv = float(row['Dollar_Volume_20d_Avg']) if pd.notna(row.get('Dollar_Volume_20d_Avg')) else None
+
             if self.use_regime_filter and not is_bull:
-                sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "Regime Exit"))
+                sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "Regime Exit",
+                                   avg_dollar_volume=dv))
                 continue
-            
+
             if hold_days >= self.hold_days:
-                sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "Time Rebalance"))
+                sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "Time Rebalance",
+                                   avg_dollar_volume=dv))
         
         return sells
 
@@ -86,7 +90,9 @@ class TopNVolumeSectorStrategy(BaseEquityStrategy):
             if shares > 0:
                 cost = (price * shares * (1 + portfolio.slippage_pct)) + portfolio.commission
                 if virtual_cash >= cost:
-                    buys.append(Order(ticker, current_date, price, shares, "BUY", "Top N Sector"))
+                    dv = float(row['Dollar_Volume_20d_Avg']) if pd.notna(row.get('Dollar_Volume_20d_Avg')) else None
+                    buys.append(Order(ticker, current_date, price, shares, "BUY", "Top N Sector",
+                                     avg_dollar_volume=dv))
                     virtual_cash -= cost
                     sector_counts[sector] = sector_counts.get(sector, 0) + 1
                     

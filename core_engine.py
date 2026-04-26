@@ -18,6 +18,7 @@ class Order:
     shares: float
     order_type: str  # "BUY" or "SELL"
     reason: str = ""
+    avg_dollar_volume: Optional[float] = None  # used for volume-dependent slippage
 
 # =============================================================================
 # 2. Tax Ledger
@@ -74,18 +75,35 @@ class TaxLedger:
 # 3. Portfolio
 # =============================================================================
 class Portfolio:
-    def __init__(self, initial_capital: float, tax_ledger: TaxLedger, commission_per_trade: float = 1.0, slippage_pct: float = 0.001):
+    def __init__(self, initial_capital: float, tax_ledger: TaxLedger,
+                 commission_per_trade: float = 1.0,
+                 slippage_pct: float = 0.001,
+                 impact_factor: float = 0.1):
         self.initial_capital = initial_capital
         self.cash = initial_capital
         self.positions: Dict[str, Dict[str, Any]] = {}
         self.tax_ledger = tax_ledger
         self.trade_history: List[Dict[str, Any]] = []
-        
-        self.commission = commission_per_trade 
+
+        self.commission = commission_per_trade
         self.slippage_pct = slippage_pct
+        self.impact_factor = impact_factor
+
+    def _compute_slippage(self, price: float, shares: float, avg_dv: Optional[float]) -> float:
+        """
+        Square-root market impact model (Almgren et al.).
+        Scales up with order size relative to daily volume; falls back to flat when avg_dv is unknown.
+        Capped at 5% to prevent extreme values on illiquid stocks.
+        """
+        if avg_dv is None or avg_dv <= 0:
+            return self.slippage_pct
+        participation = (price * shares) / avg_dv
+        market_impact = self.impact_factor * np.sqrt(participation)
+        return min(self.slippage_pct + market_impact, 0.05)
 
     def execute_buy(self, order: Order):
-        actual_price = order.price * (1 + self.slippage_pct)
+        slip = self._compute_slippage(order.price, order.shares, order.avg_dollar_volume)
+        actual_price = order.price * (1 + slip)
         cost = (actual_price * order.shares) + self.commission
         
         if self.cash >= cost:
@@ -98,8 +116,8 @@ class Portfolio:
                 "buy_commission": self.commission # שומרים את עמלת הקנייה
             }
         else:
-            # שימוש בפורמט יעיל יותר עבור לוגים
-            logger.debug("Rejected BUY %s: Need %.2f$, Have %.2f$", order.ticker, cost, self.cash)
+            logger.warning("Rejected BUY %s: Need %.2f$, Have %.2f$ (cash short by %.2f$)",
+                           order.ticker, cost, self.cash, cost - self.cash)
 
     def execute_sell(self, order: Order):
         if order.ticker in self.positions:
@@ -110,7 +128,8 @@ class Portfolio:
                 logger.warning(f"Attempted to sell {order.shares} of {order.ticker}, but only own {pos['shares']}. Adjusting to max.")
                 order.shares = pos["shares"]
                 
-            actual_price = order.price * (1 - self.slippage_pct)
+            slip = self._compute_slippage(order.price, order.shares, order.avg_dollar_volume)
+            actual_price = order.price * (1 - slip)
             proceeds = (order.shares * actual_price) - self.commission
             self.cash += proceeds
             
@@ -170,20 +189,27 @@ class BaseEquityStrategy(BaseStrategy):
         return {row['Ticker']: row for _, row in day_data.iterrows()}
 
     def _is_bull_regime(self, day_data: pd.DataFrame, benchmark_ticker: str = 'SPY', sma_col: str = 'SPY_SMA_200') -> bool:
-        """בודק האם השוק במצב חיובי על פי נתוני מדד היחס המוגדר"""
+        """בודק האם השוק במצב חיובי.
+        תומך בשני פורמטי נתונים: עמודת SPY_Close מפוזרת על כל שורה, או שורת SPY נפרדת."""
+        # פורמט 1: עמודת SPY_Close מפוזרת (מהיר — אין צורך לסנן)
+        if 'SPY_Close' in day_data.columns and sma_col in day_data.columns:
+            row = day_data[['SPY_Close', sma_col]].dropna()
+            if not row.empty:
+                return bool(row.iloc[0]['SPY_Close'] > row.iloc[0][sma_col])
+        # פורמט 2: שורת benchmark נפרדת בתוך ה-DataFrame
         benchmark_row = day_data[day_data['Ticker'] == benchmark_ticker]
         if not benchmark_row.empty:
             benchmark_close = benchmark_row.iloc[0]['Adj_Close']
             benchmark_sma = benchmark_row.iloc[0][sma_col]
             if pd.notna(benchmark_close) and pd.notna(benchmark_sma):
                 return benchmark_close > benchmark_sma
-        return True # Default to True if benchmark data is missing
+        return True
 
     def _get_stocks_only(self, day_data: pd.DataFrame) -> pd.DataFrame:
-        """מסנן החוצה אינדקסים ותעודות סל"""
+        """מסנן החוצה אינדקסים ותעודות סל — תומך בשתי המוסכמות של עמודת Type."""
         if 'Type' in day_data.columns:
-            return day_data[day_data['Type'] == 'Stock']
-        return day_data
+            return day_data[day_data['Type'].str.lower() == 'stock']
+        return day_data[~day_data['Ticker'].str.startswith('^', na=False)]
 
     def _calculate_position_size(self, virtual_cash: float, target_positions: int, current_positions: int, price: float) -> float:
         """מחשב כמות מניות לרכישה מתוך המזומן הפנוי, מגן מפני דחיות פקודה בשל עמלות והחלקה"""

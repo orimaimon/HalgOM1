@@ -1,11 +1,11 @@
 import pandas as pd
 from typing import List
 import logging
-from core_engine import BaseStrategy, Portfolio, Order
+from core_engine import BaseEquityStrategy, Portfolio, Order
 
 logger = logging.getLogger("TopNVolumeSLStrategy")
 
-class TopNVolumeSLStrategy(BaseStrategy):
+class TopNVolumeSLStrategy(BaseEquityStrategy):
     """
     אסטרטגיית מחזור דולרי (Top N) עם מנגנון Stop Loss קשיח.
     """
@@ -25,23 +25,6 @@ class TopNVolumeSLStrategy(BaseStrategy):
         self.use_regime_filter = use_regime_filter
         self._regime_block_logged_date = None
 
-    def _stocks_only(self, day_data: pd.DataFrame) -> pd.DataFrame:
-        """סינון תעודות סל ומדדים (בדומה לגרסה 1.1)"""
-        if 'Type' in day_data.columns:
-            return day_data[day_data['Type'] == 'stock']
-        return day_data[~day_data['Ticker'].str.startswith('^', na=False)]
-
-    def _is_bull_regime(self, day_data: pd.DataFrame) -> bool:
-        """בודק אם השוק במגמת עלייה (SPY > SMA200)."""
-        if 'SPY_Close' not in day_data.columns or 'SPY_SMA_200' not in day_data.columns:
-            return True
-        row = day_data[['SPY_Close', 'SPY_SMA_200']].dropna()
-        if row.empty:
-            return True
-        spy = row.iloc[0]['SPY_Close']
-        sma = row.iloc[0]['SPY_SMA_200']
-        return bool(spy > sma)
-
     def generate_sells(self, current_date: str, day_data: pd.DataFrame, portfolio: Portfolio) -> List[Order]:
         # 1. בדיקת משטר שוק - אם דובי ומופעל סינון, מוכרים הכל
         if self.use_regime_filter and portfolio.positions and not self._is_bull_regime(day_data):
@@ -49,10 +32,12 @@ class TopNVolumeSLStrategy(BaseStrategy):
             for ticker, pos in list(portfolio.positions.items()):
                 ticker_row = day_data[day_data['Ticker'] == ticker]
                 price = ticker_row.iloc[0]['Adj_Close'] if not ticker_row.empty else pos['buy_price']
+                dv = float(ticker_row.iloc[0]['Dollar_Volume_20d_Avg']) if not ticker_row.empty else None
                 orders.append(Order(
                     ticker=ticker, date=current_date, price=price,
                     shares=pos['shares'], order_type="SELL",
-                    reason="Regime Exit (SPY < SMA200)"
+                    reason="Regime Exit (SPY < SMA200)",
+                    avg_dollar_volume=dv,
                 ))
             
             if self._regime_block_logged_date != current_date:
@@ -73,12 +58,13 @@ class TopNVolumeSLStrategy(BaseStrategy):
                 continue
                 
             current_price = ticker_data['Adj_Close'].iloc[0]
-            
+            dv = float(ticker_data['Dollar_Volume_20d_Avg'].iloc[0])
+
             # שליפה נכונה של הנתונים מהמילון שמוגדר ב-core_engine.py
             entry_price = pos['buy_price']
             shares = pos['shares']
             buy_date_dt = pd.to_datetime(pos['buy_date'])
-            
+
             # חישוב ימי ההחזקה בפועל
             days_held = (curr_date_dt - buy_date_dt).days
 
@@ -87,7 +73,8 @@ class TopNVolumeSLStrategy(BaseStrategy):
                 orders.append(Order(
                     ticker=ticker, date=current_date, price=current_price,
                     shares=shares, order_type="SELL",
-                    reason=f"Stop Loss ({self.stop_loss_pct*100:.1f}%)"
+                    reason=f"Stop Loss ({self.stop_loss_pct*100:.1f}%)",
+                    avg_dollar_volume=dv,
                 ))
                 continue
 
@@ -96,7 +83,8 @@ class TopNVolumeSLStrategy(BaseStrategy):
                 orders.append(Order(
                     ticker=ticker, date=current_date, price=current_price,
                     shares=shares, order_type="SELL",
-                    reason=f"Time Exit ({self.hold_days} days)"
+                    reason=f"Time Exit ({self.hold_days} days)",
+                    avg_dollar_volume=dv,
                 ))
 
         return orders
@@ -108,7 +96,7 @@ class TopNVolumeSLStrategy(BaseStrategy):
             
         orders = []
         
-        valid_data = self._stocks_only(day_data)
+        valid_data = self._get_stocks_only(day_data)
         valid_data = valid_data.dropna(subset=[self.measure_column, 'Adj_Close']).copy()
         valid_data = valid_data[valid_data['Adj_Close'] >= self.min_price]
 
@@ -154,7 +142,8 @@ class TopNVolumeSLStrategy(BaseStrategy):
                 orders.append(Order(
                     ticker=ticker, date=current_date, price=price,
                     shares=shares, order_type="BUY",
-                    reason="TopN SL Entry"
+                    reason="TopN SL Entry",
+                    avg_dollar_volume=float(dv),
                 ))
                 virtual_cash -= estimated_cost # קיזוז המזומן למניה הבאה
 
