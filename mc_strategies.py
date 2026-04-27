@@ -17,6 +17,7 @@ from strategies.top_n_volume_sl import TopNVolumeSLStrategy
 from strategies.top_n_volume_regime import TopNVolumeRegimeStrategy
 from strategies.top_n_volume_sector import TopNVolumeSectorStrategy
 from strategies.momentum_classic import MomentumStrategy
+from strategies.top_n_volume_trend import TopNVolumeTrendStrategy
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -189,6 +190,33 @@ TOPN_SECTOR_COLS_NEEDED = list(set(TOPN_COLS_NEEDED + ["Sector"]))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TopN Volume Trend (With Stop Loss + Regime + Trend Gate)
+# ══════════════════════════════════════════════════════════════════════════════
+
+TOPN_TREND_PARAM_SPACE = ParamSpace({
+    "top_n":              ParamSpec("int_uniform", (5, 25)),
+    "hold_days":          ParamSpec("int_uniform", (5, 180)),
+    "sizing_method":      ParamSpec("choice", ("equal", "relative_dv")),
+    "min_price":          ParamSpec("loguniform", (1.0, 50.0)),
+    "stop_loss_pct":      ParamSpec("uniform", (0.05, 0.30)),
+    "use_regime_filter":  ParamSpec("choice", (True, False)),
+    "min_yearly_return":  ParamSpec("uniform", (-0.30, 0.30)),
+})
+
+def build_topn_trend_strategy(params: Dict[str, Any]):
+    return TopNVolumeTrendStrategy(
+        top_n=int(params["top_n"]),
+        hold_days=int(params["hold_days"]),
+        sizing_method=params["sizing_method"],
+        min_price=float(params["min_price"]),
+        stop_loss_pct=float(params["stop_loss_pct"]),
+        use_regime_filter=bool(params["use_regime_filter"]),
+        min_yearly_return=float(params["min_yearly_return"]),
+    )
+
+TOPN_TREND_COLS_NEEDED = list(set(TOPN_COLS_NEEDED + ["Return_252d_Pct"]))
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Momentum — parameter space
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -230,6 +258,13 @@ MOMENTUM_COLS_NEEDED = [
 # ══════════════════════════════════════════════════════════════════════════════
 
 STRATEGIES = {
+    
+    "topn_trend": {
+        "param_space": TOPN_TREND_PARAM_SPACE,
+        "builder": build_topn_trend_strategy,
+        "cols_needed": TOPN_TREND_COLS_NEEDED,
+        "display_name": "TopN Volume + SL + Regime + Trend",
+    },
     "topn": {
         "param_space": TOPN_PARAM_SPACE,
         "builder": build_topn_strategy,
