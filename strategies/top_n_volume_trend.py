@@ -42,14 +42,14 @@ class TopNVolumeTrendStrategy(TopNVolumeRegimeStrategy):
                  min_yearly_return: float = 0.0):
 
         super().__init__(
-            top_n=top_n,
-            hold_days=hold_days,
-            measure_column=measure_column,
-            sizing_method=sizing_method,
-            min_price=min_price,
-            stop_loss_pct=stop_loss_pct,
-            use_regime_filter=use_regime_filter,
-        )
+                top_n=top_n,
+                hold_days=hold_days,
+                # <--- השורה measure_column=measure_column נמחקה מכאן
+                sizing_method=sizing_method,
+                min_price=min_price,
+                stop_loss_pct=stop_loss_pct,
+                use_regime_filter=use_regime_filter,
+                )
         # min_yearly_return מוגדר כשבר עשרוני (0.10 = 10%), אבל הנתונים
         # ב-Return_252d_Pct מאוחסנים כאחוזים (10.0 = 10%) — נמיר בעת הסינון.
         self.min_yearly_return = float(min_yearly_return)
