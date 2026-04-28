@@ -34,9 +34,7 @@ class TopNVolumeSectorStrategy(BaseEquityStrategy):
             dv = float(row['Dollar_Volume_20d_Avg']) if pd.notna(row.get('Dollar_Volume_20d_Avg')) else None
 
             if self.use_regime_filter and not is_bull:
-                sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "Regime Exit",
-                                   avg_dollar_volume=dv))
-                continue
+                return self._generate_regime_exit_orders(current_date, day_data, portfolio)
 
             if hold_days >= self.hold_days:
                 sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "Time Rebalance",
