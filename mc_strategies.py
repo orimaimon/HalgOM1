@@ -19,6 +19,7 @@ from strategies.top_n_volume_sector import TopNVolumeSectorStrategy
 from strategies.momentum_classic import MomentumStrategy
 from strategies.top_n_volume_trend import TopNVolumeTrendStrategy
 from strategies.rsi_meanrev import RSIMeanReversionStrategy
+from strategies.factor_combo import FactorComboStrategy
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -293,11 +294,58 @@ MOMENTUM_COLS_NEEDED = [
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Factor Combo — parameter space
+# ══════════════════════════════════════════════════════════════════════════════
+
+FACTOR_COMBO_PARAM_SPACE = ParamSpace({
+    "top_n":              ParamSpec("int_uniform", (5, 20)),
+    "hold_days":          ParamSpec("int_uniform", (10, 60)),
+    "momentum_weight":    ParamSpec("uniform", (0.0, 1.0)),
+    "rsi_weight":         ParamSpec("uniform", (0.0, 1.0)),
+    "volume_weight":      ParamSpec("uniform", (0.0, 1.0)),
+    "min_price":          ParamSpec("loguniform", (1.0, 30.0)),
+    "min_dollar_volume":  ParamSpec("loguniform", (5_000_000, 50_000_000)),
+    "stop_loss_pct":      ParamSpec("uniform", (0.05, 0.25)),
+    "use_regime_filter":  ParamSpec("choice", (True, False)),
+})
+
+def build_factor_combo_strategy(params: Dict[str, Any]):
+    # Normalize weights
+    total = params["momentum_weight"] + params["rsi_weight"] + params["volume_weight"]
+    if total == 0:
+        mw, rw, vw = 0.33, 0.33, 0.34
+    else:
+        mw = params["momentum_weight"] / total
+        rw = params["rsi_weight"] / total
+        vw = params["volume_weight"] / total
+
+    return FactorComboStrategy(
+        top_n=int(params["top_n"]),
+        hold_days=int(params["hold_days"]),
+        momentum_weight=mw,
+        rsi_weight=rw,
+        volume_weight=vw,
+        min_price=float(params["min_price"]),
+        min_dollar_volume=float(params["min_dollar_volume"]),
+        stop_loss_pct=float(params["stop_loss_pct"]),
+        use_regime_filter=bool(params["use_regime_filter"]),
+    )
+
+FACTOR_COMBO_COLS_NEEDED = list(set(MOMENTUM_COLS_NEEDED + RSI_MEANREV_COLS_NEEDED))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Registry
 # ══════════════════════════════════════════════════════════════════════════════
 
 STRATEGIES = {
     
+    "factor_combo": {
+        "param_space": FACTOR_COMBO_PARAM_SPACE,
+        "builder": build_factor_combo_strategy,
+        "cols_needed": FACTOR_COMBO_COLS_NEEDED,
+        "display_name": "Factor Combo (Mom+RSI+Vol)",
+    },
     "topn_trend": {
         "param_space": TOPN_TREND_PARAM_SPACE,
         "builder": build_topn_trend_strategy,
