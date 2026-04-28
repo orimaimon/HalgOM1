@@ -18,6 +18,7 @@ from strategies.top_n_volume_regime import TopNVolumeRegimeStrategy
 from strategies.top_n_volume_sector import TopNVolumeSectorStrategy
 from strategies.momentum_classic import MomentumStrategy
 from strategies.top_n_volume_trend import TopNVolumeTrendStrategy
+from strategies.rsi_meanrev import RSIMeanReversionStrategy
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -216,6 +217,44 @@ def build_topn_trend_strategy(params: Dict[str, Any]):
 
 TOPN_TREND_COLS_NEEDED = list(set(TOPN_COLS_NEEDED + ["Return_252d_Pct"]))
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RSI Mean Reversion — parameter space
+# ══════════════════════════════════════════════════════════════════════════════
+
+RSI_MEANREV_PARAM_SPACE = ParamSpace({
+    "top_n":                ParamSpec("int_uniform", (3, 15)),
+    "rsi_buy_threshold":    ParamSpec("uniform", (20.0, 35.0)),
+    "rsi_sell_threshold":   ParamSpec("uniform", (50.0, 70.0)),
+    "max_holding_days":     ParamSpec("int_uniform", (5, 60)),
+    "stop_loss_pct":        ParamSpec("uniform", (0.05, 0.20)),
+    "min_price":            ParamSpec("loguniform", (3.0, 30.0)),
+    "min_dollar_volume":    ParamSpec("loguniform", (5_000_000, 50_000_000)),
+    "require_uptrend":      ParamSpec("choice", (True, False)),
+    "use_regime_filter":    ParamSpec("choice", (True, False)),
+})
+
+def build_rsi_meanrev_strategy(params: Dict[str, Any]):
+    """Factory function — creates a RSIMeanReversionStrategy from sampled params."""
+    return RSIMeanReversionStrategy(
+        top_n=int(params["top_n"]),
+        rsi_buy_threshold=float(params["rsi_buy_threshold"]),
+        rsi_sell_threshold=float(params["rsi_sell_threshold"]),
+        max_holding_days=int(params["max_holding_days"]),
+        stop_loss_pct=float(params["stop_loss_pct"]),
+        min_price=float(params["min_price"]),
+        min_dollar_volume=float(params["min_dollar_volume"]),
+        require_uptrend=bool(params["require_uptrend"]),
+        use_regime_filter=bool(params["use_regime_filter"]),
+    )
+
+RSI_MEANREV_COLS_NEEDED = [
+    'Date', 'Ticker', 'Type', 'Adj_Close',
+    'RSI_14', 'Return_252d_Pct', 'Dollar_Volume_20d_Avg',
+    'SPY_Close', 'SPY_SMA_200',
+]
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Momentum — parameter space
 # ══════════════════════════════════════════════════════════════════════════════
@@ -295,6 +334,12 @@ STRATEGIES = {
         "builder": build_topn_sector_strategy,
         "cols_needed": TOPN_SECTOR_COLS_NEEDED,
         "display_name": "TopN Volume + Sector Diversified",
+    },
+    "rsi_meanrev": {
+        "param_space": RSI_MEANREV_PARAM_SPACE,
+        "builder": build_rsi_meanrev_strategy,
+        "cols_needed": RSI_MEANREV_COLS_NEEDED,
+        "display_name": "RSI Mean Reversion",
     },
 }
 
