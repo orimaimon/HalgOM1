@@ -92,6 +92,20 @@ Phase 3:
 - Watchlist that tracks performance since added; daily email/Telegram report of preset changes.
 - Optional: real-time data via the user's own TradingView `sessionid` cookie (account-flag risk — opt-in only).
 
+Later — less dependence on TradingView (discussed 2026-10-18; add layers, don't replace it; own branch/PR):
+1. Move the TradingView field mapping out of `fields.COLUMNS` (`Col.tv`) into the provider module, so the
+   registry holds canonical keys only and each provider brings its own mapping. Small, safe first step.
+2. History layer from yfinance: adjusted daily OHLCV stored locally, updated once a day. Enables a real
+   adjusted price history, total return incl. dividends (TradingView has neither — checked live: no
+   adjusted/total-return field, `adjustment` options are ignored), crosses "within N days" (`[5]` offsets
+   are empty on TradingView) and breakouts over any window, computed by us. TradingView stays the fast
+   snapshot source. Costs: storage, daily update, first-run download time, yfinance rate limits.
+3. Fallback provider when TradingView blocks or changes (today the app only falls back to stale cache).
+Coupling to remove along the way: signals use TradingView-computed fields (`Candle.*`, `[1]`, `High.xM`);
+the market header and the chart widget are TradingView too. Candidate sources: yfinance (free, unofficial),
+SEC EDGAR (official fundamentals), paid APIs (FMP, Polygon, EODHD, Tiingo, Alpha Vantage — check current
+pricing/limits before choosing), Finviz (scraping or paid Elite).
+
 ## Backtester research notes (as of 2026-05-17 — verify against `DB/mc_runs.sqlite` before relying on them)
 
 Production candidate validated on 11 OOS folds: `topn_focused_v2`, top_n=6, hold_days=130, min_price=2.0,
