@@ -4,7 +4,12 @@ TradingView scanner provider.
 Talks to TradingView's public scanner endpoint directly with `requests` (the same endpoint
 the `tradingview-screener` package wraps). It is unofficial and ~15 minutes delayed, so it
 is kept behind this module: swapping providers means writing another `fetch_universe()`
-that returns the same canonical columns (see fields.COLUMNS).
+that returns the same canonical columns (see fields.COLUMNS), with provider metadata in
+`df.attrs["source"]` (saved next to every snapshot by store.py).
+
+Rate limits: the whole universe — every field — comes from ONE request per refresh (the app
+refreshes at most every 15 minutes), plus one small request for the 4 market benchmarks.
+Do not add parallel or more frequent queries: the endpoint is unofficial and load risks a block.
 """
 from __future__ import annotations
 
@@ -14,7 +19,7 @@ import numpy as np
 import pandas as pd
 import requests
 
-from screener.fields import COLUMNS, EXTRA_TV_FIELDS, tv_fields
+from screener.fields import COLUMNS, EXTRA_TV_FIELDS, INDEXES, tv_fields
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +35,9 @@ US_EXCHANGES = ["NASDAQ", "NYSE", "AMEX"]
 
 # Benchmarks for the market-regime header (same inputs as DB/build_simulation_db.py).
 MARKET_SYMBOLS = {"SPY": "AMEX:SPY", "QQQ": "NASDAQ:QQQ", "HYG": "AMEX:HYG", "VIX": "CBOE:VIX"}
+# TradingView field -> market column. ADX / DI+ / DI- give trend strength and direction for the header.
+MARKET_FIELDS = {"close": "close", "change": "change", "SMA20": "sma20", "SMA50": "sma50", "SMA200": "sma200",
+                 "ADX": "adx", "ADX+DI": "di_plus", "ADX-DI": "di_minus"}
 
 
 class TradingViewError(RuntimeError):
@@ -84,12 +92,48 @@ def fetch_universe(timeout: float = 60) -> pd.DataFrame:
     df.insert(0, "tv_symbol", [r["s"] for r in rows])
     df = df.rename(columns=mapping)
     log.info("TradingView universe: %d rows", len(df))
-    return clean(df)
+    meta = source_meta(df.get("update_mode"))
+    df = clean(df)
+    df.attrs["source"] = meta
+    return df
+
+
+def source_meta(update_mode: pd.Series | None) -> dict:
+    """{"provider", "update_mode": delayed|realtime|endofday|unknown, "delay_min", "raw"} from TradingView's
+    update_mode: "delayed_streaming_900" = streaming with a 900-second delay, "streaming" = real time
+    (seen live on TVC:DXY / BINANCE:BTCUSDT). Anything unrecognized is "unknown", never "realtime"."""
+    raw = None
+    if update_mode is not None and update_mode.notna().any():
+        raw = str(update_mode.dropna().astype(str).mode().iat[0])
+    delay = None
+    if raw and raw.rsplit("_", 1)[-1].isdigit():
+        delay = int(raw.rsplit("_", 1)[-1]) // 60
+    if raw is None:
+        mode = "unknown"
+    elif "delayed" in raw:
+        mode = "delayed"
+    elif raw in ("streaming", "realtime"):
+        mode = "realtime"
+    elif raw.replace("_", "") == "endofday":
+        mode = "endofday"
+    else:
+        mode = "unknown"
+    return {"provider": "tradingview", "update_mode": mode, "delay_min": delay, "raw": raw}
+
+
+def index_names(value) -> str | None:
+    """TradingView `indexes` ([{name, proname}, ...]) -> "S&P 500, Nasdaq 100" (major indexes only)."""
+    if not isinstance(value, (list, tuple, np.ndarray)):
+        return None
+    pronames = {i.get("proname") for i in value if isinstance(i, dict)}
+    return ", ".join(label for p, label in INDEXES.items() if p in pronames)
 
 
 def clean(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize types and drop rows that would make results look untrustworthy."""
     df = df.copy()
+    if "indexes" in df.columns:
+        df["indexes"] = df["indexes"].map(index_names)
     for key, col in COLUMNS.items():
         if key not in df.columns:
             continue
@@ -118,11 +162,11 @@ def fetch_market(timeout: float = 20) -> pd.DataFrame:
     """SPY / QQQ / HYG / VIX quotes with moving averages, indexed by short name."""
     query = {
         "symbols": {"tickers": list(MARKET_SYMBOLS.values())},
-        "columns": ["close", "change", "SMA20", "SMA50", "SMA200"],
+        "columns": list(MARKET_FIELDS),
         "range": [0, len(MARKET_SYMBOLS)],
     }
     rows = _scan("global", query, timeout)
     by_symbol = {r["s"]: r["d"] for r in rows}
-    data = {name: by_symbol.get(sym, [np.nan] * 5) for name, sym in MARKET_SYMBOLS.items()}
-    return pd.DataFrame.from_dict(data, orient="index", columns=["close", "change", "sma20", "sma50", "sma200"]
+    data = {name: by_symbol.get(sym, [np.nan] * len(MARKET_FIELDS)) for name, sym in MARKET_SYMBOLS.items()}
+    return pd.DataFrame.from_dict(data, orient="index", columns=list(MARKET_FIELDS.values())
                                   ).apply(pd.to_numeric, errors="coerce")

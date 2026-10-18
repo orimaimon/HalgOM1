@@ -68,6 +68,12 @@ BUILTIN: dict[str, Preset] = {
         {"rel_volume": "Over 3", "avg_volume": "Over 200K", "price": "Over $5"},
         view="Overview", sort="rel_volume",
         note="מחזור פי 3 ויותר מהרגיל — משהו קורה במניה"),
+    "Stage 2 (Minervini)": Preset(
+        {"ma_stack": "Price > SMA50 > SMA150 > SMA200 (Stage 2)", "low52": "30% or more above Low",
+         "high52": "0-25% below High"},
+        view="Technical", sort="perf_h",
+        note="שלב 2 לפי Minervini: מחיר מעל SMA50 שמעל SMA150 שמעל SMA200, לפחות 30% מעל השפל השנתי "
+             "ובטווח של 25% מהשיא. לא כולל את תנאי ה-RS ואת שיפוע ה-SMA200 מהשיטה המלאה"),
     "HalgOM top score": Preset(
         {"score": "Over 70", "earnings": "Not in next 7 days", **_LIQUID},
         view="Scores", sort="score",
@@ -75,7 +81,8 @@ BUILTIN: dict[str, Preset] = {
 }
 
 
-def load_user(path: Path = PRESETS_PATH) -> dict[str, Preset]:
+def load_user(path: Path | None = None) -> dict[str, Preset]:
+    path = path or PRESETS_PATH
     if not path.exists():
         return {}
     try:
@@ -86,13 +93,15 @@ def load_user(path: Path = PRESETS_PATH) -> dict[str, Preset]:
         return {}
 
 
-def save_user(name: str, preset: Preset, path: Path = PRESETS_PATH) -> None:
+def save_user(name: str, preset: Preset, path: Path | None = None) -> None:
+    path = path or PRESETS_PATH
     presets = load_user(path)
     presets[name] = preset
     _write(presets, path)
 
 
-def delete_user(name: str, path: Path = PRESETS_PATH) -> None:
+def delete_user(name: str, path: Path | None = None) -> None:
+    path = path or PRESETS_PATH
     presets = load_user(path)
     if presets.pop(name, None) is not None:
         _write(presets, path)

@@ -14,7 +14,8 @@ from typing import Callable
 
 import pandas as pd
 
-from screener.fields import COLUMNS
+from screener import signals as S
+from screener.fields import COLUMNS, INDEXES
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class Option:
 class Filter:
     key: str
     label: str
-    group: str                  # Descriptive | Fundamental | Technical | Scores
+    group: str                  # Descriptive | Fundamental | Technical | Signals | Scores
     column: str
     options: tuple[Option, ...] = ()
     dynamic: bool = False
@@ -90,6 +91,12 @@ def _perf(col: str) -> tuple[Option, ...]:
     return tuple(n.opt("Up", lambda s: s > 0) + n.opt("Down", lambda s: s < 0) + up + down)
 
 
+def _ma_vs(a: str, b: str) -> list[Option]:
+    """"SMA50 above SMA200" / "SMA50 below SMA200" — shared by the SMA filters and MA Cross."""
+    la, lb = COLUMNS[a].label, COLUMNS[b].label
+    return [Option(f"{la} above {lb}", lambda d: d[a] > d[b]), Option(f"{la} below {lb}", lambda d: d[a] < d[b])]
+
+
 def _sma(n: int) -> tuple[Option, ...]:
     sma, pct = f"sma{n}", f"sma{n}_pct"
     opts = [
@@ -99,13 +106,29 @@ def _sma(n: int) -> tuple[Option, ...]:
         *[Option(f"Price {v}% below SMA{n}", lambda d, v=v: d[pct] <= -v) for v in (10, 20, 30, 50)],
         Option(f"Price within 2% of SMA{n}", lambda d: d[pct].abs() <= 2),
     ]
-    if n == 50:
-        opts += [Option("SMA50 above SMA200", lambda d: d["sma50"] > d["sma200"]),
-                 Option("SMA50 below SMA200", lambda d: d["sma50"] < d["sma200"])]
-    if n == 20:
-        opts += [Option("SMA20 above SMA50", lambda d: d["sma20"] > d["sma50"]),
-                 Option("SMA20 below SMA50", lambda d: d["sma20"] < d["sma50"])]
+    slower = {20: "sma50", 50: "sma200", 150: "sma200"}.get(n)
+    if slower:
+        opts += _ma_vs(sma, slower)
     return tuple(opts)
+
+
+def _signals(sigs: list[S.Signal]) -> list[Option]:
+    return [Option(s.label, s.fn) for s in sigs]
+
+
+def in_index(label: str) -> Mask:
+    """Membership in a major index. The column holds "S&P 500, Nasdaq 100" — whole names only."""
+    return lambda d: (", " + d["indexes"].fillna("").astype(str) + ",").str.contains(f", {label},", regex=False)
+
+
+def _stack(*cols: str) -> Mask:
+    """cols[0] > cols[1] > ... (each pair strictly)."""
+    def fn(d: pd.DataFrame) -> pd.Series:
+        m = pd.Series(True, index=d.index)
+        for a, b in zip(cols, cols[1:]):
+            m &= d[a] > d[b]
+        return m
+    return fn
 
 
 def _margin(col: str) -> tuple[Option, ...]:
@@ -164,6 +187,10 @@ _beta = N("beta")
 _atrp = N("atr_pct", "%")
 _volw = N("vol_w", "%")
 _volm = N("vol_m", "%")
+_rsiw = N("rsi_w")
+_smaw = N("sma50w_pct", "%")
+_relvs = N("rel_volume")
+_nsig = N("n_signals")
 
 FILTERS: list[Filter] = [
     # ── Descriptive ─────────────────────────────────────────────────────────
@@ -171,6 +198,10 @@ FILTERS: list[Filter] = [
     Filter("sector", "Sector", "Descriptive", "sector", dynamic=True),
     Filter("industry", "Industry", "Descriptive", "industry", dynamic=True),
     Filter("country", "Country", "Descriptive", "country", dynamic=True),
+    Filter("index", "Index", "Descriptive", "indexes", tuple(
+        [Option(label, in_index(label)) for label in INDEXES.values()]
+        + [Option("Not in S&P 500", lambda d: ~in_index("S&P 500")(d)),
+           Option("Any major index", lambda d: d["indexes"].fillna("").astype(str) != "")])),
     Filter("market_cap", "Market Cap.", "Descriptive", "market_cap", tuple(
         _cap.opt("Mega ($200B+)", lambda s: s >= 200e9)
         + _cap.opt("Large ($10B to $200B)", lambda s: s.between(10e9, 200e9))
@@ -281,17 +312,18 @@ FILTERS: list[Filter] = [
         + _rsi.opt("Not Oversold (>50)", lambda s: s > 50) + _rsi.opt("Not Oversold (>40)", lambda s: s > 40))),
     Filter("sma20", "20-Day Simple Moving Avg", "Technical", "sma20_pct", _sma(20)),
     Filter("sma50", "50-Day Simple Moving Avg", "Technical", "sma50_pct", _sma(50)),
+    Filter("sma150", "150-Day Simple Moving Avg", "Technical", "sma150_pct", _sma(150)),
     Filter("sma200", "200-Day Simple Moving Avg", "Technical", "sma200_pct", _sma(200)),
     Filter("high52", "52-Week High", "Technical", "high52_pct", tuple(
         _h52.opt("New High (at high)", lambda s: s >= -0.5)
-        + [Option(f"0-{v}% below High", lambda d, v=v: d["high52_pct"] >= -v) for v in (3, 5, 10)]
+        + [Option(f"0-{v}% below High", lambda d, v=v: d["high52_pct"] >= -v) for v in (3, 5, 10, 25)]
         + [Option(f"{lo}-{hi}% below High", lambda d, lo=lo, hi=hi: d["high52_pct"].between(-hi, -lo))
            for lo, hi in ((5, 10), (10, 15), (15, 20), (20, 30))]
         + [Option(f"{v}% or more below High", lambda d, v=v: d["high52_pct"] <= -v) for v in (10, 20, 30, 50)])),
     Filter("low52", "52-Week Low", "Technical", "low52_pct", tuple(
         _l52.opt("New Low (at low)", lambda s: s <= 0.5)
         + [Option(f"0-{v}% above Low", lambda d, v=v: d["low52_pct"] <= v) for v in (3, 5, 10)]
-        + [Option(f"{v}% or more above Low", lambda d, v=v: d["low52_pct"] >= v) for v in (20, 50, 100, 200)])),
+        + [Option(f"{v}% or more above Low", lambda d, v=v: d["low52_pct"] >= v) for v in (20, 30, 50, 100, 200)])),
     Filter("gap", "Gap", "Technical", "gap", tuple(
         _gap.opt("Up", lambda s: s > 0) + _gap.opt("Down", lambda s: s < 0)
         + [Option(f"Up {v}%+", lambda d, v=v: d["gap"] >= v) for v in (1, 2, 3, 5, 10)]
@@ -302,6 +334,58 @@ FILTERS: list[Filter] = [
     Filter("atr_pct", "ATR %", "Technical", "atr_pct", tuple(_atrp.over(1, 2, 3, 4, 5, 7, 10) + _atrp.under(1, 2, 3))),
     Filter("vol_w", "Volatility (Week)", "Technical", "vol_w", tuple(_volw.over(2, 3, 4, 5, 6, 8, 10, 15) + _volw.under(1, 2, 3))),
     Filter("vol_m", "Volatility (Month)", "Technical", "vol_m", tuple(_volm.over(2, 3, 4, 5, 6, 8, 10, 15) + _volm.under(1, 2, 3))),
+    Filter("rsi_w", "RSI (14) Weekly", "Technical", "rsi_w", tuple(
+        [Option(f"Overbought ({v})", lambda d, v=v: d["rsi_w"] > v) for v in (80, 70, 60)]
+        + [Option(f"Oversold ({v})", lambda d, v=v: d["rsi_w"] < v) for v in (20, 30, 40)]
+        + _rsiw.opt("Above 50 (uptrend)", lambda s: s > 50) + _rsiw.opt("Below 50 (downtrend)", lambda s: s < 50)
+        + _rsiw.between((40, 60), (50, 70)))),
+    Filter("sma50_w", "50-Week Simple Moving Avg", "Technical", "sma50w_pct", tuple(
+        [Option("Price above SMA50 (weekly)", lambda d: d["close_w"] > d["sma50_w"]),
+         Option("Price below SMA50 (weekly)", lambda d: d["close_w"] < d["sma50_w"])]
+        + [Option(f"Price {v}% above SMA50 (weekly)", lambda d, v=v: d["sma50w_pct"] >= v) for v in (10, 20, 50)]
+        + [Option(f"Price {v}% below SMA50 (weekly)", lambda d, v=v: d["sma50w_pct"] <= -v) for v in (10, 20)]
+        + _smaw.opt("Price within 5% of SMA50 (weekly)", lambda s: s.abs() <= 5)),
+        help="ממוצע נע של 50 שבועות (כשנה) בגרף השבועי, מול הסגירה השבועית. מעליו = מגמה ארוכה עולה"),
+
+    # ── Signals (signals.py) ────────────────────────────────────────────────
+    Filter("candle", "Candlestick", "Signals", "signals", tuple(
+        [Option("Any bullish pattern", S.any_candle("+")), Option("Any bearish pattern", S.any_candle("-"))]
+        + _signals(S.CANDLE_SIGNALS)),
+        help="תבניות נרות שזוהו על הנר היומי האחרון (זיהוי של TradingView). "
+             "במהלך יום המסחר הנר עוד לא נסגר — התבנית יכולה להיעלם עד הסגירה"),
+    Filter("breakout", "Breakout (N-day)", "Signals", "high_1m_prev", tuple(
+        _signals(S.BREAKOUTS[::-1]) + _signals(S.BREAKDOWNS[::-1])),
+        help="פריצה: הסגירה היום מעל השיא של החודש / 3 חודשים / חצי שנה / שנה כפי שהיה אתמול. "
+             "שבירה: הסגירה מתחת לשפל. חלונות של TradingView: חודש ≈ 21 ימי מסחר"),
+    Filter("consolidation", "Consolidation", "Signals", "range_1m_pct", tuple(
+        _signals(S.CONSOLIDATION)
+        + [Option(f"Tight 1-month range (<{v:g}%)", lambda d, v=v: d["range_1m_pct"] < v) for v in (10, 15, 20)]
+        + [Option(f"Tight 5-day range (<{v:g}%)", lambda d, v=v: d["range_5d_pct"] < v) for v in (3, 5)]
+        + [Option("Tight base near 1-month high (<15%, within 3%)",
+                  lambda d: (d["range_1m_pct"] < 15) & (d["price"] >= d["high_1m"] * 0.97))]),
+        help="התכנסות: המניה נסחרת בטווח צר. Volatility contraction = הטווח של החודש האחרון קטן מ-3 תנועות "
+             "יומיות ממוצעות (ATR) — צר ביחס למניה עצמה. Tight range = טווח צר באחוזים (מניות גדולות ושקטות "
+             "עוברות אותו בקלות). בסיס צר ליד השיא החודשי הוא מצב קלאסי לפני פריצה"),
+    Filter("vol_spike", "Volume Spike", "Signals", "rel_volume", tuple(
+        _relvs.opt("Volume 2x average", lambda s: s >= 2) + _relvs.opt("Volume 3x average", lambda s: s >= 3)
+        + _relvs.opt("Volume 5x average", lambda s: s >= 5)
+        + [Option("Up on 2x volume", lambda d: (d["rel_volume"] >= 2) & (d["change"] > 0)),
+           Option("Down on 2x volume", lambda d: (d["rel_volume"] >= 2) & (d["change"] < 0))]),
+        help="קפיצת מחזור: מחזור היום חלקי המחזור הממוצע של 10 הימים האחרונים. "
+             "עלייה במחזור כפול = קונים גדולים נכנסים"),
+    Filter("ma_cross", "MA Cross", "Signals", "sma50_pct", tuple(
+        _ma_vs("sma50", "sma200") + _ma_vs("sma20", "sma50") + _signals(S.CROSSES)),
+        help="מצב הממוצעים הנעים, או חצייה שקרתה היום (מול הערכים של אתמול). "
+             "Golden Cross = הממוצע של 50 יום חצה מעל זה של 200 יום — סימן קלאסי לתחילת מגמת עלייה"),
+    Filter("ma_stack", "MA Alignment", "Signals", "sma150_pct", (
+        Option("Price > SMA50 > SMA150 > SMA200 (Stage 2)", _stack("price", "sma50", "sma150", "sma200")),
+        Option("Price > SMA20 > SMA50 > SMA200", _stack("price", "sma20", "sma50", "sma200")),
+        Option("Price < SMA50 < SMA200", _stack("sma200", "sma50", "price")),
+        Option("Price < SMA20 < SMA50 < SMA200", _stack("sma200", "sma50", "sma20", "price"))),
+        help="סדר הממוצעים הנעים. מחיר מעל ממוצע קצר שמעל ממוצע ארוך = מגמת עלייה מסודרת"),
+    Filter("n_signals", "Signals Count", "Signals", "n_signals", tuple(
+        _nsig.opt("None", lambda s: s == 0) + _nsig.opt("1 or more", lambda s: s >= 1)
+        + _nsig.opt("2 or more", lambda s: s >= 2) + _nsig.opt("3 or more", lambda s: s >= 3))),
 
     # ── HalgOM scores ───────────────────────────────────────────────────────
     *[Filter(k, COLUMNS[k].label + (" Score" if k != "score" else ""), "Scores", k, tuple(
@@ -310,7 +394,25 @@ FILTERS: list[Filter] = [
 ]
 
 FILTERS_BY_KEY: dict[str, Filter] = {f.key: f for f in FILTERS}
-GROUPS = ["Descriptive", "Fundamental", "Technical", "Scores"]
+GROUPS = ["Descriptive", "Fundamental", "Technical", "Signals", "Scores"]
+
+# "Hide junk" toolbar switch (on by default): known-bad values only — a missing value is not junk.
+JUNK_RULES: list[tuple[str, Mask]] = [
+    ("Price under $1", lambda d: d["price"] < 1),
+    ("Avg Volume under 50K", lambda d: d["avg_volume"] < 50e3),
+    ("Market Cap under $50M", lambda d: d["market_cap"] < 50e6),
+]
+
+
+def junk_mask(df: pd.DataFrame) -> pd.Series:
+    m = pd.Series(False, index=df.index)
+    for _, fn in JUNK_RULES:
+        m |= fn(df).fillna(False).astype(bool)
+    return m
+
+
+def hide_junk(df: pd.DataFrame, on: bool = True) -> pd.DataFrame:
+    return df[~junk_mask(df)] if on else df
 
 COUNTRY_USA, COUNTRY_FOREIGN = "USA", "Foreign (ex-USA)"
 
@@ -352,6 +454,11 @@ def apply_filters(df: pd.DataFrame, selections: dict[str, str]) -> pd.DataFrame:
             continue
         mask &= m
     return df[mask]
+
+
+def screen(df: pd.DataFrame, selections: dict[str, str], junk: bool = True) -> pd.DataFrame:
+    """The screener pipeline without search: hide junk (when on), then the filter selections."""
+    return apply_filters(hide_junk(df, junk), selections)
 
 
 def active(selections: dict[str, str]) -> dict[str, str]:
