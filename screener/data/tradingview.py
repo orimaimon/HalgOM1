@@ -33,7 +33,7 @@ HEADERS = {
 }
 US_EXCHANGES = ["NASDAQ", "NYSE", "AMEX"]
 
-# Benchmarks for the market-regime header (same inputs as DB/build_simulation_db.py).
+# Benchmarks for the market-regime header (same inputs as the HalgOM backtester).
 MARKET_SYMBOLS = {"SPY": "AMEX:SPY", "QQQ": "NASDAQ:QQQ", "HYG": "AMEX:HYG", "VIX": "CBOE:VIX"}
 # TradingView field -> market column. ADX / DI+ / DI- give trend strength and direction for the header.
 MARKET_FIELDS = {"close": "close", "change": "change", "SMA20": "sma20", "SMA50": "sma50", "SMA200": "sma200",
