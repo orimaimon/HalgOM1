@@ -33,6 +33,7 @@ EXCEL_FORMATS = {
     "days": "0",
     "score": "0",
     "range": "0%",
+    "flag": "0",
 }
 JOURNAL_COLUMNS = ["Status / Action", "Target Entry", "Notes"]
 _HEADER_FILL = PatternFill("solid", fgColor="1F3A5F")
@@ -40,7 +41,7 @@ _JOURNAL_FILL = PatternFill("solid", fgColor="FFF4D6")
 _GREEN, _RED = Font(color="1A7F37"), Font(color="CF222E")
 _SIGNED = {"change", "change_abs", "gap", "premarket", "postmarket", "perf_w", "perf_m", "perf_q", "perf_h",
            "perf_ytd", "perf_y", "perf_5y", "eps_growth", "eps_growth_q", "sales_growth", "sales_growth_q",
-           "target_upside", "sma20_pct", "sma50_pct", "sma200_pct"}
+           "target_upside", "sma20_pct", "sma50_pct", "sma150_pct", "sma200_pct", "sma50w_pct"}
 
 
 def tradingview_url(tv_symbol: str) -> str:
@@ -83,7 +84,8 @@ def to_excel(df: pd.DataFrame, columns: list[str], filters: list[tuple[str, str]
             rng = f"{letter}2:{letter}{n + 1}"
             ws.conditional_formatting.add(rng, CellIsRule(operator="greaterThan", formula=["0"], font=_GREEN))
             ws.conditional_formatting.add(rng, CellIsRule(operator="lessThan", formula=["0"], font=_RED))
-        width = 32 if key == "company" else 22 if key in ("industry", "sector") else max(10, len(COLUMNS[key].label) + 3)
+        width = (32 if key in ("company", "signals") else 22 if key in ("industry", "sector", "indexes")
+                 else max(10, len(COLUMNS[key].label) + 3))
         ws.column_dimensions[letter].width = width
     for j in range(len(cols) + 1, len(headers) + 1):
         ws.column_dimensions[get_column_letter(j)].width = 18 if headers[j - 1] != "Notes" else 40
@@ -158,7 +160,8 @@ def file_stem(title: str, when: dt.datetime | None = None) -> str:
     return f"{when:%Y-%m-%d_%H%M}_{slug}"
 
 
-def save_copy(data: bytes | str, filename: str, folder: Path = EXPORT_DIR) -> Path:
+def save_copy(data: bytes | str, filename: str, folder: Path | None = None) -> Path:
+    folder = folder or EXPORT_DIR
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / filename
     if isinstance(data, str):
