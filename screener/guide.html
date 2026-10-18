@@ -1,0 +1,320 @@
+<!--
+  User guide (Hebrew), shown on the screener's "Guide" page (app.py: guide_page). Plain HTML + CSS, no scripts.
+  Colors come from the page tokens in theme.py (--hs-*), with fallbacks.
+  Button names are written exactly as the Hebrew UI shows them (i18n.py), inside <span class="ui">.
+  The built-in screens table must list every preset in i18n.PRESETS_HE (tests/test_screener.py checks it).
+-->
+<style>
+  .hs-guide {
+    --g-ink: var(--hs-ink, #1B2430); --g-muted: var(--hs-muted, #6B6A63); --g-rule: var(--hs-rule, #D8D3C6);
+    --g-hair: var(--hs-hairline, #ECE8DE); --g-accent: var(--hs-accent, #1F4E8C); --g-card: var(--hs-card, #FFFFFF);
+    --g-gain: #147A43; --g-loss: #C2352B; --g-warn: #B5650D;
+    direction: rtl; text-align: right; color: var(--g-ink); line-height: 1.7; font-size: 1rem;
+    display: grid; grid-template-columns: 13rem minmax(0, 52rem); gap: 2.5rem; align-items: start;
+    margin-top: 0.5rem;
+  }
+  .hs-guide * {box-sizing: border-box;}
+
+  /* table of contents */
+  .hs-guide nav {position: sticky; top: 4rem; border-inline-start: 3px solid var(--g-accent);
+                 padding-inline-start: 1rem; font-size: 0.92rem;}
+  .hs-guide nav b {display: block; font-size: 0.8rem; color: var(--g-muted); margin-bottom: 0.4rem;}
+  .hs-guide nav a {display: block; color: var(--g-ink); text-decoration: none; padding: 0.2rem 0;}
+  .hs-guide nav a:hover, .hs-guide nav a:focus-visible {color: var(--g-accent); text-decoration: underline;}
+
+  .hs-guide h1 {font-size: 2rem; font-weight: 700; margin: 0 0 0.3rem; letter-spacing: -0.01em; line-height: 1.25;}
+  .hs-guide .lede {font-size: 1.1rem; color: var(--g-muted); margin: 0 0 1.6rem; max-width: 44rem;}
+  .hs-guide section {padding-top: 1.2rem; margin-top: 1.4rem; border-top: 3px double var(--g-rule);
+                     scroll-margin-top: 4rem;}
+  .hs-guide h2 {font-size: 1.45rem; font-weight: 700; margin: 0 0 0.8rem; line-height: 1.3;}
+  .hs-guide h2 small {display: block; font-size: 0.85rem; font-weight: 500; color: var(--g-accent); margin-bottom: 0.1rem;}
+  .hs-guide h3 {font-size: 1.1rem; font-weight: 600; margin: 1.4rem 0 0.4rem;}
+  .hs-guide p {margin: 0 0 0.75rem;}
+  .hs-guide ul {margin: 0 0 0.9rem; padding-inline-start: 1.3rem;}
+  .hs-guide li {margin-bottom: 0.3rem;}
+  .hs-guide bdi, .hs-guide .num {font-variant-numeric: tabular-nums;}
+
+  /* a button name, drawn like the button on the screen */
+  .hs-guide .ui {display: inline-block; padding: 0 0.45rem; border: 1px solid var(--g-rule); border-radius: 0.3rem;
+                 background: var(--g-card); font-size: 0.9em; font-weight: 500; line-height: 1.55;
+                 white-space: nowrap; box-shadow: 0 1px 0 var(--g-rule);}
+  .hs-guide .gain {color: var(--g-gain); font-weight: 600;}
+  .hs-guide .loss {color: var(--g-loss); font-weight: 600;}
+  .hs-guide .warn {color: var(--g-warn); font-weight: 600;}
+
+  /* numbered steps */
+  .hs-guide ol.steps {list-style: none; padding: 0; margin: 0.4rem 0 1rem; counter-reset: step;}
+  .hs-guide ol.steps > li {counter-increment: step; position: relative; padding-inline-start: 3rem;
+                           margin-bottom: 0.9rem; min-height: 2.2rem;}
+  .hs-guide ol.steps > li::before {content: counter(step); position: absolute; inset-inline-start: 0; top: 0;
+      width: 2.1rem; height: 2.1rem; border-radius: 50%; background: var(--g-accent); color: #fff;
+      font-weight: 700; display: flex; align-items: center; justify-content: center;}
+  .hs-guide ol.steps b {display: block;}
+
+  /* boxes */
+  .hs-guide .tip, .hs-guide .note {border-radius: 0.4rem; padding: 0.7rem 1rem; margin: 0.8rem 0 1rem;
+                                   background: var(--g-card); border: 1px solid var(--g-rule);}
+  .hs-guide .tip {border-inline-start: 4px solid var(--g-accent);}
+  .hs-guide .note {border-inline-start: 4px solid var(--g-warn);}
+  .hs-guide .tip b:first-child, .hs-guide .note b:first-child {margin-inline-end: 0.3rem;}
+
+  /* tables */
+  .hs-guide table {width: 100%; border-collapse: collapse; background: var(--g-card); font-size: 0.93rem;
+                   border: 1px solid var(--g-rule); margin: 0.5rem 0 1rem;}
+  .hs-guide th {text-align: start; font-weight: 600; background: #EFECE4; padding: 0.45rem 0.7rem;
+                border-bottom: 1px solid var(--g-rule);}
+  .hs-guide td {padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--g-hair); vertical-align: top;}
+  .hs-guide td:first-child {font-weight: 600; white-space: nowrap;}
+
+  /* glossary */
+  .hs-guide dl {display: grid; grid-template-columns: max-content 1fr; gap: 0; margin: 0.4rem 0 1rem;
+                background: var(--g-card); border: 1px solid var(--g-rule); border-radius: 0.4rem;}
+  .hs-guide dt, .hs-guide dd {padding: 0.5rem 0.8rem; border-bottom: 1px solid var(--g-hair); margin: 0;}
+  .hs-guide dt {font-weight: 600; white-space: nowrap;}
+  .hs-guide dl > :nth-last-child(-n+2) {border-bottom: 0;}
+
+  /* questions */
+  .hs-guide details {background: var(--g-card); border: 1px solid var(--g-rule); border-radius: 0.4rem;
+                     margin-bottom: 0.5rem;}
+  .hs-guide summary {cursor: pointer; padding: 0.6rem 0.9rem; font-weight: 600;}
+  .hs-guide summary:focus-visible {outline: 2px solid var(--g-accent); outline-offset: 2px;}
+  .hs-guide details > div {padding: 0 0.9rem 0.7rem;}
+
+  @media (max-width: 900px) {
+    .hs-guide {grid-template-columns: minmax(0, 1fr); gap: 1rem;}
+    .hs-guide nav {position: static;}
+    .hs-guide dl {grid-template-columns: 1fr;}
+    .hs-guide dt {border-bottom: 0; padding-bottom: 0;}
+    .hs-guide td:first-child {white-space: normal;}
+  }
+</style>
+
+<div class="hs-guide" lang="he">
+<nav aria-label="תוכן המדריך">
+  <b>במדריך</b>
+  <a href="#g-start">פתיחה וסגירה</a>
+  <a href="#g-header">שורת השוק למעלה</a>
+  <a href="#g-screen">סריקה, צעד אחר צעד</a>
+  <a href="#g-presets">הסריקות המוכנות</a>
+  <a href="#g-results">הטבלה, הגרף והייצוא</a>
+  <a href="#g-groups">קבוצות ומפת חום</a>
+  <a href="#g-terms">מילון מונחים</a>
+  <a href="#g-faq">כשמשהו לא עובד</a>
+</nav>
+
+<main>
+  <h1>המדריך ל-HalgOM Screener</h1>
+  <p class="lede">הסקרינר עובר על כל מניות ארה"ב, כ-5,000 מניות, ומשאיר רק את אלה שעונות על התנאים שבוחרים.
+    המדריך מסביר איך מפעילים אותו, מה כל חלק במסך עושה ומה פירוש המונחים.</p>
+
+  <section id="g-start">
+    <h2><small>1</small>פתיחה וסגירה</h2>
+    <ol class="steps">
+      <li><b>פותחים</b> בלחיצה כפולה על הקיצור <span class="ui">HalgOM Screener</span> בשולחן העבודה.
+        נפתח חלון שחור, ואחרי כמה שניות הסקרינר עולה בדפדפן. החלון השחור הוא "המנוע" של הסקרינר,
+        ולכן לא סוגרים אותו כל עוד עובדים.</li>
+      <li><b>עדכונים מגיעים לבד.</b> בכל פתיחה הסקרינר בודק אם יש גרסה חדשה ומתקין אותה. אין צורך לעשות שום דבר.</li>
+      <li><b>הנתונים נטענים</b> מ-TradingView. הטעינה לוקחת כ-15 שניות.</li>
+      <li><b>סוגרים</b> עם הכפתור <span class="ui">יציאה</span> בפינת המסך ואז <span class="ui">סגירת הסקרינר</span>.
+        אפשר גם פשוט לסגור את החלון השחור. אם שוכחים, הסקרינר נסגר לבד 15 דקות אחרי שנסגרה הלשונית האחרונה בדפדפן.</li>
+    </ol>
+    <div class="tip"><b>טיפ:</b> אם הסקרינר כבר פתוח ולוחצים שוב על הקיצור, הוא לא נפתח פעמיים, רק נפתחת לשונית חדשה בדפדפן.</div>
+    <p>בראש המסך יש מתג <span class="ui">עברית</span> / <span class="ui">English</span>. שמות העמודות והפילטרים
+      באנגלית הם השמות של Finviz, אז שם קל להשוות ל-Finviz.</p>
+  </section>
+
+  <section id="g-header">
+    <h2><small>2</small>שורת השוק למעלה</h2>
+    <p>לפני שבוחרים מניות כדאי להסתכל על מצב השוק כולו. הפס העליון מסכם אותו:</p>
+    <table>
+      <tr><th>מה רואים</th><th>מה זה אומר</th></tr>
+      <tr><td>מצב השוק</td><td>
+        <span class="gain">שוק עולה</span>: VIX מתחת ל-18, SPY מעל הממוצע של 200 יום ו-HYG מעל הממוצע של 20 יום.<br>
+        <span class="loss">שוק יורד</span>: לפחות שניים מאלה: VIX מעל 25, SPY מתחת לממוצע 200, HYG מתחת לממוצע 20.<br>
+        <span class="warn">דשדוש</span>: כל מצב אחר. ריחוף עם העכבר מעל התגית מראה את הסיבות.</td></tr>
+      <tr><td>מגמה</td><td>עוצמת המגמה של SPY לפי מדד ADX: <b>מגמה חזקה</b> (25 ומעלה), <b>מגמה מתפתחת</b> (20–25),
+        <b>מגמה חלשה</b> (מתחת ל-20). החץ ▲ או ▼ מראה את הכיוון. כשאין מגמה, פריצות נכשלות לעיתים קרובות יותר.</td></tr>
+      <tr><td>SPY</td><td>קרן שעוקבת אחרי מדד S&amp;P 500, 500 החברות הגדולות בארה"ב.</td></tr>
+      <tr><td>QQQ</td><td>קרן שעוקבת אחרי Nasdaq 100, מניות הטכנולוגיה הגדולות.</td></tr>
+      <tr><td>VIX</td><td>"מדד הפחד": כמה תנודתיות השוק מצפה לה. כאן <span class="loss">עלייה</span> היא סימן רע,
+        ולכן הצבעים שלו הפוכים.</td></tr>
+      <tr><td>HYG</td><td>קרן אג"ח של חברות ממונפות. כשהיא יורדת, המשקיעים בורחים מסיכון.</td></tr>
+      <tr><td>▲SMA200 / ▼SMA200</td><td>האם המחיר מעל (▲) או מתחת (▼) לממוצע של 200 הימים האחרונים.</td></tr>
+    </table>
+    <p>בצד השני של הפס מופיעה השעה שבה נלקחו הנתונים. הנתונים <b>בעיכוב של כ-15 דקות</b>. כשעוברות 15 דקות, הם מתעדכנים לבד בפעולה הבאה במסך.
+      הכפתור <span class="ui">רענון נתונים</span> מוריד אותם מיד.</p>
+  </section>
+
+  <section id="g-screen">
+    <h2><small>3</small>סריקה, צעד אחר צעד</h2>
+    <p>בדף <span class="ui">סורק</span>:</p>
+    <ol class="steps">
+      <li><b>בוחרים נקודת התחלה.</b> ברשימה <span class="ui">סריקה</span> יש סריקות מוכנות (הן מוסברות
+        <a href="#g-presets">בפרק הבא</a>). בחירה בסריקה ממלאת את הפילטרים, ואחר כך אפשר לשנות אותם.
+        <span class="ui">— מותאם אישית —</span> פירושו שבוחרים הכול לבד.</li>
+      <li><b>מכוונים את הפילטרים.</b> בפאנל <span class="ui">פילטרים</span> יש חמש לשוניות:
+        <span class="ui">כללי</span> (גודל, מחיר, מחזור, סקטור), <span class="ui">פונדמנטלי</span> (מכפילים,
+        צמיחה, רווחיות, חוב), <span class="ui">טכני</span> (תשואות, ממוצעים נעים, RSI),
+        <span class="ui">אותות</span> (תבניות נרות, פריצות, קפיצות מחזור) ו-<span class="ui">ציונים</span>.
+        בכל פילטר <span class="ui">הכל</span> פירושו שהפילטר כבוי. ליד שם הלשונית רואים כמה פילטרים פעילים בה,
+        ולסימן ⓘ ליד כל פילטר יש הסבר קצר.</li>
+      <li><b>מחפשים מניה מסוימת</b> בשדה <span class="ui">חיפוש</span>: סימול (AAPL), חלק משם החברה (Apple),
+        או רשימה מופרדת בפסיקים (<bdi dir="ltr">AAPL, MSFT, NVDA</bdi>).</li>
+      <li><b>ממיינים</b> עם <span class="ui">מיון לפי</span>. המתג <span class="ui">סדר עולה</span> הופך את הסדר,
+        למשל כדי לראות את ה-P/E הנמוך ביותר ראשון. אפשר גם ללחוץ על כותרת עמודה בטבלה.</li>
+      <li><b>שומרים סריקה</b> עם כפתור הסימנייה ליד <span class="ui">איפוס</span>: כותבים שם ולוחצים
+        <span class="ui">שמירה</span>. הסריקה תופיע ברשימה <span class="ui">סריקה</span> עם ★ לפני השם.
+        באותו מקום יש <span class="ui">מחיקת סריקה שמורה</span>.</li>
+    </ol>
+    <div class="tip"><b>הסתר זבל.</b> המתג <span class="ui">הסתר זבל</span> דלוק מההתחלה, ומסתיר מניות במחיר מתחת
+      ל-$1, עם מחזור ממוצע מתחת ל-50 אלף מניות ביום או שווי שוק מתחת ל-50 מיליון דולר. רצוי להשאיר אותו דלוק.</div>
+    <p>הכפתור <span class="ui">איפוס</span> מנקה את כל הפילטרים ומתחיל מחדש.</p>
+  </section>
+
+  <section id="g-presets">
+    <h2><small>4</small>הסריקות המוכנות</h2>
+    <p>כל סריקה היא אוסף פילטרים שכבר מוכנים מראש. כדאי להתחיל מסריקה מוכנה ולשנות פילטרים לפי הצורך.</p>
+    <table>
+      <tr><th>סריקה</th><th>מה היא מחפשת</th></tr>
+      <tr><td>ערך — זולות ורווחיות</td><td>מניות זולות (P/E מתחת ל-15) של חברות רווחיות (ROE מעל 10%) עם חוב סביר.
+        מתאים למי שמחפש מציאות.</td></tr>
+      <tr><td>צמיחה איכותית</td><td>חברות רווחיות שהרווחים וההכנסות שלהן גדלים מהר: רווח למניה מעל 20%, הכנסות רבעוניות מעל 15%.</td></tr>
+      <tr><td>מובילות מומנטום</td><td>מניות שעלו 20% ויותר בחצי השנה האחרונה, נמצאות מעל הממוצעים הנעים וקרובות לשיא השנתי.</td></tr>
+      <tr><td>מכירת יתר במגמת עלייה</td><td>מניות גדולות שירדו בזמן האחרון (RSI נמוך) אבל עדיין במגמת עלייה
+        ארוכה (מעל הממוצע של 200 יום). מחפשת הזדמנות לקנות בירידה.</td></tr>
+      <tr><td>פריצה לשיא שנתי</td><td>מניות שנמצאות עד 3% מתחת לשיא השנתי, עם מחזור גבוה מהרגיל.</td></tr>
+      <tr><td>דיבידנד יציב</td><td>דיבידנד מעל 3% שהחברה יכולה לעמוד בו: היא מחלקת פחות מ-80% מהרווח, וגם החוב שלה נמוך.</td></tr>
+      <tr><td>צמיחה במניות קטנות</td><td>חברות בשווי 300 מיליון עד 2 מיליארד דולר שההכנסות שלהן גדלו ביותר מ-30% ברבעון.</td></tr>
+      <tr><td>מחזור חריג</td><td>מניות שנסחרות היום פי 3 ויותר מהרגיל. בדרך כלל זה סימן שקורה משהו במניה: חדשות, דוח או קנייה גדולה.</td></tr>
+      <tr><td>שלב 2 (Minervini)</td><td>שיטת מגמה של מארק מינרביני: המחיר מעל ממוצע 50 יום, שנמצא מעל ממוצע 150 יום,
+        שנמצא מעל ממוצע 200 יום. בנוסף המניה לפחות 30% מעל השפל השנתי ולא יותר מ-25% מתחת לשיא.</td></tr>
+      <tr><td>ציון HalgOM גבוה</td><td>המניות עם הציון המשוקלל הגבוה ביותר (מעל 70), בלי מניות שיוצא להן דוח בשבוע הקרוב.</td></tr>
+    </table>
+    <div class="note"><b>חשוב:</b> סריקה רק מצמצמת את הרשימה. היא לא אומרת לקנות. כל מניה שעולה בסריקה
+      כדאי לבדוק בגרף ובנתונים לפני שמחליטים.</div>
+  </section>
+
+  <section id="g-results">
+    <h2><small>5</small>הטבלה, הגרף והייצוא</h2>
+    <h3>הטבלה</h3>
+    <p>מעל הטבלה כתוב כמה מניות עברו את הסריקה מתוך כמה מניות בסך הכול. הכפתורים שליד המספר מחליפים את
+      העמודות שמוצגות: <span class="ui">סקירה</span>, <span class="ui">תמחור</span>, <span class="ui">פיננסי</span>,
+      <span class="ui">ביצועים</span>, <span class="ui">טכני</span>, <span class="ui">אותות</span>,
+      <span class="ui">ציונים</span>. אחוזים <span class="gain">בירוק</span> הם עלייה, ואחוזים <span class="loss">באדום</span> הם ירידה.</p>
+    <p><b>חדש:</b> מניה שמסומנת <span class="ui">חדש</span> לא הייתה בתוצאות של אותה סריקה אתמול. ההשוואה עובדת
+      רק אם הסקרינר נפתח גם ביום הקודם. המתג <span class="ui">רק חדשות</span> משאיר רק אותן.</p>
+
+    <h3>גרף ונתוני המניה</h3>
+    <p>לחיצה על שורה בטבלה פותחת מתחתיה את הגרף של TradingView (עם ממוצע נע ו-RSI) וכרטיס עם כל נתוני המניה.
+      בתחתית הכרטיס יש קישורים <span class="ui">פתיחה ב-TradingView</span> ו-Finviz.</p>
+
+    <h3>ייצוא</h3>
+    <ul>
+      <li><span class="ui">Excel</span>: קובץ מעוצב שבו המספרים נשארים מספרים, אז אפשר למיין ולחשב איתם. יש בו גם
+        עמודות ריקות <b>סטטוס / פעולה</b>, <b>מחיר כניסה</b> ו<b>הערות</b> למעקב אישי, וגיליון נוסף שמפרט את הפילטרים שהופעלו.</li>
+      <li><span class="ui">CSV</span>: אותם נתונים כקובץ טקסט פשוט.</li>
+      <li><span class="ui">רשימה ל-TradingView</span>: קובץ שמייבאים ב-TradingView דרך Watchlist ← Import list.
+        המניות מחולקות בו לפי סקטורים.</li>
+      <li><span class="ui">סימולים</span>: רשימת הסימולים להעתקה, עם כפתור העתקה בפינה.</li>
+    </ul>
+    <p>בדרך כלל מייצאים רק את העמודות שבתצוגה הנוכחית. המתג <span class="ui">ייצוא כל העמודות</span> מייצא את כל
+      השדות, כ-110 עמודות. עותק של כל קובץ שמורידים נשמר גם בתיקייה
+      <bdi dir="ltr">screener\_data\exports</bdi> שבתוך תיקיית הסקרינר.</p>
+  </section>
+
+  <section id="g-groups">
+    <h2><small>6</small>קבוצות ומפת חום</h2>
+    <h3>קבוצות</h3>
+    <p>הדף <span class="ui">קבוצות</span> מראה איך הלך לכל סקטור או תעשייה ביום, בשבוע, בחודש ועד שנה.
+      זה עוזר לזהות איפה הכסף נכנס. ב<span class="ui">קיבוץ לפי</span> בוחרים <span class="ui">סקטור</span> או
+      <span class="ui">תעשייה</span>. ב<span class="ui">ממוצעים</span>, <span class="ui">שווה</span> סופר כל מניה
+      פעם אחת, ו<span class="ui">שווי שוק</span> נותן משקל גדול יותר למניות גדולות, כמו במדד.
+      <span class="ui">רק תוצאות הסריקה</span> מחשב רק מתוך המניות שעברו את הפילטרים בדף הסורק.</p>
+    <h3>מפת חום</h3>
+    <p>בדף <span class="ui">מפת חום</span> כל ריבוע הוא מניה: גודל הריבוע לפי שווי השוק, והצבע לפי השינוי
+      (<span class="gain">ירוק</span> = עלייה, <span class="loss">אדום</span> = ירידה). ב<span class="ui">מניות</span>
+      בוחרים מה להציג: S&amp;P 500, Nasdaq 100, תוצאות הסריקה או 1,000 המניות הגדולות. ב<span class="ui">צבע לפי</span>
+      בוחרים תקופה: יום, שבוע, חודש וכן הלאה. לחיצה על סקטור מגדילה אותו, ולחיצה על השורה שמעל המפה חוזרת אחורה.</p>
+  </section>
+
+  <section id="g-terms">
+    <h2><small>7</small>מילון מונחים</h2>
+    <h3>תמחור, כמה המניה יקרה</h3>
+    <dl>
+      <dt>P/E (מכפיל רווח)</dt><dd>מחיר המניה חלקי הרווח השנתי למניה. P/E 15 פירושו שמשלמים 15 דולר על כל דולר רווח.
+        נמוך = זול יותר, אבל לפעמים זול כי יש סיבה.</dd>
+      <dt>Fwd P/E</dt><dd>אותו דבר, לפי הרווח שהאנליסטים צופים לשנה הבאה.</dd>
+      <dt>PEG</dt><dd>P/E חלקי קצב הצמיחה. מתחת ל-1 נחשב זול ביחס לצמיחה.</dd>
+      <dt>P/S, P/B, P/FCF</dt><dd>מחיר ביחס להכנסות (Sales), להון העצמי (Book) ולתזרים המזומנים החופשי (FCF).</dd>
+      <dt>EV/EBITDA</dt><dd>שווי החברה כולל החוב, ביחס לרווח התפעולי. מקובל להשוות איתו בין חברות עם חוב שונה.</dd>
+      <dt>שווי שוק</dt><dd>מחיר המניה כפול מספר המניות: כמה כל החברה שווה בבורסה.</dd>
+    </dl>
+    <h3>איכות וצמיחה</h3>
+    <dl>
+      <dt>EPS</dt><dd>רווח למניה. צמיחת EPS היא בכמה הרווח למניה גדל לעומת שנה קודמת (שנתי) או אותו רבעון אשתקד (רבעוני).</dd>
+      <dt>ROE</dt><dd>תשואה על ההון: כמה רווח החברה מייצרת מכל דולר של בעלי המניות. מעל 15% נחשב טוב.</dd>
+      <dt>ROIC</dt><dd>תשואה על כל ההון המושקע, כולל חוב. מראה כמה טוב ההנהלה משתמשת בכסף.</dd>
+      <dt>שיעורי רווח</dt><dd>כמה מכל דולר הכנסות נשאר כרווח: גולמי, תפעולי ונקי.</dd>
+      <dt>חוב/הון</dt><dd>החוב ביחס להון העצמי. מתחת ל-1 נחשב סביר. הון עצמי שלילי הוא סימן אזהרה.</dd>
+      <dt>יחס שוטף</dt><dd>נכסים שוטפים חלקי התחייבויות שוטפות. מתחת ל-1 פירושו שעלול להיות קשה לשלם חובות קרובים.</dd>
+      <dt>דיבידנד, שיעור חלוקה</dt><dd>תשואת הדיבידנד השנתית באחוזים, ואיזה חלק מהרווח החברה מחלקת כדיבידנד.</dd>
+    </dl>
+    <h3>טכני ומסחר</h3>
+    <dl>
+      <dt>SMA20/50/150/200</dt><dd>ממוצע נע: המחיר הממוצע ב-20, 50, 150 או 200 הימים האחרונים. מחיר מעל
+        ה-SMA200 נחשב מגמת עלייה ארוכה. העמודה "SMA50 %" מראה בכמה אחוזים המחיר מעל או מתחת לממוצע.</dd>
+      <dt>RSI</dt><dd>מדד בין 0 ל-100 של עוצמת העליות האחרונות. מעל 70 = "קניית יתר" (עלתה מהר), מתחת ל-30 =
+        "מכירת יתר" (ירדה מהר). יש גם RSI שבועי, לטווח ארוך יותר.</dd>
+      <dt>מחזור יחסי</dt><dd>מחזור המסחר היום חלקי המחזור הממוצע. 2 פירושו פי 2 מהרגיל.</dd>
+      <dt>ATR %</dt><dd>התנועה היומית הממוצעת של המניה באחוזים: כמה היא "זזה" ביום רגיל.</dd>
+      <dt>בטא</dt><dd>כמה המניה תנודתית ביחס לשוק. בטא 2 זזה בערך פי 2 מהשוק, למעלה ולמטה.</dd>
+      <dt>פער פתיחה (Gap)</dt><dd>ההפרש בין מחיר הפתיחה היום לסגירה אתמול.</dd>
+      <dt>Float</dt><dd>מספר המניות שנסחרות בפועל בבורסה. Float קטן = המניה יכולה לזוז חזק.</dd>
+      <dt>Golden Cross</dt><dd>הממוצע של 50 יום חוצה מעל הממוצע של 200 יום. סימן קלאסי לתחילת מגמת עלייה.
+        Death Cross הוא ההפך.</dd>
+      <dt>פריצה / שבירה</dt><dd>פריצה: המחיר נסגר היום מעל השיא של התקופה (חודש, 3 חודשים, חצי שנה, שנה).
+        שבירה: מתחת לשפל של התקופה.</dd>
+      <dt>התכנסות</dt><dd>המניה נסחרת בטווח צר במשך תקופה. התכנסות ליד השיא היא מצב קלאסי לפני פריצה.</dd>
+      <dt>תבניות נרות</dt><dd>צורות של הנר היומי (פטיש, בליעה עולה, דוג'י ועוד) שמרמזות על שינוי כיוון.
+        במהלך יום המסחר הנר עוד לא נסגר, ולכן תבנית יכולה להיעלם עד הסגירה.</dd>
+    </dl>
+    <h3>הציונים של HalgOM</h3>
+    <p>כל ציון הוא דירוג בין 0 ל-100 מול כל המניות של היום. ציון 90 פירושו שהמניה טובה יותר מ-90% מהמניות בסקרינר.</p>
+    <dl>
+      <dt>ערך</dt><dd>כמה המניה זולה: P/E, P/S, P/B, EV/EBITDA ו-P/FCF נמוכים. חברה מפסידה מקבלת את הציון הנמוך ביותר.</dd>
+      <dt>איכות</dt><dd>ROE ו-ROIC גבוהים, שיעורי רווח גבוהים וחוב נמוך.</dd>
+      <dt>מומנטום</dt><dd>תשואה חזקה ב-3, 6 ו-12 החודשים האחרונים, קרבה לשיא השנתי ומיקום מעל SMA200.</dd>
+      <dt>ציון HalgOM</dt><dd>הממוצע של שלושת הציונים (צריך לפחות שניים מהם). זה דירוג להיום בלבד, לא תחזית ולא שיטה שנבדקה על העבר.</dd>
+    </dl>
+  </section>
+
+  <section id="g-faq">
+    <h2><small>8</small>כשמשהו לא עובד</h2>
+    <details>
+      <summary>מופיעה הודעה צהובה "לא ניתן להתחבר ל-TradingView"</summary>
+      <div>אין כרגע חיבור לאינטרנט, או ש-TradingView לא עונה. הסקרינר מציג את הנתונים האחרונים שנשמרו,
+        עם התאריך שלהם, ומנסה להתחבר שוב לבד כל כמה דקות. אפשר להמשיך לעבוד, רק לזכור שהנתונים לא עדכניים.</div>
+    </details>
+    <details>
+      <summary>הסריקה מחזירה 0 תוצאות</summary>
+      <div>כנראה שילוב הפילטרים קשוח מדי. בודקים כמה פילטרים פעילים (המספר ליד <span class="ui">פילטרים</span>),
+        מחזירים חלק מהם ל-<span class="ui">הכל</span>, או לוחצים <span class="ui">איפוס</span>. כדאי לבדוק גם שהשדה
+        <span class="ui">חיפוש</span> ריק.</div>
+    </details>
+    <details>
+      <summary>לא רואים את העמודה "חדש"</summary>
+      <div>כדי להשוות לאתמול, הסקרינר צריך היה להיות פתוח גם ביום הקודם. העמודה תופיע מהיום שאחרי.</div>
+    </details>
+    <details>
+      <summary>סגרתי בטעות את החלון השחור</summary>
+      <div>שום דבר לא נהרס. פותחים שוב מהקיצור בשולחן העבודה, והסריקות השמורות נשארות במקומן.</div>
+    </details>
+    <details>
+      <summary>משהו אחר לא עובד</summary>
+      <div>מצלמים את המסך (כולל החלון השחור, אם יש בו הודעה) ושולחים לאורי, יחד עם הקובץ
+        <bdi dir="ltr">screener\_data\logs\screener.log</bdi> מתוך תיקיית הסקרינר, אם הוא קיים.</div>
+    </details>
+  </section>
+
+/main>
+</div>

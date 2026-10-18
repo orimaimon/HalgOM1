@@ -20,7 +20,7 @@ LANGS = {HE: "עברית", EN: "English"}
 # ── app texts (buttons, captions, page names) ──────────────────────────────
 UI: dict[str, str] = {
     # pages, views, filter tabs
-    "Screener": "סורק", "Groups": "קבוצות", "Heatmap": "מפת חום",
+    "Screener": "סורק", "Groups": "קבוצות", "Heatmap": "מפת חום", "Guide": "מדריך",
     "Overview": "סקירה", "Valuation": "תמחור", "Financial": "פיננסי", "Performance": "ביצועים",
     "Technical": "טכני", "Signals": "אותות", "Scores": "ציונים",
     "Descriptive": "כללי", "Fundamental": "פונדמנטלי",

@@ -63,7 +63,10 @@ screener/.venv/bin/python -m streamlit run screener/app.py
 - `screener/export.py` — Excel (numbers stay numeric; custom formats like `0.00,,,"B"`), CSV, TradingView watchlist.
 - `.streamlit/config.toml` + `screener/theme.py` — the look ("ledger": paper background, ink-blue accent,
   IBM Plex Sans Hebrew). Green/red mean gain/loss only; take colors from `theme.py`, don't hard-code hex.
-- `screener/app.py` — Streamlit UI (pages: Screener / Groups / Heatmap). Selecting a row embeds the official
+- `screener/guide.html` — Hebrew user guide, shown on the "Guide" page. It quotes UI names; when a button, page,
+  tab, view or built-in preset is renamed, update the guide (tests enforce the presets and page/tab/view names).
+  `.gitignore` ignores `*.html`, so the guide is un-ignored explicitly.
+- `screener/app.py` — Streamlit UI (pages: Screener / Groups / Heatmap / Guide). Selecting a row embeds the official
   TradingView Advanced Chart widget. Widget state is re-assigned each run (`keep_widget_state`) so filters
   survive a visit to another page.
 
