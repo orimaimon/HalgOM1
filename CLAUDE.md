@@ -1,21 +1,21 @@
-# HalgOM — project context
+# HalgOM Screener — project context
 
-Two products live in this repo:
+This repo is the **HalgOM Screener** (`screener/`, `run_screener.bat`): a local, Finviz-style stock screener
+built for a non-technical end user (Ori's relative, "דוד חיים") who runs it on his own Windows PC.
+`run_screener.bat` pulls `main` on every launch, so `main` is what the end user runs: keep it stable and
+work through branches + PRs.
 
-1. **HalgOM backtester** (root `*.py`, `strategies/`): Monte Carlo + walk-forward research engine for
-   US equity strategies. See `README.md`.
-2. **HalgOM Screener** (`screener/`, `run_screener.bat`): a local, Finviz-style stock screener built for a
-   non-technical end user (Ori's relative, "דוד חיים") who runs it on his own Windows PC.
+The HalgOM backtester (Monte Carlo / walk-forward engine, strategies, `DB/` build scripts) used to live here
+too; it was removed on 2026-10-18 (Ori keeps a backup; it is also in git history before the
+"screener-only" commit).
 
-The user (Ori) writes in Hebrew; answer in Hebrew. UI terms stay in English (Finviz terminology),
-end-user explanations/tooltips are Hebrew.
+The user (Ori) writes in Hebrew; answer in Hebrew. The screener UI is Hebrew (RTL) by default with an
+English switch (`screener/i18n.py`); tooltips and explanations are Hebrew in both languages.
 
-## Data is NOT in the repo
+## Data
 
-`DB/*.parquet` (~400MB) and `DB/mc_runs.sqlite` are gitignored and exceed GitHub limits.
-- Backtests need `DB/simulation_db.parquet`; rebuild with `python DB/build_simulation_db.py`
-  (downloads 20y of OHLCV from yfinance — long) or work on code/tests only.
-- The screener needs no local data: it fetches live from TradingView and caches in `screener/_data/`.
+The screener needs no data in the repo: it fetches live from TradingView and keeps its cache, daily
+snapshots, saved screens, exports and logs in `screener/_data/` (gitignored).
 
 ## Running
 
@@ -28,9 +28,6 @@ screener/.venv/bin/python -m pytest tests/ -q          # Windows: screener\.venv
 screener/.venv/bin/python -m streamlit run screener/app.py
 ```
 
-Known: `tests/test_strategies.py::TestTopNVolumeStrategy::test_no_buys_in_bear_regime` fails
-(pre-existing, backtester side — not caused by the screener).
-
 ## Screener architecture
 
 - `screener/fields.py` — column registry (TradingView field, label, format kind, Hebrew tooltip) + table views.
@@ -39,38 +36,81 @@ Known: `tests/test_strategies.py::TestTopNVolumeStrategy::test_no_buys_in_bear_r
 - `screener/data/tradingview.py` — direct `requests` client for `scanner.tradingview.com` (unofficial,
   ~15 min delayed). Universe = US primary listings, common stocks + ADRs (`is_primary`, `typespecs`).
   We do NOT use the `tradingview-screener` package: its default query silently filters out ETFs.
-- `screener/data/store.py` — latest-cache (15 min), one snapshot per day, offline fallback ("stale").
+  ONE request for the whole universe (all fields) per 15-min refresh + one small market request.
+  Never add parallel or more frequent queries (unofficial API, block risk).
+  Field syntax: `|1W` = weekly timeframe, `[1]` = previous bar (works). `[5]` and deeper offsets return
+  nothing (checked live 2026-10-18), so "crossed in the last N days" is not available — only "today".
+  Unknown fields come back as null (NaN), not as an error: verify fill rates live before adding one.
+- `screener/data/store.py` — latest-cache (15 min), one snapshot per day (+ `YYYY-MM-DD.json` with the
+  data source: provider / update_mode / delay), offline fallback ("stale"). A cache missing required
+  columns (saved by an older version) is refetched.
 - `screener/derive.py`, `scores.py` — derived columns and Value/Quality/Momentum percentile scores.
-- `screener/market.py` — regime header, same rules as `compute_macro_regime` in `DB/build_simulation_db.py`.
+  `add_derived` tolerates old snapshots: missing provider columns become NaN.
+- `screener/signals.py` — signal definitions shared by the Signals filters and the "Signals" / "# Signals"
+  columns (candles, N-month breakouts vs yesterday's high, crosses today, volume spike, consolidation).
+- `screener/history.py` — "New since yesterday": same pipeline on the previous snapshot day.
+- `screener/groups.py` — Groups page (sector/industry averages) and the plotly treemap heatmap.
+- `screener/i18n.py` — display language. Internal values stay English (filter options, preset names, views,
+  pages, sector/country values) so saved screens, presets and tests are language-independent; only display
+  is translated (`format_func`, `display_values`). Hebrew style: Hebrew + familiar English abbreviation
+  ("מכפיל רווח (P/E)"); table headers keep short abbreviations; sectors and countries translated, the 128
+  industries stay English; unknown strings fall back to English. RTL for the interface, tables/heatmap/chart
+  stay LTR. Tests require a Hebrew translation for every filter, option, column, view and preset.
+- `screener/lifecycle.py` — "Exit" button (clean `Runtime.stop()`, the console window closes) and an idle
+  watchdog that stops the server after 15 minutes with no open browser tab.
+- `screener/market.py` — regime header, same rules as `compute_macro_regime` in the HalgOM backtester;
+  plus SPY ADX trend strength as a separate badge (does not change the regime rules).
 - `screener/export.py` — Excel (numbers stay numeric; custom formats like `0.00,,,"B"`), CSV, TradingView watchlist.
-- `screener/app.py` — Streamlit UI. Selecting a row embeds the official TradingView Advanced Chart widget.
+- `screener/app.py` — Streamlit UI (pages: Screener / Groups / Heatmap). Selecting a row embeds the official
+  TradingView Advanced Chart widget. Widget state is re-assigned each run (`keep_widget_state`) so filters
+  survive a visit to another page.
 
 Rules:
 - Keep the provider swappable: providers return canonical column keys from `fields.COLUMNS`.
 - `run_screener.bat` must stay ASCII with CRLF line endings (cmd breaks otherwise; see `.gitattributes`).
+- `run_screener.bat` updates itself (`git pull`) while cmd is running it, and cmd resumes at the same byte
+  offset: the update block (`if not defined SCREENER_NO_UPDATE ...`) must stay byte-identical at bytes
+  529–785. Edit below it freely; above it keep the length (pad the `rem ---` line). Tests enforce this.
+- Launcher behavior: fixed port 8501; a second launch only opens the browser (health check); a desktop
+  shortcut is created once (`screener/_data/shortcut.done`).
 - Built-in preset option labels must match filter labels exactly (tests enforce this).
+- `tests/test_screener.py::test_app_smoke` runs the whole app offline with `streamlit.testing.v1.AppTest`
+  (provider and data dirs monkeypatched); paths in store/presets/export are resolved at call time for this.
 
 ## Screener roadmap
 
 Phase 1 — done (2026-10-18).
 
-Phase 2 — next:
-- Signals tab: TradingView candle-pattern fields (`Candle.Engulfing.Bullish`, `Candle.Hammer`,
-  `Candle.MorningStar`, `Candle.Doji`, ...), MA crossovers, N-day breakout / consolidation, volume spike.
-- Index filter (S&P 500 / Nasdaq 100) from the `indexes` field.
-- Weekly-timeframe filters via field suffixes (`RSI|1W`, `SMA50|1W`, `close|1W`).
-- Minervini Stage-2 preset (uses `SMA150`).
-- "Hide junk" toggle (price < $1, tiny volume, nano caps).
-- Market heatmap, Groups (sector/industry performance), "new since yesterday" from daily snapshots.
+Phase 2 — done (2026-10-18; PRs #2 phase 2, #3 Hebrew UI, then the screener-only cleanup):
+Signals tab + "Signals" column, Index filter, weekly filters, SMA150 + Stage 2 (Minervini) preset,
+"Hide junk" (on by default), "New since yesterday", Groups page, Heatmap (plotly), SPY ADX badge,
+data-source metadata per snapshot.
+
+Phase 2 leftovers:
 - Remaining Finviz gaps: IPO date, shares-outstanding filter. (No short-float data on TradingView.)
+- SPACs (~$10, tiny range) dominate "Tight 1M" signals; consider excluding them in "Hide junk".
 
 Phase 3:
 - HalgOM strategy presets via a two-stage funnel (TradingView prefilter → yfinance history for ~200 names).
 - Watchlist that tracks performance since added; daily email/Telegram report of preset changes.
 - Optional: real-time data via the user's own TradingView `sessionid` cookie (account-flag risk — opt-in only).
 
-## Backtester research notes (as of 2026-05-17 — verify against `DB/mc_runs.sqlite` before relying on them)
+Later — less dependence on TradingView (discussed 2026-10-18; add layers, don't replace it; own branch/PR):
+1. Move the TradingView field mapping out of `fields.COLUMNS` (`Col.tv`) into the provider module, so the
+   registry holds canonical keys only and each provider brings its own mapping. Small, safe first step.
+2. History layer from yfinance: adjusted daily OHLCV stored locally, updated once a day. Enables a real
+   adjusted price history, total return incl. dividends (TradingView has neither — checked live: no
+   adjusted/total-return field, `adjustment` options are ignored), crosses "within N days" (`[5]` offsets
+   are empty on TradingView) and breakouts over any window, computed by us. TradingView stays the fast
+   snapshot source. Costs: storage, daily update, first-run download time, yfinance rate limits.
+3. Fallback provider when TradingView blocks or changes (today the app only falls back to stale cache).
+Coupling to remove along the way: signals use TradingView-computed fields (`Candle.*`, `[1]`, `High.xM`);
+the market header and the chart widget are TradingView too. Candidate sources: yfinance (free, unofficial),
+SEC EDGAR (official fundamentals), paid APIs (FMP, Polygon, EODHD, Tiingo, Alpha Vantage — check current
+pricing/limits before choosing), Finviz (scraping or paid Elite).
 
-Production candidate validated on 11 OOS folds: `topn_focused_v2`, top_n=6, hold_days=130, min_price=2.0,
-equal sizing, regime filter on, `regime_entry_buffer=0.01`, `regime_confirm_days=1`
-(median excess vs QQQ ≈ +9.5pp across folds). DVMC is inferior. See `SANDBOX.md` for the latest session log.
+## Backtester note (for the Phase 3 strategy presets; the backtester itself is not in this repo)
+
+As of 2026-05-17 the production candidate was `topn_focused_v2`: top_n=6, hold_days=130, min_price=2.0,
+equal sizing, regime filter on, `regime_entry_buffer=0.01`, `regime_confirm_days=1` (median excess vs QQQ
+≈ +9.5pp across 11 OOS folds). Verify against the backtester before building a preset on it.

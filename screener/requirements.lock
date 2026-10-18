@@ -39,7 +39,9 @@ jsonschema-specifications==2025.9.1
 markupsafe==3.0.4
     # via jinja2
 narwhals==2.27.1
-    # via altair
+    # via
+    #   altair
+    #   plotly
 numpy==2.5.4
     # via
     #   pandas
@@ -50,6 +52,7 @@ openpyxl==3.1.5
 packaging==26.3
     # via
     #   altair
+    #   plotly
     #   streamlit
 pandas==3.0.6
     # via
@@ -57,6 +60,8 @@ pandas==3.0.6
     #   streamlit
 pillow==12.3.0
     # via streamlit
+plotly==7.1.0
+    # via -r screener/requirements.txt
 protobuf==7.36.2
     # via streamlit
 pyarrow==26.0.0

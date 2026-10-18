@@ -1,9 +1,12 @@
 """
-Market regime header — same rules as compute_macro_regime() in DB/build_simulation_db.py:
+Market regime header — same rules as compute_macro_regime() in the HalgOM backtester:
 
   bull  VIX < 18 and SPY > SMA200 and HYG > SMA20
   bear  at least 2 of: VIX > 25, SPY < SMA200, HYG < SMA20   (bear wins over bull)
   else  sideways
+
+trend_strength() adds SPY's ADX(14) as a separate indication of how strong the trend is
+(ADX >= 25 strong, < 20 weak); it does not change the regime rules above.
 """
 from __future__ import annotations
 
@@ -40,3 +43,26 @@ def compute_regime(m: pd.DataFrame) -> Regime:
     if vix < 18 and spy > spy200 and hyg > hyg20:
         return Regime("bull", reasons)
     return Regime("sideways", reasons)
+
+
+@dataclass
+class Trend:
+    label: str                      # "Trend strong ▲" | "Trend building ▼" | "Trend weak" | "Trend n/a"
+    color: str
+    help: str
+
+
+def trend_strength(adx: float, di_plus: float = float("nan"), di_minus: float = float("nan")) -> Trend:
+    if adx is None or (isinstance(adx, float) and math.isnan(adx)):
+        return Trend("Trend n/a", "gray", "אין נתון ADX כרגע")
+    direction = ""
+    if not (math.isnan(di_plus) or math.isnan(di_minus)):
+        direction = " ▲" if di_plus > di_minus else " ▼"
+    side = {" ▲": "כלפי מעלה (DI+ מעל DI-)", " ▼": "כלפי מטה (DI- מעל DI+)", "": ""}[direction]
+    base = (f"ADX(14) של SPY = {adx:.1f}. מודד את עוצמת המגמה, לא את הכיוון: "
+            "מעל 25 = מגמה חזקה, מתחת ל-20 = שוק בלי מגמה ברורה (דשדוש). ")
+    if adx >= 25:
+        return Trend("Trend strong" + direction, "blue", base + f"כיוון המגמה: {side}")
+    if adx >= 20:
+        return Trend("Trend building" + direction, "violet", base + f"מגמה מתפתחת, כיוון: {side}")
+    return Trend("Trend weak", "gray", base + "כרגע אין מגמה ברורה — פריצות נכשלות יותר")

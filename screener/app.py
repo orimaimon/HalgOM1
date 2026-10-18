@@ -6,6 +6,7 @@ Run:  run_screener.bat   (or: streamlit run screener/app.py from the HalgOM fold
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import html
 import json
 import logging
@@ -22,25 +23,53 @@ import streamlit as st  # noqa: E402
 import streamlit.components.v1 as components  # noqa: E402
 
 from screener import export  # noqa: E402
+from screener import groups as G  # noqa: E402
+from screener import history  # noqa: E402
+from screener import i18n as I  # noqa: E402
+from screener import lifecycle  # noqa: E402
 from screener import presets as P  # noqa: E402
 from screener.data import Store, load_universe  # noqa: E402
 from screener.data.store import DATA_DIR  # noqa: E402
 from screener.data.tradingview import fetch_market, fetch_universe  # noqa: E402
 from screener.derive import add_derived  # noqa: E402
-from screener.fields import COLUMNS, DEFAULT_SORT, VIEWS  # noqa: E402
-from screener.filters import ANY, FILTERS, GROUPS, active, apply_filters, describe, option_labels, search  # noqa: E402
-from screener.market import compute_regime  # noqa: E402
+from screener.fields import COLUMNS, DEFAULT_SORT, GROUP_COLUMNS, VIEWS  # noqa: E402
+from screener.filters import (ANY, FILTERS, FILTERS_BY_KEY, GROUPS, JUNK_RULES, active,  # noqa: E402
+                              apply_filters, hide_junk, in_index, option_labels, search)
+from screener.market import compute_regime, trend_strength  # noqa: E402
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 MAX_AGE = dt.timedelta(minutes=15)       # TradingView data is ~15 min delayed anyway
 RETRY_AFTER = dt.timedelta(minutes=2)    # when offline, don't hammer the network on every click
 CUSTOM = "— Custom —"
 USER_PREFIX = "★ "
 GRID = 6
+PAGES = ["Screener", "Groups", "Heatmap"]
+# provider columns a cached snapshot must have; an older cache without them is refetched
+REQUIRED = [k for k, c in COLUMNS.items() if c.tv]
+# widget keys that must survive while their widget is not on the current page
+PERSIST = ["lang", "preset", "query", "sort_col", "sort_asc", "view", "hide_junk", "only_new", "export_all",
+           "g_by", "g_weight", "g_sector", "g_results", "h_universe", "h_color"]
 
 st.set_page_config(page_title="HalgOM Screener", page_icon="📈", layout="wide")
 ss = st.session_state
 log = logging.getLogger("screener.app")
+
+
+def t(text: str) -> str:
+    """Display text in the chosen language (i18n.py). Internal values stay English."""
+    return I.ui(text, ss.get("lang", I.HE))
+
+
+def L() -> str:
+    return ss.get("lang", I.HE)
+
+
+def opt(text: str) -> str:
+    return I.option(text, L())
+
+
+def col_label(key: str) -> str:
+    return I.column(key, COLUMNS[key].label, L())
 
 
 # ─────────────────────────── setup ─────────────────────────────────────────
@@ -64,8 +93,14 @@ def _setup_logging() -> Path:
 
 
 @st.cache_resource
+def _watchdog():
+    """One per server: stops it after 15 minutes with no open browser tab (lifecycle.py)."""
+    return lifecycle.start_idle_watchdog()
+
+
+@st.cache_resource
 def _store() -> Store:
-    return Store()
+    return Store(DATA_DIR)
 
 
 @st.cache_data(ttl=MAX_AGE, show_spinner=False)
@@ -86,20 +121,47 @@ def get_data(force: bool = False):
            or (snap.source != "stale" and snap.age > MAX_AGE))
     if due:
         ss.last_attempt = now
-        with st.spinner("Loading market data from TradingView… (≈15 sec)"):
+        with st.spinner(t("Loading market data from TradingView… (≈15 sec)")):
             try:
-                snap = load_universe(_store(), fetch_universe, MAX_AGE, force=force)
+                snap = load_universe(_store(), fetch_universe, MAX_AGE, force=force, required=REQUIRED)
             except Exception as e:
                 log.exception("no data available")
                 st.error("לא ניתן להוריד נתונים, ואין נתונים שמורים מהפעם הקודמת. "
                          "בדוק את החיבור לאינטרנט ונסה שוב.")
-                st.caption(f"Details: {e}")
-                if st.button("Try again", type="primary"):
+                st.caption(f"{t('Details')}: {e}")
+                if st.button(t("Try again"), type="primary"):
                     st.rerun()
                 st.stop()
         ss.snap = snap
         ss.df = add_derived(snap.df)
     return ss.snap, ss.df
+
+
+def get_previous(snap) -> history.Previous | None:
+    """Previous day's snapshot (derived), loaded once per snapshot day."""
+    day = snap.fetched_at.date()
+    if ss.get("prev_for") != day:
+        ss.prev = history.load_previous(_store(), day)
+        ss.prev_for = day
+        ss.prev_hits = {}
+    return ss.prev
+
+
+def new_column(res: pd.DataFrame, prev: history.Previous | None, sel: dict[str, str]) -> pd.Series:
+    """'NEW' tags; yesterday's matches are computed once per (filters, junk switch), not on every click."""
+    if prev is None:
+        return history.mark_new(res, None)
+    key = (tuple(sorted(active(sel).items())), ss.hide_junk)
+    if key not in ss.prev_hits:
+        ss.prev_hits[key] = history.previous_tickers(prev, sel, ss.hide_junk)
+    return history.mark_new(res, ss.prev_hits[key])
+
+
+def rows_key(res: pd.DataFrame) -> str:
+    """Table widget key tied to the rows shown: the selection is a row position, so when the rows change
+    (filters, Hide junk, Only new, sort) the key changes and the old selection is dropped instead of
+    opening the chart of whatever stock now sits in that position."""
+    return "table_" + hashlib.md5("\x1f".join(res["ticker"].astype(str)).encode()).hexdigest()[:12]
 
 
 def all_presets() -> dict[str, P.Preset]:
@@ -110,6 +172,31 @@ def all_presets() -> dict[str, P.Preset]:
 
 def selections() -> dict[str, str]:
     return {f.key: ss.get(f"f_{f.key}", ANY) for f in FILTERS}
+
+
+def described() -> list[tuple[str, str]]:
+    """(filter, option) of the active filters in the display language — for the chips and the exports."""
+    return [(I.filter_label(k, FILTERS_BY_KEY[k].label, L()), opt(v)) for k, v in active(selections()).items()]
+
+
+def display_values(df: pd.DataFrame) -> pd.DataFrame:
+    """Copy with data values in the display language (sector, country, the NEW tag) for tables and exports."""
+    if L() != I.HE:
+        return df
+    out = df.copy()
+    for c in ("sector", "country", "group"):
+        if c in out.columns:
+            out[c] = out[c].map(lambda v, c=c: I.value("sector" if c == "group" else c, v, I.HE))
+    if "new" in out.columns:
+        out["new"] = out["new"].replace(history.NEW, t("NEW"))
+    return out
+
+
+def keep_widget_state() -> None:
+    """Streamlit drops a widget's value when the widget is not rendered (e.g. on another page)."""
+    for k in PERSIST + [f"f_{f.key}" for f in FILTERS]:
+        if k in ss:
+            ss[k] = ss[k]
 
 
 # ─────────────────────────── callbacks ─────────────────────────────────────
@@ -141,7 +228,11 @@ def on_save():
                                sort=ss.sort_col, ascending=ss.sort_asc))
     ss.preset = USER_PREFIX + name
     ss.save_name = ""
-    st.toast(f"Saved screen “{name}”", icon="💾")
+    st.toast(f"{t('Saved screen')}: “{name}”", icon="💾")
+
+
+def on_exit():
+    ss.exiting = True
 
 
 def on_delete():
@@ -150,7 +241,7 @@ def on_delete():
         P.delete_user(name)
         if ss.get("preset") == USER_PREFIX + name:
             ss.preset = CUSTOM
-        st.toast(f"Deleted “{name}”", icon="🗑️")
+        st.toast(f"{t('Deleted')}: “{name}”", icon="🗑️")
 
 
 # ─────────────────────────── rendering helpers ─────────────────────────────
@@ -158,10 +249,11 @@ def on_delete():
 def column_config(key: str):
     c = COLUMNS[key]
     cc = st.column_config
-    kw = {"label": c.label, "help": c.help}
+    kw = {"label": col_label(key), "help": c.help}
     match c.kind:
         case "text":
-            return cc.TextColumn(pinned=key == "ticker", **kw)
+            width = {"signals": 300, "indexes": 240, "new": 60}.get(key)
+            return cc.TextColumn(pinned=key == "ticker", width=width, **kw)
         case "price":
             return cc.NumberColumn(format="%.2f", **kw)
         case "pct":
@@ -180,6 +272,8 @@ def column_config(key: str):
             return cc.ProgressColumn(min_value=0, max_value=100, format="%d", **kw)
         case "range":
             return cc.ProgressColumn(min_value=0, max_value=1, format="percent", **kw)
+        case "flag":
+            return cc.NumberColumn(format="%d", **kw)
     return cc.Column(**kw)
 
 
@@ -194,7 +288,7 @@ def _sign_color(v) -> str:
 
 
 def fmt_value(key: str, v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)) or v is pd.NaT:
+    if v is None or (isinstance(v, float) and pd.isna(v)) or v is pd.NaT or v == "":
         return "—"
     kind = COLUMNS[key].kind
     if kind == "pct":
@@ -215,6 +309,8 @@ def fmt_value(key: str, v) -> str:
         return f"{v:.0%}"
     if kind == "ratio":
         return f"{v:,.2f}"
+    if kind == "flag":
+        return ("כן" if v else "לא") if L() == I.HE else ("yes" if v else "no")
     return str(v)
 
 
@@ -240,64 +336,113 @@ def tradingview_chart(symbol: str, height: int = 560) -> None:
 </div>""", height=height)
 
 
+def trend_text(label: str) -> str:
+    """'Trend strong ▲' -> 'מגמה חזקה ▲' (the arrow is kept)."""
+    arrow = "▲" if "▲" in label else "▼" if "▼" in label else ""
+    return f"{t(label.replace(arrow, '').strip() if arrow else label)} {arrow}".strip()
+
+
 def header(snap, n_universe: int) -> None:
     left, mid, right = st.columns([2.2, 5, 2.3], vertical_alignment="center")
     with left:
         st.markdown("### 📈 HalgOM Screener")
-        st.caption(f"v{VERSION} · US stocks · {n_universe:,} in universe")
+        st.caption(f"v{VERSION} · {t('US stocks')} · {n_universe:,} {t('in universe')}")
+        st.segmented_control("Language", list(I.LANGS), key="lang", format_func=I.LANGS.get, required=True,
+                             label_visibility="collapsed")
     with mid:
         market, regime = _market()
         if market is None:
-            st.caption("Market data unavailable")
+            st.caption(t("Market data unavailable"))
         else:
             cols = st.columns([1.3, 1, 1, 1, 1])
             colors = {"bull": "green", "bear": "red", "sideways": "orange", "unknown": "gray"}
             with cols[0]:
-                st.badge(regime.label.upper(), color=colors[regime.label], icon=":material/monitoring:",
+                st.badge(t(regime.label.upper()), color=colors[regime.label], icon=":material/monitoring:",
                          help="מצב השוק לפי כללי HalgOM:\n\n" + "\n".join(f"- {r}" for r in regime.reasons))
-                st.caption("Market regime")
+                spy = market.loc["SPY"]
+                trend = trend_strength(spy.get("adx", float("nan")), spy.get("di_plus", float("nan")),
+                                       spy.get("di_minus", float("nan")))
+                st.badge(trend_text(trend.label), color=trend.color, icon=":material/trending_up:", help=trend.help)
+                st.caption(t("Market regime · SPY ADX"))
             for c, name in zip(cols[1:], ["SPY", "QQQ", "VIX", "HYG"]):
                 row = market.loc[name]
                 vs200 = "" if pd.isna(row.sma200) or name == "VIX" else (
-                    " · ▲SMA200" if row.close > row.sma200 else " · ▼SMA200")
+                    " · \u200e▲SMA200" if row.close > row.sma200 else " · \u200e▼SMA200")   # LRM: arrow stays left in RTL
                 c.metric(name, f"{row.close:,.2f}", f"{row.change:+.2f}%",
                          delta_color="inverse" if name == "VIX" else "normal",
                          help=f"{name} vs SMA20/50/200: {row.sma20:,.2f} / {row.sma50:,.2f} / {row.sma200:,.2f}")
                 if vs200:
-                    c.caption(vs200.strip(" ·"))
+                    c.caption(vs200.removeprefix(" · "))
     with right:
-        src = {"live": "live", "cache": "cached", "stale": "OFFLINE"}[snap.source]
-        st.caption(f"Data as of **{snap.fetched_at:%Y-%m-%d %H:%M}** ({src}) · delayed ~15 min")
-        if st.button("🔄 Refresh data", use_container_width=True):
+        src = t({"live": "live", "cache": "cached", "stale": "OFFLINE"}[snap.source])
+        st.caption(f"{t('Data as of')} **{snap.fetched_at:%Y-%m-%d %H:%M}** ({src}) · {source_text(snap.meta)}",
+                   help="מקור הנתונים ומצב העדכון כפי שהספק מדווח. delayed = בעיכוב, realtime = בזמן אמת")
+        r1, r2 = st.columns([2.2, 1])
+        if r1.button(f"🔄 {t('Refresh data')}", use_container_width=True):
             get_data(force=True)
             _market.clear()
             st.rerun()
+        with r2.popover(f"⏻ {t('Exit')}", use_container_width=True, help="סגירת הסקרינר"):
+            hebrew_note("סוגר את הסקרינר ואת החלון השחור. בפעם הבאה פותחים שוב מהקיצור בשולחן העבודה.")
+            st.button(t("Close the screener"), key="exit", type="primary", on_click=on_exit)
     if snap.source == "stale":
         st.warning(f"⚠️ לא ניתן להתחבר ל-TradingView כרגע — מוצגים נתונים שמורים מ-"
                    f"{snap.fetched_at:%d/%m/%Y} בשעה {snap.fetched_at:%H:%M}. ננסה שוב אוטומטית בעוד כמה דקות.")
+
+
+def source_text(meta: dict | None) -> str:
+    """'TradingView · delayed 15 min' from snapshot metadata (older caches have none)."""
+    meta = meta or {}
+    provider = {"tradingview": "TradingView"}.get(meta.get("provider"), meta.get("provider") or "TradingView")
+    mode = meta.get("update_mode")
+    if mode == "realtime":
+        return f"{provider} · {t('realtime')}"
+    if mode == "delayed" and meta.get("delay_min"):
+        return f"{provider} · {t('delayed')} {meta['delay_min']} {t('min')}"
+    if mode == "endofday":
+        return f"{provider} · {t('end of day')}"
+    if mode == "unknown" and meta.get("raw"):
+        return f"{provider} · {t('update mode')}: {meta['raw']}"
+    return f"{provider} · {t('delayed ~15 min')}"       # caches saved before metadata existed
+
+
+def junk_toggle(container) -> None:
+    container.toggle(t("Hide junk"), key="hide_junk",
+                     help="מסתיר מניות זבל: " + ", ".join(I.ui(label, I.HE) for label, _ in JUNK_RULES)
+                          + ". מניה בלי נתון לא מוסתרת")
+
+
+def nav() -> str:
+    st.segmented_control("Page", PAGES, key="page", label_visibility="collapsed", required=True, format_func=t,
+                         help="סורק = סריקת מניות, קבוצות = ביצועים לפי סקטור ותעשייה, מפת חום = מפת השוק")
+    return ss.page
 
 
 def toolbar(presets: dict[str, P.Preset]) -> None:
     names = [CUSTOM] + list(presets)
     if ss.get("preset") not in names:
         ss.preset = CUSTOM
-    c1, c2, c3, c4, c5, c6 = st.columns([2.6, 2.4, 1.8, 1.1, 1, 1], vertical_alignment="bottom")
-    c1.selectbox("Screen", names, key="preset", on_change=on_preset,
+    c1, c2, c3, c4, c7, c5, c6 = st.columns([2.6, 2.4, 1.8, 1.1, 1.2, 1, 1], vertical_alignment="bottom")
+    def preset_name(n: str) -> str:
+        return t(n) if n == CUSTOM else n if n.startswith(USER_PREFIX) else I.preset(n, L())
+
+    c1.selectbox(t("Screen"), names, key="preset", on_change=on_preset, format_func=preset_name,
                  help="סריקות מוכנות. בחירה בסריקה ממלאת את הפילטרים — אפשר לשנות אותם אחר כך")
-    c2.text_input("Search", key="query", placeholder="Ticker / company, or list: AAPL, MSFT",
+    c2.text_input(t("Search"), key="query", placeholder=t("Ticker / company, or list: AAPL, MSFT"),
                   help="חיפוש לפי סימול או שם חברה. אפשר להדביק רשימת סימולים מופרדת בפסיקים")
-    sortable = [k for k, c in COLUMNS.items() if c.kind not in ("text",) or k in ("ticker", "company")]
-    c3.selectbox("Order by", sortable, key="sort_col", format_func=lambda k: COLUMNS[k].label)
-    c4.toggle("Ascending", key="sort_asc")
-    c5.button("Reset", on_click=on_reset, use_container_width=True, help="ניקוי כל הפילטרים")
+    sortable = [k for k, c in COLUMNS.items() if c.kind not in ("text", "flag") or k in ("ticker", "company")]
+    c3.selectbox(t("Order by"), sortable, key="sort_col", format_func=col_label)
+    c4.toggle(t("Ascending"), key="sort_asc")
+    junk_toggle(c7)
+    c5.button(t("Reset"), on_click=on_reset, use_container_width=True, help="ניקוי כל הפילטרים")
     with c6.popover("💾", use_container_width=True, help="שמירת הסריקה הנוכחית / מחיקת סריקה שמורה"):
-        st.text_input("Save current screen as", key="save_name")
-        st.button("Save", on_click=on_save, type="primary")
+        st.text_input(t("Save current screen as"), key="save_name")
+        st.button(t("Save"), on_click=on_save, type="primary")
         user = P.load_user()
         if user:
             st.divider()
-            st.selectbox("Delete saved screen", list(user), key="delete_name")
-            st.button("Delete", on_click=on_delete)
+            st.selectbox(t("Delete saved screen"), list(user), key="delete_name")
+            st.button(t("Delete"), on_click=on_delete)
     note = presets.get(ss.preset).note if ss.preset in presets else ""
     if note:
         hebrew_note(f"ℹ️ {note}")
@@ -306,9 +451,10 @@ def toolbar(presets: dict[str, P.Preset]) -> None:
 def filter_panel(df: pd.DataFrame) -> None:
     sel = selections()
     n_active = len(active(sel))
-    with st.expander(f"Filters ({n_active} active)" if n_active else "Filters", expanded=True):
-        tabs = st.tabs([f"{g} ({sum(1 for f in FILTERS if f.group == g and sel[f.key] != ANY)})"
-                        if any(f.group == g and sel[f.key] != ANY for f in FILTERS) else g for g in GROUPS])
+    title = f"{t('Filters')} ({n_active} {t('active')})" if n_active else t("Filters")
+    with st.expander(title, expanded=True):
+        counts = {g: sum(1 for f in FILTERS if f.group == g and sel[f.key] != ANY) for g in GROUPS}
+        tabs = st.tabs([f"{t(g)} ({counts[g]})" if counts[g] else t(g) for g in GROUPS])
         for tab, group in zip(tabs, GROUPS):
             with tab:
                 group_filters = [f for f in FILTERS if f.group == group]
@@ -319,25 +465,45 @@ def filter_panel(df: pd.DataFrame) -> None:
                         key = f"f_{f.key}"
                         if ss.get(key, ANY) not in labels:
                             ss[key] = ANY
-                        col.selectbox(f.label, labels, key=key, help=f.tooltip)
+                        col.selectbox(I.filter_label(f.key, f.label, L()), labels, key=key, help=f.tooltip,
+                                      format_func=opt)
 
 
-def results(df: pd.DataFrame, res: pd.DataFrame, snap) -> None:
-    top = st.columns([3, 5], vertical_alignment="center")
-    top[0].markdown(f"#### {len(res):,} results" + (f" / {len(df):,}" if len(res) != len(df) else ""))
+def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
+            prev: history.Previous | None) -> None:
+    top = st.columns([3, 5, 1.6], vertical_alignment="center")
+    top[0].markdown(f"#### {len(res):,} {t('results')}"
+                    + (f" / {len(universe):,}" if len(res) != len(universe) else ""))
     with top[1]:
-        st.segmented_control("View", list(VIEWS), key="view", label_visibility="collapsed", required=True)
+        st.segmented_control("View", list(VIEWS), key="view", label_visibility="collapsed", required=True,
+                             format_func=t)
     view_cols = VIEWS[ss.view]
-    chips = describe(selections())
+    chips = described()
     if chips:
         st.caption(" · ".join(f"**{k}:** {v}" for k, v in chips))
+    notes = []                                   # end-user explanations are Hebrew (CLAUDE.md)
+    if ss.hide_junk and len(universe) < len(df):
+        notes.append(f"{len(df) - len(universe):,} מניות זבל מוסתרות ({t('Hide junk')})")
+    if prev is not None:
+        n_new = int((res["new"] == history.NEW).sum())
+        top[2].toggle(f"{t('Only new')} ({n_new:,})", key="only_new",
+                      help=f"רק מניות שנכנסו לתוצאות מאז ה-snapshot של {prev.day:%d/%m/%Y}")
+        view_cols = [view_cols[0], "new", *view_cols[1:]]
+        notes.append(f"NEW = המניה לא הייתה בתוצאות האלה ב-{prev.day:%d/%m/%Y}")
+        if ss.get("only_new"):
+            res = res[res["new"] == history.NEW]
+    if notes:
+        hebrew_note(" · ".join(notes))
+    if prev is not None and prev.missing:
+        hebrew_note(f"ההשוואה ל-{prev.day:%d/%m/%Y} חלקית: ה-snapshot נשמר בגרסה קודמת בלי {len(prev.missing)} "
+                    "שדות חדשים, ולכן פילטרים על השדות האלה מסמנים יותר מניות כ-NEW. יסתדר מעצמו ממחר.")
 
-    table = res[view_cols]
+    table = display_values(res[view_cols])
     signed = [c for c in view_cols if c in export._SIGNED]
     if signed:
         table = table.style.map(_sign_color, subset=signed)
     event = st.dataframe(
-        table, hide_index=True, height=560, key="table",
+        table, hide_index=True, height=560, key=rows_key(res),
         column_config={k: column_config(k) for k in view_cols},
         on_select="rerun", selection_mode="single-row", placeholder="—",
     )
@@ -350,9 +516,11 @@ def results(df: pd.DataFrame, res: pd.DataFrame, snap) -> None:
 
 
 DETAIL_FIELDS = [
-    ("Valuation", ["market_cap", "pe", "fwd_pe", "peg", "ps", "pb", "ev_ebitda"]),
+    ("Valuation & size", ["market_cap", "pe", "fwd_pe", "peg", "ps", "pb", "ev_ebitda"]),
     ("Growth & quality", ["eps_growth", "eps_growth_q", "sales_growth_q", "roe", "roic", "net_margin", "debt_eq"]),
-    ("Technical", ["rsi", "sma50_pct", "sma200_pct", "high52_pct", "range52", "atr_pct", "beta", "rel_volume"]),
+    ("Technical", ["rsi", "rsi_w", "sma50_pct", "sma150_pct", "sma200_pct", "high52_pct", "range52", "atr_pct",
+                   "beta", "rel_volume"]),
+    ("Signals", ["n_signals", "range_1m_pct"]),
     ("Events & scores", ["earnings_date", "days_to_earnings", "div_yield", "recom", "target_upside",
                          "score", "score_value", "score_quality", "score_momentum"]),
 ]
@@ -360,10 +528,11 @@ DETAIL_FIELDS = [
 
 def snapshot_table(row: pd.Series) -> str:
     """Compact Finviz-style key/value table (HTML, no scripts)."""
+    end = "left" if L() == I.HE else "right"                 # values sit at the far end of the row
     out = ['<table style="width:100%;border-collapse:collapse;font-size:13px">']
     for title, keys in DETAIL_FIELDS:
         out.append(f'<tr><td colspan="2" style="padding:10px 4px 3px;font-weight:600;'
-                   f'border-bottom:1px solid #d0d7de">{html.escape(title)}</td></tr>')
+                   f'border-bottom:1px solid #d0d7de">{html.escape(t(title))}</td></tr>')
         for k in keys:
             v = fmt_value(k, row.get(k))
             color = ""
@@ -371,8 +540,8 @@ def snapshot_table(row: pd.Series) -> str:
                 color = "color:#1a7f37;" if v.startswith("+") else "color:#cf222e;"
             out.append(f'<tr title="{html.escape(COLUMNS[k].help)}">'
                        f'<td style="padding:2px 4px;color:#57606a;border-bottom:1px solid #eef1f4">'
-                       f'{html.escape(COLUMNS[k].label)}</td>'
-                       f'<td style="padding:2px 4px;text-align:right;font-weight:600;{color}'
+                       f'{html.escape(col_label(k))}</td>'
+                       f'<td style="padding:2px 4px;text-align:{end};font-weight:600;{color}'
                        f'border-bottom:1px solid #eef1f4">{html.escape(v)}</td></tr>')
     out.append("</table>")
     return "".join(out)
@@ -385,10 +554,15 @@ def detail(row: pd.Series) -> None:
         tradingview_chart(row["tv_symbol"])
     with info:
         st.markdown(f"### {row['ticker']}")
-        st.caption(f"{row['company']}  \n{row['sector']} · {row['industry']} · {row['country']}")
-        st.metric("Price", fmt_value("price", row["price"]), f"{row['change']:+.2f}%")
+        sector, country = I.value("sector", row["sector"], L()), I.value("country", row["country"], L())
+        lrm = "\u200e"     # keeps a trailing "." of English names ("Apple Inc.") in place in RTL
+        st.caption(f"{row['company']}{lrm}  \n{sector} · {row['industry']}{lrm} · {country}"
+                   + (f"  \n{row['indexes']}" if row.get("indexes") else ""))
+        st.metric(t("Price"), fmt_value("price", row["price"]), f"{row['change']:+.2f}%")
+        if row.get("signals"):
+            st.caption(f"**{t('Signals')}:** {row['signals']}")
         st.html(snapshot_table(row))
-        st.markdown(f"[Open in TradingView ↗]({export.tradingview_url(row['tv_symbol'])}) · "
+        st.markdown(f"[{t('Open in TradingView')} ↗]({export.tradingview_url(row['tv_symbol'])}) · "
                     f"[Finviz ↗](https://finviz.com/quote.ashx?t={row['ticker']})")
 
 
@@ -397,20 +571,26 @@ def export_bar(res: pd.DataFrame, view_cols: list[str], snap) -> None:
     title = ss.preset.removeprefix(USER_PREFIX) if ss.get("preset") not in (None, CUSTOM) else "custom"
     stem = export.file_stem(title)
     c0, c1, c2, c3, c4 = st.columns([1.6, 1, 1, 1.2, 1.2], vertical_alignment="center")
-    all_cols = c0.toggle("Export all columns", key="export_all",
-                         help="כבוי: רק העמודות שבתצוגה הנוכחית. דלוק: כל השדות (כ-80 עמודות)")
-    cols = [k for k in COLUMNS if k != "tv_symbol"] if all_cols else view_cols
-    filters_desc = describe(selections())
+    all_cols = c0.toggle(t("Export all columns"), key="export_all",
+                         help="כבוי: רק העמודות שבתצוגה הנוכחית. דלוק: כל השדות (כ-110 עמודות; "
+                              "תבניות הנרות מסוכמות בעמודת Signals)")
+    cols = [k for k, c in COLUMNS.items() if k != "tv_symbol" and c.kind != "flag"] if all_cols else view_cols
+    filters_desc = described()
     if ss.get("query"):
-        filters_desc = filters_desc + [("Search", ss.query)]
+        filters_desc = filters_desc + [(t("Search"), ss.query)]
+    headers = {k: col_label(k) for k in cols}
+    preset = ss.get("preset")
+    shown_title = (t("(custom)") if preset in (None, CUSTOM) else title if preset.startswith(USER_PREFIX)
+                   else I.preset(title, L()))
 
     def xlsx() -> bytes:
-        data = export.to_excel(res, cols, filters_desc, snap.fetched_at, title)
+        data = export.to_excel(display_values(res), cols, filters_desc, snap.fetched_at, shown_title,
+                               headers=headers, t=t, rtl=L() == I.HE)
         export.save_copy(data, f"{stem}.xlsx")
         return data
 
     def csv() -> bytes:
-        data = export.to_csv(res, cols)
+        data = export.to_csv(display_values(res), cols, headers=headers)
         export.save_copy(data, f"{stem}.csv")
         return data
 
@@ -425,42 +605,164 @@ def export_bar(res: pd.DataFrame, view_cols: list[str], snap) -> None:
                        use_container_width=True, help="קובץ אקסל מעוצב + גיליון עם הפילטרים שהופעלו")
     c2.download_button("📄 CSV", csv, f"{stem}.csv", mime="text/csv", on_click="ignore", disabled=empty,
                        use_container_width=True)
-    c3.download_button("📋 TradingView list", watchlist, f"{stem}_tradingview.txt", mime="text/plain",
+    c3.download_button(f"📋 {t('TradingView list')}", watchlist, f"{stem}_tradingview.txt", mime="text/plain",
                        on_click="ignore", disabled=empty, use_container_width=True,
                        help="ייבוא ל-TradingView: Watchlist ← Import list. המניות מחולקות לפי סקטורים")
-    with c4.popover("🔤 Tickers", use_container_width=True, disabled=empty):
+    with c4.popover(f"🔤 {t('Tickers')}", use_container_width=True, disabled=empty):
         st.caption("לחץ על אייקון ההעתקה בפינה")
         st.code(export.tickers_text(res), language=None, wrap_lines=True)
     hebrew_note(f"עותק של כל קובץ שמורד נשמר גם בתיקייה: {export.EXPORT_DIR}")
+
+
+# ─────────────────────────── Groups / Heatmap pages ────────────────────────
+
+HEAT_COLORS = {"change": 3, "perf_w": 6, "perf_m": 10, "perf_q": 20, "perf_h": 30, "perf_ytd": 40, "perf_y": 50}
+HEAT_UNIVERSES = ["S&P 500", "Nasdaq 100", "Screener results", "All stocks (top 1,000)"]
+
+
+def groups_page(universe: pd.DataFrame, res: pd.DataFrame) -> None:
+    c1, c2, c3, c4, c5 = st.columns([1.6, 1.8, 2.4, 1.6, 1.2], vertical_alignment="bottom")
+    ss.setdefault("g_by", "Sector")
+    ss.setdefault("g_weight", "Equal")
+    c1.segmented_control(t("Group by"), ["Sector", "Industry"], key="g_by", required=True, format_func=t)
+    c2.segmented_control(t("Averages"), ["Equal", "Market cap"], key="g_weight", required=True, format_func=t,
+                         help="שווה = כל מניה נספרת פעם אחת. שווי שוק = מניות גדולות משפיעות יותר (כמו מדד)")
+    base = res if ss.get("g_results") else universe
+    by = ss.g_by.lower()
+    if by == "industry":
+        sectors = ["All sectors"] + sorted(base["sector"].dropna().astype(str).unique())
+        if ss.get("g_sector") not in sectors:
+            ss.g_sector = "All sectors"
+        c3.selectbox(t("Sector"), sectors, key="g_sector", help="הצגת התעשיות של סקטור אחד בלבד",
+                     format_func=lambda v: t(v) if v == "All sectors" else I.value("sector", v, L()))
+        if ss.g_sector != "All sectors":
+            base = base[base["sector"] == ss.g_sector]
+    c4.toggle(t("Only screener results"), key="g_results",
+              help="דלוק: הקבוצות מחושבות רק מהמניות שעברו את הפילטרים בדף הסורק")
+    junk_toggle(c5)
+    if base.empty:
+        st.info("אין מניות להצגה — הפילטרים או החיפוש לא החזירו תוצאות")
+        return
+    table = G.group_performance(base, by=by, weight="cap" if ss.g_weight == "Market cap" else "equal")
+    st.markdown(f"#### {len(table):,} {t('sectors' if by == 'sector' else 'industries')} · "
+                f"{len(base):,} {t('stocks')}")
+    cc = st.column_config
+
+    def gl(k: str) -> dict:
+        return {"label": I.group_column(k, GROUP_COLUMNS[k].label, L()), "help": GROUP_COLUMNS[k].help}
+
+    config = {"group": cc.TextColumn(pinned=True, **gl("group")),
+              "stocks": cc.NumberColumn(format="%d", **gl("stocks")),
+              "market_cap": cc.NumberColumn(format="compact", **gl("market_cap")),
+              "rel_volume": cc.NumberColumn(format="%.2f", **gl("rel_volume"))}
+    for k in G.PERF + ["pct_above_sma50"]:
+        config[k] = cc.NumberColumn(format="%.2f%%", **gl(k))
+    if by == "sector":
+        table = display_values(table)
+    styled = table.style.map(_sign_color, subset=G.PERF)
+    st.dataframe(styled, hide_index=True, height=min(38 + 35 * len(table), 760), column_config=config,
+                 key="groups_table")
+    hebrew_note("ביצועים ממוצעים של המניות בכל קבוצה. לחיצה על כותרת עמודה ממיינת. "
+                "מומלץ להשאיר את הסתרת מניות הזבל דלוקה — מניות זבל עם תנועות של מאות אחוזים "
+                "מעוותות ממוצע שווה-משקל.")
+
+
+def heatmap_page(universe: pd.DataFrame, res: pd.DataFrame) -> None:
+    c1, c2, c3 = st.columns([2.4, 2.4, 1.2], vertical_alignment="bottom")
+    ss.setdefault("h_universe", HEAT_UNIVERSES[0])
+    ss.setdefault("h_color", "change")
+    c1.selectbox(t("Stocks"), HEAT_UNIVERSES, key="h_universe", format_func=t,
+                 help="אילו מניות להציג. S&P 500 מקביל למפת השוק של Finviz")
+    c2.selectbox(t("Color by"), list(HEAT_COLORS), key="h_color", format_func=col_label,
+                 help="ירוק = עלייה, אדום = ירידה. הצבע רווי בקצוות הסקאלה (למשל ±3% לשינוי יומי)")
+    junk_toggle(c3)
+    match ss.h_universe:
+        case "Screener results":
+            data = res
+        case "All stocks (top 1,000)":
+            data = universe.nlargest(1000, "market_cap")
+        case label:
+            data = universe[in_index(label)(universe)]
+    if data.empty:
+        st.info("אין מניות להצגה")
+        return
+    color = ss.h_color
+    fig = G.heatmap_figure(display_values(data), color, limit=HEAT_COLORS[color], root=t("US stocks"),
+                           stocks=t("stocks"), cap_label=t("Market cap"))
+    st.plotly_chart(fig, key="heatmap", config={"displaylogo": False})
+    hebrew_note(f"{len(data):,} מניות. גודל = שווי שוק, צבע = {col_label(color)}. "
+                "לחיצה על סקטור או תעשייה מגדילה אותם; לחזרה לחץ על שורת הניווט למעלה.")
 
 
 # ─────────────────────────── page ──────────────────────────────────────────
 
 CSS = """
 <style>
-  .block-container {padding-top: 1.5rem; padding-bottom: 2rem; max-width: 1800px;}
+  .block-container {padding-top: 3.5rem; padding-bottom: 2rem; max-width: 1800px;}  /* clear the fixed top bar */
   [data-testid="stMetricValue"] {font-size: 1.6rem;}
+</style>
+"""
+# Hebrew: the interface runs right-to-left; tables, the heatmap, the chart and code stay left-to-right
+# (Streamlit's table can only pin columns on the left, and numbers/tickers read left-to-right).
+RTL_CSS = """
+<style>
+  .block-container, [data-baseweb="popover"], [data-testid="stTooltipContent"],
+  [data-testid="stToast"] {direction: rtl; text-align: right;}
+  [data-testid="stDataFrame"], [data-testid="stPlotlyChart"], [data-testid="stIFrame"],
+  [data-testid="stCode"], [data-testid="stMetricValue"], [data-testid="stMetricDelta"] {direction: ltr;}
+  [data-testid="stMetricValue"] {text-align: right;}
 </style>
 """
 
 
+def goodbye() -> None:
+    """Shown after Exit: the server stops a moment later, so this is the last thing the tab shows."""
+    st.html('<div dir="rtl" style="text-align:center;margin-top:18vh;font-size:1.6rem">'
+            '👋 הסקרינר נסגר</div>'
+            '<div dir="rtl" style="text-align:center;margin-top:1rem;color:#57606a">'
+            'אפשר לסגור את הלשונית הזו. כדי לפתוח שוב — לחיצה כפולה על הקיצור "HalgOM Screener" '
+            'בשולחן העבודה.</div>')
+    if not ss.get("exit_sent"):
+        ss.exit_sent = True
+        lifecycle.stop_server("Exit button")
+
+
 def main() -> None:
     _setup_logging()
-    st.html(CSS)
+    ss.setdefault("lang", I.HE)
+    st.html(CSS + (RTL_CSS if L() == I.HE else ""))
+    if ss.get("exiting"):
+        goodbye()
+        return
+    _watchdog()
+    keep_widget_state()
+    ss.setdefault("page", PAGES[0])
     ss.setdefault("view", "Overview")
     ss.setdefault("sort_col", DEFAULT_SORT[0])
     ss.setdefault("sort_asc", DEFAULT_SORT[1])
+    ss.setdefault("hide_junk", True)
     for f in FILTERS:
         ss.setdefault(f"f_{f.key}", ANY)
 
     snap, df = get_data()
     header(snap, len(df))
-    toolbar(all_presets())
-    filter_panel(df)
+    page = nav()
+    if page == "Screener":
+        toolbar(all_presets())
+        filter_panel(df)
 
-    res = search(apply_filters(df, selections()), ss.get("query", ""))
-    res = res.sort_values(ss.sort_col, ascending=ss.sort_asc, na_position="last")
-    results(df, res, snap)
+    sel = selections()
+    universe = hide_junk(df, ss.hide_junk)       # once per run, shared by every page
+    res = search(apply_filters(universe, sel), ss.get("query", ""))
+    if page == "Groups":
+        groups_page(universe, res)
+    elif page == "Heatmap":
+        heatmap_page(universe, res)
+    else:
+        prev = get_previous(snap)                # "New since yesterday" is only shown here
+        res = res.assign(new=new_column(res, prev, sel))
+        res = res.sort_values(ss.sort_col, ascending=ss.sort_asc, na_position="last")
+        results(df, universe, res, snap, prev)
     hebrew_note("נתונים: TradingView (בעיכוב של כ-15 דקות). הכלי לצורכי מחקר בלבד ואינו ייעוץ השקעות.")
 
 
