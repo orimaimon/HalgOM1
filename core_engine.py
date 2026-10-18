@@ -33,7 +33,8 @@ class TaxLedger:
     def process_realized_pnl(self, date: str, gross_pnl: float, ticker: str) -> float:
         tax_paid = 0.0
         loss_offset = 0.0
-        
+        taxable_amount = 0.0
+
         if gross_pnl < 0:
             self.loss_carryforward += abs(gross_pnl)
             net_pnl = gross_pnl
@@ -184,9 +185,9 @@ class BaseEquityStrategy(BaseStrategy):
     מחלקת אב מורחבת הכוללת פונקציות עזר משותפות לכלל אסטרטגיות האקוויטי
     (סינון משטר שוק, הקצאת מזומן וירטואלי, ואינדוקס נתונים מהיר).
     """
-    def _build_ticker_index(self, day_data: pd.DataFrame) -> Dict[str, pd.Series]:
-        """מייצר מילון שליפות מהיר (O(1)) במקום חיפושי שורות כבדים (O(N)) בתוך הדאטהפריים"""
-        return {row['Ticker']: row for _, row in day_data.iterrows()}
+    def _build_ticker_index(self, day_data: pd.DataFrame) -> Dict[str, Dict]:
+        """מייצר מילון שליפות מהיר (O(1)) מ-to_dict (פי ~9 מהיר מ-iterrows)."""
+        return {r['Ticker']: r for r in day_data.to_dict('records')}
 
     def _is_bull_regime(self, day_data: pd.DataFrame, benchmark_ticker: str = 'SPY', sma_col: str = 'SPY_SMA_200') -> bool:
         """בודק האם השוק במצב חיובי.
@@ -211,15 +212,31 @@ class BaseEquityStrategy(BaseStrategy):
             return day_data[day_data['Type'].str.lower() == 'stock']
         return day_data[~day_data['Ticker'].str.startswith('^', na=False)]
 
-    def _calculate_position_size(self, virtual_cash: float, target_positions: int, current_positions: int, price: float) -> float:
+    def _calculate_position_size(self, virtual_cash: float, target_positions: int, current_positions: int, price: float, buffer: float = 0.98) -> float:
         """מחשב כמות מניות לרכישה מתוך המזומן הפנוי, מגן מפני דחיות פקודה בשל עמלות והחלקה"""
         slots_available = target_positions - current_positions
         if slots_available <= 0 or virtual_cash <= 0 or price <= 0:
             return 0.0
             
-        cash_allocated = (virtual_cash * 0.98) / slots_available # 2% באפר לעמלות והחלקה
+        cash_allocated = (virtual_cash * buffer) / slots_available 
         shares = cash_allocated / price
         return shares
+
+    def _generate_regime_exit_orders(self, current_date: str, day_data: pd.DataFrame, portfolio: Portfolio, reason: str = "Regime Exit") -> List[Order]:
+        """מייצר פקודות מכירה לכל הפוזיציות בתיק (שימושי למעבר למזומן במשטר דובי)"""
+        ticker_index = self._build_ticker_index(day_data)
+        orders = []
+        for ticker, pos in list(portfolio.positions.items()):
+            row = ticker_index.get(ticker)
+            price = row['Adj_Close'] if row is not None else pos['buy_price']
+            dv = float(row['Dollar_Volume_20d_Avg']) if row is not None and pd.notna(row.get('Dollar_Volume_20d_Avg')) else None
+            orders.append(Order(
+                ticker=ticker, date=current_date, price=price,
+                shares=pos['shares'], order_type="SELL",
+                reason=reason,
+                avg_dollar_volume=dv,
+            ))
+        return orders
 
 # =============================================================================
 # 5. The Backtest Engine

@@ -33,6 +33,10 @@ from mc_strategies import ParamSpace, get_strategy_config
 
 logger = logging.getLogger("mc_engine")
 
+# Per-subprocess data cache — populated on first task, reused for all subsequent tasks
+# in the same worker process (avoids repeated parquet reads from disk).
+_worker_data_cache: Dict[str, Any] = {}
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # Worker function (runs in subprocess)
@@ -62,14 +66,19 @@ def _worker_execute(task: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     try:
-        # Load data
-        df = pd.read_parquet(task["data_path"], columns=task["cols_needed"])
-        if task.get("date_filter"):
-            start, end = task["date_filter"]
-            if start:
-                df = df[df["Date"] >= pd.to_datetime(start)]
-            if end:
-                df = df[df["Date"] <= pd.to_datetime(end)]
+        # Load data — cached per subprocess so the parquet is read only once per worker process.
+        cache_key = (task["data_path"], tuple(sorted(task["cols_needed"])),
+                     str(task.get("date_filter")))
+        if cache_key not in _worker_data_cache:
+            raw = pd.read_parquet(task["data_path"], columns=task["cols_needed"])
+            if task.get("date_filter"):
+                start, end = task["date_filter"]
+                if start:
+                    raw = raw[raw["Date"] >= pd.to_datetime(start)]
+                if end:
+                    raw = raw[raw["Date"] <= pd.to_datetime(end)]
+            _worker_data_cache[cache_key] = raw
+        df = _worker_data_cache[cache_key]
 
         # Build strategy
         cfg = get_strategy_config(task["strategy_name"])
@@ -216,8 +225,12 @@ def _quick_alpha_beta(equity_df: pd.DataFrame, benchmarks_path: str,
                       ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     """Quick CAPM alpha/beta vs a benchmark. Loads benchmarks parquet inline."""
     try:
-        b = pd.read_parquet(benchmarks_path)
-        b["Date"] = pd.to_datetime(b["Date"]).dt.normalize()
+        bench_key = f"bench:{benchmarks_path}"
+        if bench_key not in _worker_data_cache:
+            raw_b = pd.read_parquet(benchmarks_path)
+            raw_b["Date"] = pd.to_datetime(raw_b["Date"]).dt.normalize()
+            _worker_data_cache[bench_key] = raw_b
+        b = _worker_data_cache[bench_key]
         adj_col = f"{ticker_prefix}_Adj_Close"
         if adj_col not in b.columns:
             return None, None, None
@@ -285,6 +298,7 @@ class MCConfig:
     bottom_n_detail: int = 10
     worker_timeout: int = 600     # seconds per worker before TimeoutError
     notes: str = ""
+    save_trades: bool = False     # save trades+equity for ALL runs (skips pass 2)
 
 
 class MCRunner:
@@ -313,9 +327,15 @@ class MCRunner:
 
         # Pass 1 — sample params and run
         param_sets = self._sample_param_sets(cfg.n_runs)
-        tasks_pass1 = self._build_tasks(param_sets, strat_cfg, return_details=False)
 
-        logger.info(f"Pass 1: metrics only — {cfg.n_runs} runs")
+        if cfg.save_trades:
+            # Single-pass mode: return trades+equity for every run, no pass 2 needed
+            logger.info(f"Pass 1 (save_trades=True): metrics + trades — {cfg.n_runs} runs")
+            tasks_pass1 = self._build_tasks(param_sets, strat_cfg, return_details=True)
+        else:
+            logger.info(f"Pass 1: metrics only — {cfg.n_runs} runs")
+            tasks_pass1 = self._build_tasks(param_sets, strat_cfg, return_details=False)
+
         n_completed = self._run_parallel(tasks_pass1, pass_name="pass1")
         logger.info(f"Pass 1 complete: {n_completed}/{cfg.n_runs} succeeded")
 
@@ -324,17 +344,17 @@ class MCRunner:
             self.db.finalize_batch(self.batch_id, 0)
             return self.batch_id
 
-        # Pass 2 — re-run Top + Bottom with details
-        top_ids, bottom_ids = self.db.get_top_and_bottom(
-            self.batch_id, cfg.top_n_detail, cfg.bottom_n_detail, metric="cagr_pct"
-        )
-        detail_run_ids = top_ids + bottom_ids
-        logger.info(f"Pass 2: re-running {len(detail_run_ids)} selected runs "
-                    f"({len(top_ids)} top + {len(bottom_ids)} bottom) for detail tracking")
-
-        if detail_run_ids:
-            detail_tasks = self._build_detail_tasks(detail_run_ids, strat_cfg)
-            self._run_detail_parallel(detail_tasks)
+        if not cfg.save_trades:
+            # Pass 2 — re-run Top + Bottom with details
+            top_ids, bottom_ids = self.db.get_top_and_bottom(
+                self.batch_id, cfg.top_n_detail, cfg.bottom_n_detail, metric="cagr_pct"
+            )
+            detail_run_ids = top_ids + bottom_ids
+            logger.info(f"Pass 2: re-running {len(detail_run_ids)} selected runs "
+                        f"({len(top_ids)} top + {len(bottom_ids)} bottom) for detail tracking")
+            if detail_run_ids:
+                detail_tasks = self._build_detail_tasks(detail_run_ids, strat_cfg)
+                self._run_detail_parallel(detail_tasks)
 
         self.db.finalize_batch(self.batch_id, n_completed)
         logger.info(f"Batch {self.batch_id} finalized.")
@@ -393,7 +413,13 @@ class MCRunner:
 
     def _run_parallel(self, tasks: List[Dict[str, Any]], pass_name: str) -> int:
         cfg = self.config
-        workers = cfg.n_workers if cfg.n_workers > 0 else None
+        import os
+        if cfg.n_workers > 0:
+            workers = cfg.n_workers
+        else:
+            # Cap auto-workers at 6 to avoid saturating the CPU; each process
+            # loads a large parquet into memory so more workers ≠ faster beyond ~6.
+            workers = min(os.cpu_count() or 4, 6)
         t0 = time.time()
         n_completed = 0
         n_failed = 0
@@ -426,7 +452,11 @@ class MCRunner:
 
     def _run_detail_parallel(self, tasks: List[Tuple[int, Dict[str, Any]]]):
         cfg = self.config
-        workers = cfg.n_workers if cfg.n_workers > 0 else None
+        import os
+        if cfg.n_workers > 0:
+            workers = cfg.n_workers
+        else:
+            workers = min(os.cpu_count() or 4, 6)
         t0 = time.time()
 
         uuid_to_runid = {
@@ -466,6 +496,7 @@ class MCRunner:
 
     def _persist_pass1_result(self, result: Dict[str, Any]):
         m = result.get("metrics", {})
+        save_trades = self.config.save_trades
         rec = RunRecord(
             run_uuid=result["run_uuid"],
             batch_id=self.batch_id,
@@ -504,6 +535,14 @@ class MCRunner:
             period_end=m.get("period_end"),
         )
         try:
-            self.db.insert_run(rec)
+            run_id = self.db.insert_run(rec)
+            if (save_trades and result["status"] == "completed"
+                    and result.get("equity_curve") is not None):
+                self.db.insert_detail_data(
+                    run_id=run_id,
+                    equity_df=result["equity_curve"],
+                    trades_df=result.get("trades"),
+                    reason="all_runs",
+                )
         except Exception as e:
             logger.error(f"Failed to insert run {rec.run_uuid}: {e}")

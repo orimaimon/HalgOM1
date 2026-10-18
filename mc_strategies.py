@@ -19,6 +19,9 @@ from strategies.top_n_volume_sector import TopNVolumeSectorStrategy
 from strategies.momentum_classic import MomentumStrategy
 from strategies.top_n_volume_trend import TopNVolumeTrendStrategy
 from strategies.rsi_meanrev import RSIMeanReversionStrategy
+from strategies.factor_combo import FactorComboStrategy
+from strategies.top_n_volume_delta import TopNVolumeDeltaStrategy
+from strategies.top_n_dvmc import TopNDvMcStrategy
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -108,12 +111,68 @@ def build_topn_strategy(params: Dict[str, Any]):
         sizing_method=params["sizing_method"],
         min_price=float(params["min_price"]),
         use_regime_filter=bool(params["use_regime_filter"]),
+        regime_entry_buffer=float(params.get("regime_entry_buffer", 0.0)),
+        regime_confirm_days=int(params.get("regime_confirm_days", 1)),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TopN Volume Focused — narrowed search around the high-performance zone
+# Data-driven: MC batch fef04bf7 showed top_n=3-7 and hold_days=90-200
+# produce median CAGR 16-21%, well above the full-range sweep.
+# ══════════════════════════════════════════════════════════════════════════════
+
+TOPN_FOCUSED_PARAM_SPACE = ParamSpace({
+    "top_n":              ParamSpec("int_uniform", (3, 7)),
+    "hold_days":          ParamSpec("int_uniform", (60, 210)),
+    "sizing_method":      ParamSpec("choice", ("equal", "relative_dv")),
+    "min_price":          ParamSpec("loguniform", (1.0, 10.0)),
+    "use_regime_filter":  ParamSpec("choice", (True, False)),
+})
+
+def build_topn_focused_strategy(params: Dict[str, Any]):
+    return TopNVolumeStrategy(
+        top_n=int(params["top_n"]),
+        hold_days=int(params["hold_days"]),
+        sizing_method=params["sizing_method"],
+        min_price=float(params["min_price"]),
+        use_regime_filter=bool(params["use_regime_filter"]),
+        regime_entry_buffer=float(params.get("regime_entry_buffer", 0.0)),
+        regime_confirm_days=int(params.get("regime_confirm_days", 1)),
     )
 
 TOPN_COLS_NEEDED = [
     'Date', 'Ticker', 'Type', 'Adj_Close', 'Dollar_Volume_20d_Avg',
     'SPY_Close', 'SPY_SMA_200'
 ]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TopN Volume Focused V2 — adds regime_entry_buffer + regime_confirm_days
+# Fixes known-good params (equal sizing, regime=True) to focus search budget
+# on the two new axes uncovered by WF regime comparison (batch 8fe1fba7).
+# ══════════════════════════════════════════════════════════════════════════════
+
+TOPN_FOCUSED_V2_PARAM_SPACE = ParamSpace({
+    "top_n":                ParamSpec("int_uniform", (3, 8)),
+    "hold_days":            ParamSpec("int_uniform", (60, 210)),
+    "sizing_method":        ParamSpec("constant", "equal"),
+    "min_price":            ParamSpec("loguniform", (1.0, 10.0)),
+    "use_regime_filter":    ParamSpec("constant", True),
+    "regime_entry_buffer":  ParamSpec("choice", (0.0, 0.01, 0.02, 0.03, 0.04, 0.05)),
+    "regime_confirm_days":  ParamSpec("int_uniform", (1, 7)),
+})
+
+def build_topn_focused_v2_strategy(params: Dict[str, Any]):
+    return TopNVolumeStrategy(
+        top_n=int(params["top_n"]),
+        hold_days=int(params["hold_days"]),
+        sizing_method=str(params["sizing_method"]),
+        min_price=float(params["min_price"]),
+        use_regime_filter=bool(params["use_regime_filter"]),
+        regime_entry_buffer=float(params.get("regime_entry_buffer", 0.0)),
+        regime_confirm_days=int(params.get("regime_confirm_days", 1)),
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -293,11 +352,142 @@ MOMENTUM_COLS_NEEDED = [
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Factor Combo — parameter space
+# ══════════════════════════════════════════════════════════════════════════════
+
+FACTOR_COMBO_PARAM_SPACE = ParamSpace({
+    "top_n":              ParamSpec("int_uniform", (5, 20)),
+    "hold_days":          ParamSpec("int_uniform", (10, 60)),
+    "momentum_weight":    ParamSpec("uniform", (0.0, 1.0)),
+    "rsi_weight":         ParamSpec("uniform", (0.0, 1.0)),
+    "volume_weight":      ParamSpec("uniform", (0.0, 1.0)),
+    "min_price":          ParamSpec("loguniform", (1.0, 30.0)),
+    "min_dollar_volume":  ParamSpec("loguniform", (5_000_000, 50_000_000)),
+    "stop_loss_pct":      ParamSpec("uniform", (0.05, 0.25)),
+    "use_regime_filter":  ParamSpec("choice", (True, False)),
+})
+
+def build_factor_combo_strategy(params: Dict[str, Any]):
+    # Normalize weights
+    total = params["momentum_weight"] + params["rsi_weight"] + params["volume_weight"]
+    if total == 0:
+        mw, rw, vw = 0.33, 0.33, 0.34
+    else:
+        mw = params["momentum_weight"] / total
+        rw = params["rsi_weight"] / total
+        vw = params["volume_weight"] / total
+
+    return FactorComboStrategy(
+        top_n=int(params["top_n"]),
+        hold_days=int(params["hold_days"]),
+        momentum_weight=mw,
+        rsi_weight=rw,
+        volume_weight=vw,
+        min_price=float(params["min_price"]),
+        min_dollar_volume=float(params["min_dollar_volume"]),
+        stop_loss_pct=float(params["stop_loss_pct"]),
+        use_regime_filter=bool(params["use_regime_filter"]),
+    )
+
+FACTOR_COMBO_COLS_NEEDED = list(set(MOMENTUM_COLS_NEEDED + RSI_MEANREV_COLS_NEEDED))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TopN Volume Delta (Surge) — parameter space
+# ══════════════════════════════════════════════════════════════════════════════
+
+TOPN_DELTA_PARAM_SPACE = ParamSpace({
+    "top_n":              ParamSpec("int_uniform", (5, 25)),
+    "hold_days":          ParamSpec("int_uniform", (5, 120)),
+    "min_vol_surge":      ParamSpec("uniform", (0.5, 3.0)),
+    "min_price":          ParamSpec("loguniform", (1.0, 50.0)),
+    "stop_loss_pct":      ParamSpec("uniform", (0.05, 0.30)),
+    "use_regime_filter":  ParamSpec("choice", (True, False)),
+})
+
+def build_topn_delta_strategy(params: Dict[str, Any]):
+    return TopNVolumeDeltaStrategy(
+        top_n=int(params["top_n"]),
+        hold_days=int(params["hold_days"]),
+        min_vol_surge=float(params["min_vol_surge"]),
+        min_price=float(params["min_price"]),
+        stop_loss_pct=float(params["stop_loss_pct"]),
+        use_regime_filter=bool(params["use_regime_filter"]),
+    )
+
+TOPN_DELTA_COLS_NEEDED = list(set(TOPN_COLS_NEEDED + ["Volume"]))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TopN DV/MC (Turnover Ratio) — parameter space
+# ══════════════════════════════════════════════════════════════════════════════
+
+DVMC_PARAM_SPACE = ParamSpace({
+    "top_n":             ParamSpec("int_uniform", (5, 20)),
+    "hold_days":         ParamSpec("int_uniform", (15, 90)),
+    "min_price":         ParamSpec("loguniform",  (3.0, 20.0)),
+    "min_market_cap":    ParamSpec("loguniform",  (500_000_000, 10_000_000_000)),
+    "min_dollar_volume": ParamSpec("loguniform",  (10_000_000, 200_000_000)),
+    "dvmc_weight":       ParamSpec("uniform",     (0.1, 0.6)),
+    "mom_weight":        ParamSpec("uniform",     (0.2, 0.7)),
+    "vol_weight":        ParamSpec("uniform",     (0.0, 0.4)),
+    "momentum_col":      ParamSpec("choice",      ("Return_60d_Pct", "Return_120d_Pct", "Return_252d_Pct")),
+    "min_momentum":      ParamSpec("uniform",     (0.0, 0.20)),
+    "stop_loss_pct":     ParamSpec("uniform",     (0.05, 0.25)),
+    "use_regime_filter": ParamSpec("choice",      (True, False)),
+    "sizing_method":     ParamSpec("choice",      ("equal", "score_weighted")),
+})
+
+def build_dvmc_strategy(params: Dict[str, Any]):
+    return TopNDvMcStrategy(
+        top_n=int(params["top_n"]),
+        hold_days=int(params["hold_days"]),
+        min_price=float(params["min_price"]),
+        min_market_cap=float(params["min_market_cap"]),
+        min_dollar_volume=float(params["min_dollar_volume"]),
+        dvmc_weight=float(params["dvmc_weight"]),
+        mom_weight=float(params["mom_weight"]),
+        vol_weight=float(params["vol_weight"]),
+        momentum_col=params["momentum_col"],
+        min_momentum=float(params["min_momentum"]),
+        stop_loss_pct=float(params["stop_loss_pct"]),
+        use_regime_filter=bool(params["use_regime_filter"]),
+        sizing_method=params["sizing_method"],
+    )
+
+DVMC_COLS_NEEDED = [
+    'Date', 'Ticker', 'Type', 'Adj_Close',
+    'Dollar_Volume_20d_Avg', 'Market_Cap',
+    'Return_60d_Pct', 'Return_120d_Pct', 'Return_252d_Pct',
+    'Daily_Volatility_20d',
+    'SPY_Close', 'SPY_SMA_200', 'Market_Regime',
+]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Registry
 # ══════════════════════════════════════════════════════════════════════════════
 
 STRATEGIES = {
-    
+
+    "dvmc": {
+        "param_space": DVMC_PARAM_SPACE,
+        "builder": build_dvmc_strategy,
+        "cols_needed": DVMC_COLS_NEEDED,
+        "display_name": "TopN DV/MC Turnover Ratio",
+    },
+    "topn_delta": {
+        "param_space": TOPN_DELTA_PARAM_SPACE,
+        "builder": build_topn_delta_strategy,
+        "cols_needed": TOPN_DELTA_COLS_NEEDED,
+        "display_name": "TopN Volume + Surge Check",
+    },
+    "factor_combo": {
+        "param_space": FACTOR_COMBO_PARAM_SPACE,
+        "builder": build_factor_combo_strategy,
+        "cols_needed": FACTOR_COMBO_COLS_NEEDED,
+        "display_name": "Factor Combo (Mom+RSI+Vol)",
+    },
     "topn_trend": {
         "param_space": TOPN_TREND_PARAM_SPACE,
         "builder": build_topn_trend_strategy,
@@ -309,6 +499,18 @@ STRATEGIES = {
         "builder": build_topn_strategy,
         "cols_needed": TOPN_COLS_NEEDED,
         "display_name": "TopNVolumeStrategy",
+    },
+    "topn_focused": {
+        "param_space": TOPN_FOCUSED_PARAM_SPACE,
+        "builder": build_topn_focused_strategy,
+        "cols_needed": TOPN_COLS_NEEDED,
+        "display_name": "TopNVolume Focused (top_n 3-7)",
+    },
+    "topn_focused_v2": {
+        "param_space": TOPN_FOCUSED_V2_PARAM_SPACE,
+        "builder": build_topn_focused_v2_strategy,
+        "cols_needed": TOPN_COLS_NEEDED,
+        "display_name": "TopNVolume Focused V2 (regime_entry_buffer + confirm_days)",
     },
     "momentum": {
         "param_space": MOMENTUM_PARAM_SPACE,

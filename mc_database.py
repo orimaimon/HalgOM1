@@ -132,6 +132,59 @@ CREATE TABLE IF NOT EXISTS trades (
 
 CREATE INDEX IF NOT EXISTS idx_trades_run    ON trades(run_id);
 CREATE INDEX IF NOT EXISTS idx_trades_ticker ON trades(ticker);
+
+-- ════════════════════════════════════════════════════════
+-- Analytical views
+-- ════════════════════════════════════════════════════════
+
+CREATE VIEW IF NOT EXISTS v_runs_params AS
+SELECT
+    r.run_id, r.run_uuid, r.batch_id, r.strategy_name, r.status,
+    r.cagr_pct, r.max_drawdown_pct, r.sharpe, r.sortino, r.calmar,
+    r.excess_cagr_spy, r.excess_cagr_qqq, r.alpha_vs_spy, r.alpha_vs_qqq,
+    r.win_rate_net_pct, r.total_trades, r.avg_hold_days, r.has_detail_data,
+    r.period_start, r.period_end,
+    CAST(json_extract(r.params_json, '$.top_n')             AS INTEGER) AS top_n,
+    CAST(json_extract(r.params_json, '$.hold_days')         AS INTEGER) AS hold_days,
+    json_extract(r.params_json, '$.sizing_method')                      AS sizing_method,
+    CAST(json_extract(r.params_json, '$.min_price')         AS REAL)    AS min_price,
+    json_extract(r.params_json, '$.use_regime_filter')                  AS use_regime_filter,
+    json_extract(r.params_json, '$.stop_loss_pct')                      AS stop_loss_pct
+FROM runs r;
+
+CREATE VIEW IF NOT EXISTS v_ticker_stats AS
+SELECT
+    t.ticker,
+    t.sector,
+    COUNT(DISTINCT t.run_id)                                                          AS n_runs,
+    COUNT(*)                                                                           AS n_trades,
+    ROUND(100.0 * SUM(CASE WHEN t.net_pnl > 0 THEN 1 ELSE 0 END) / COUNT(*), 1)     AS win_rate_pct,
+    ROUND(AVG(t.net_pnl), 2)                                                          AS avg_net_pnl,
+    ROUND(SUM(t.net_pnl), 2)                                                          AS total_net_pnl,
+    ROUND(AVG(t.hold_days), 1)                                                        AS avg_hold_days,
+    ROUND(AVG(t.gross_pnl - t.net_pnl), 2)                                           AS avg_tax_per_trade
+FROM trades t
+JOIN runs r ON t.run_id = r.run_id
+WHERE r.status = 'completed'
+GROUP BY t.ticker
+ORDER BY n_runs DESC;
+
+CREATE VIEW IF NOT EXISTS v_ticker_by_batch AS
+SELECT
+    r.batch_id,
+    t.ticker,
+    t.sector,
+    COUNT(DISTINCT t.run_id)                                                          AS n_runs,
+    COUNT(*)                                                                           AS n_trades,
+    ROUND(100.0 * SUM(CASE WHEN t.net_pnl > 0 THEN 1 ELSE 0 END) / COUNT(*), 1)     AS win_rate_pct,
+    ROUND(AVG(t.net_pnl), 2)                                                          AS avg_net_pnl,
+    ROUND(SUM(t.net_pnl), 2)                                                          AS total_net_pnl,
+    ROUND(AVG(t.hold_days), 1)                                                        AS avg_hold_days
+FROM trades t
+JOIN runs r ON t.run_id = r.run_id
+WHERE r.status = 'completed'
+GROUP BY r.batch_id, t.ticker
+ORDER BY r.batch_id, n_runs DESC;
 """
 
 
@@ -426,7 +479,7 @@ class MCDatabase:
 
             cur = conn.execute(f"""
                 SELECT run_id FROM runs
-                WHERE batch_id = ? AND {metric} IS NOT NULL
+                WHERE batch_id = ? AND status = 'completed' AND {metric} IS NOT NULL
                 ORDER BY {metric} ASC
                 LIMIT ?
             """, (batch_id, bottom_n))

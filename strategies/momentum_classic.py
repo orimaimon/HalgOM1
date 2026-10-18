@@ -45,10 +45,8 @@ class MomentumStrategy(BaseEquityStrategy):
 
             # תנאי 1: פילטר שוק (Regime) - בורחים הכל כשמתחיל Bear Market
             if self.use_regime_filter and not is_bull:
-                sells.append(Order(ticker, current_date, current_price, pos["shares"], "SELL", "Regime Exit",
-                                   avg_dollar_volume=dv))
-                self.peak_prices.pop(ticker, None)
-                continue
+                self.peak_prices.clear()
+                return self._generate_regime_exit_orders(current_date, day_data, portfolio)
 
             # תנאי 2: ATR Trailing Stop - חיתוך הפסדים
             atr = row.get('ATR_14', 0)

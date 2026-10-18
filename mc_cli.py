@@ -37,6 +37,87 @@ logger = logging.getLogger("mc_cli")
 # sub-commands
 # ══════════════════════════════════════════════════════════════════════════════
 
+def cmd_backfill_trades(args):
+    """Re-run all completed runs in a batch that have no trade data, save trades+equity."""
+    import json, os, sqlite3, time
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    from mc_engine import _worker_execute
+    from mc_strategies import get_strategy_config
+
+    db = MCDatabase(args.db_path)
+    batch = db.get_batch(args.batch_id)
+    if not batch:
+        print(f"ERROR: batch {args.batch_id} not found.")
+        sys.exit(1)
+
+    with sqlite3.connect(args.db_path) as conn:
+        rows = conn.execute("""
+            SELECT run_id, run_uuid, strategy_name, params_json
+            FROM runs
+            WHERE batch_id = ? AND status = 'completed' AND has_detail_data = 0
+            ORDER BY run_id
+        """, (args.batch_id,)).fetchall()
+
+    if not rows:
+        print(f"All runs in batch {args.batch_id} already have trade data.")
+        return
+
+    print(f"Backfilling trades for {len(rows)} runs in batch {args.batch_id} "
+          f"({batch['strategy_name']})...")
+
+    date_start = batch.get("data_period_start")
+    date_end   = batch.get("data_period_end")
+
+    tasks = []
+    for run_id, run_uuid, strategy_name, params_json in rows:
+        strat_cfg = get_strategy_config(strategy_name)
+        tasks.append({
+            "_run_id": run_id,
+            "run_uuid": run_uuid,
+            "strategy_name": strategy_name,
+            "params": json.loads(params_json),
+            "data_path": args.data_path,
+            "cols_needed": strat_cfg["cols_needed"],
+            "initial_capital": batch["initial_capital"],
+            "commission": args.commission,
+            "slippage": args.slippage,
+            "benchmarks_path": None,
+            "return_details": True,
+            "date_filter": (date_start, date_end),
+        })
+
+    workers = args.workers if args.workers > 0 else min(os.cpu_count() or 4, 6)
+    t0 = time.time()
+    n_saved = 0
+
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        worker_tasks = [{k: v for k, v in t.items() if not k.startswith("_")} for t in tasks]
+        fut_to_run_id = {ex.submit(_worker_execute, wt): t["_run_id"]
+                         for t, wt in zip(tasks, worker_tasks)}
+        for i, fut in enumerate(as_completed(fut_to_run_id), 1):
+            run_id = fut_to_run_id[fut]
+            try:
+                result = fut.result(timeout=600)
+            except Exception as e:
+                logger.error(f"Worker failed for run_id={run_id}: {e}")
+                continue
+            if result["status"] == "completed" and result.get("equity_curve") is not None:
+                try:
+                    db.insert_detail_data(run_id, result["equity_curve"],
+                                          result.get("trades"), reason="backfill")
+                    n_saved += 1
+                except Exception as e:
+                    logger.error(f"Failed to save run_id={run_id}: {e}")
+            if i % 25 == 0 or i == len(tasks):
+                elapsed = time.time() - t0
+                rate = i / elapsed if elapsed > 0 else 1
+                eta = (len(tasks) - i) / rate
+                print(f"  [{i}/{len(tasks)}] saved={n_saved} | "
+                      f"{rate:.1f} runs/s | ETA {eta/60:.1f}min")
+
+    print(f"\nDone: {n_saved}/{len(rows)} runs updated with trade data.")
+
+
 def cmd_run(args):
     if args.strategy not in STRATEGIES:
         print(f"ERROR: unknown strategy '{args.strategy}'. Available: {list(STRATEGIES.keys())}")
@@ -58,6 +139,7 @@ def cmd_run(args):
         top_n_detail=args.top_n_detail,
         bottom_n_detail=args.bottom_n_detail,
         notes=args.notes or "",
+        save_trades=args.save_trades,
     )
     runner = MCRunner(config)
     batch_id = runner.run()
@@ -297,6 +379,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--bottom-n-detail", type=int, default=10,
                    help="Number of bottom runs to save detail for")
     r.add_argument("--notes", default=None, help="Free-form notes about this batch")
+    r.add_argument("--save-trades", action="store_true",
+                   help="Save trades+equity for ALL runs (enables full ticker analytics)")
     _add_common_args(r)
     r.set_defaults(func=cmd_run)
 
@@ -363,6 +447,17 @@ def build_parser() -> argparse.ArgumentParser:
     dl.add_argument("--yes", action="store_true", help="Skip confirmation")
     _add_common_args(dl)
     dl.set_defaults(func=cmd_delete)
+
+    # backfill-trades
+    bf = sub.add_parser("backfill-trades",
+                         help="Backfill trades+equity for all runs in a batch missing detail data")
+    bf.add_argument("--batch-id", required=True)
+    bf.add_argument("--workers", type=int, default=0, help="0 = auto")
+    bf.add_argument("--data-path", default="DB/simulation_db.parquet")
+    bf.add_argument("--commission", type=float, default=1.0)
+    bf.add_argument("--slippage", type=float, default=0.001)
+    _add_common_args(bf)
+    bf.set_defaults(func=cmd_backfill_trades)
 
     return p
 

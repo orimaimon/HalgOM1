@@ -87,6 +87,13 @@ class TestTaxLedger:
         net = ledger.process_realized_pnl("2020-01-01", gross, "Z")
         assert net == pytest.approx(gross * (1 - TAX_RATE))
 
+    def test_gain_with_zero_carryforward_no_name_error(self):
+        ledger = TaxLedger(TAX_RATE)
+        net = ledger.process_realized_pnl("2020-01-01", 500.0, "AAPL")
+        assert ledger.history[0]["Loss_Offset"] == pytest.approx(0.0)
+        assert ledger.history[0]["Taxable_Amount"] == pytest.approx(500.0)
+        assert net == pytest.approx(375.0)
+
 
 # ─── Portfolio — Slippage ────────────────────────────────────────────────────
 

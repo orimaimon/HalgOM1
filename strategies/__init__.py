@@ -8,6 +8,8 @@ from .top_n_volume_sector import TopNVolumeSectorStrategy
 from .momentum_classic import MomentumStrategy
 from .top_n_volume_trend import TopNVolumeTrendStrategy
 from .rsi_meanrev import RSIMeanReversionStrategy
+from .factor_combo import FactorComboStrategy
+from .top_n_volume_delta import TopNVolumeDeltaStrategy
 
 
 __all__ = [
@@ -17,5 +19,7 @@ __all__ = [
     "TopNVolumeSectorStrategy",
     "MomentumStrategy",
     "TopNVolumeTrendStrategy",
-    "RSIMeanReversionStrategy"
+    "RSIMeanReversionStrategy",
+    "FactorComboStrategy",
+    "TopNVolumeDeltaStrategy"
 ]
