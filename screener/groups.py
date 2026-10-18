@@ -13,6 +13,8 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
+from screener.theme import FLAT, GAIN, LOSS
+
 PERF = ["change", "perf_w", "perf_m", "perf_q", "perf_h", "perf_ytd", "perf_y"]
 OTHER = "Other"
 SEP = "\x1f"     # treemap id separator — cannot appear in names (industries contain "/", e.g. "Investment Banks/Brokers")
@@ -73,7 +75,7 @@ def heatmap_figure(df: pd.DataFrame, color: str = "change", limit: float = 3.0, 
     fig = go.Figure(go.Treemap(
         ids=n["id"], parents=n["parent"], labels=n["label"], values=n["value"], branchvalues="total",
         customdata=np.column_stack([n["color"].to_numpy(dtype=float), n["text"]]),
-        marker=dict(colors=shown, colorscale=[[0, "#cf222e"], [0.5, "#3a3f47"], [1, "#1a7f37"]],
+        marker=dict(colors=shown, colorscale=[[0, LOSS], [0.5, FLAT], [1, GAIN]],
                     cmin=-limit, cmax=limit, cmid=0, showscale=True,
                     colorbar=dict(title="%", ticksuffix="%", thickness=12)),
         texttemplate="<b>%{label}</b><br>%{customdata[0]:+.2f}%",

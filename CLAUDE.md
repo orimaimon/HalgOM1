@@ -61,6 +61,8 @@ screener/.venv/bin/python -m streamlit run screener/app.py
 - `screener/market.py` — regime header, same rules as `compute_macro_regime` in the HalgOM backtester;
   plus SPY ADX trend strength as a separate badge (does not change the regime rules).
 - `screener/export.py` — Excel (numbers stay numeric; custom formats like `0.00,,,"B"`), CSV, TradingView watchlist.
+- `.streamlit/config.toml` + `screener/theme.py` — the look ("ledger": paper background, ink-blue accent,
+  IBM Plex Sans Hebrew). Green/red mean gain/loss only; take colors from `theme.py`, don't hard-code hex.
 - `screener/app.py` — Streamlit UI (pages: Screener / Groups / Heatmap). Selecting a row embeds the official
   TradingView Advanced Chart widget. Widget state is re-assigned each run (`keep_widget_state`) so filters
   survive a visit to another page.
