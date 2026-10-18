@@ -28,6 +28,7 @@ from screener import history  # noqa: E402
 from screener import i18n as I  # noqa: E402
 from screener import lifecycle  # noqa: E402
 from screener import presets as P  # noqa: E402
+from screener import theme  # noqa: E402
 from screener.data import Store, load_universe  # noqa: E402
 from screener.data.store import DATA_DIR  # noqa: E402
 from screener.data.tradingview import fetch_market, fetch_universe  # noqa: E402
@@ -278,12 +279,12 @@ def column_config(key: str):
 
 
 def hebrew_note(text: str) -> None:
-    st.html(f'<div dir="rtl" style="text-align:right;font-size:0.85rem;color:#6b7280">{html.escape(text)}</div>')
+    st.html(f'<div dir="rtl" class="hs-note" style="text-align:right">{html.escape(text)}</div>')
 
 
 def _sign_color(v) -> str:
     if isinstance(v, (int, float)) and not pd.isna(v) and v != 0:
-        return "color: #1a7f37" if v > 0 else "color: #cf222e"
+        return f"color: {theme.GAIN}" if v > 0 else f"color: {theme.LOSS}"
     return ""
 
 
@@ -343,9 +344,14 @@ def trend_text(label: str) -> str:
 
 
 def header(snap, n_universe: int) -> None:
+    with st.container(key="masthead"):
+        _header(snap, n_universe)
+
+
+def _header(snap, n_universe: int) -> None:
     left, mid, right = st.columns([2.2, 5, 2.3], vertical_alignment="center")
     with left:
-        st.markdown("### 📈 HalgOM Screener")
+        st.html('<div class="hs-brand"><i></i><b>HalgOM</b><span>Screener</span></div>')
         st.caption(f"v{VERSION} · {t('US stocks')} · {n_universe:,} {t('in universe')}")
         st.segmented_control("Language", list(I.LANGS), key="lang", format_func=I.LANGS.get, required=True,
                              label_visibility="collapsed")
@@ -354,7 +360,7 @@ def header(snap, n_universe: int) -> None:
         if market is None:
             st.caption(t("Market data unavailable"))
         else:
-            cols = st.columns([1.3, 1, 1, 1, 1])
+            cols = st.container(key="tape").columns([1.3, 1, 1, 1, 1])
             colors = {"bull": "green", "bear": "red", "sideways": "orange", "unknown": "gray"}
             with cols[0]:
                 st.badge(t(regime.label.upper()), color=colors[regime.label], icon=":material/monitoring:",
@@ -377,12 +383,13 @@ def header(snap, n_universe: int) -> None:
         src = t({"live": "live", "cache": "cached", "stale": "OFFLINE"}[snap.source])
         st.caption(f"{t('Data as of')} **{snap.fetched_at:%Y-%m-%d %H:%M}** ({src}) · {source_text(snap.meta)}",
                    help="מקור הנתונים ומצב העדכון כפי שהספק מדווח. delayed = בעיכוב, realtime = בזמן אמת")
-        r1, r2 = st.columns([2.2, 1])
-        if r1.button(f"🔄 {t('Refresh data')}", use_container_width=True):
+        r1, r2 = st.columns([1.7, 1.2])
+        if r1.button(t("Refresh data"), icon=":material/refresh:", use_container_width=True):
             get_data(force=True)
             _market.clear()
             st.rerun()
-        with r2.popover(f"⏻ {t('Exit')}", use_container_width=True, help="סגירת הסקרינר"):
+        with r2.popover(t("Exit"), icon=":material/power_settings_new:", use_container_width=True,
+                        help="סגירת הסקרינר"):
             hebrew_note("סוגר את הסקרינר ואת החלון השחור. בפעם הבאה פותחים שוב מהקיצור בשולחן העבודה.")
             st.button(t("Close the screener"), key="exit", type="primary", on_click=on_exit)
     if snap.source == "stale":
@@ -435,7 +442,7 @@ def toolbar(presets: dict[str, P.Preset]) -> None:
     c4.toggle(t("Ascending"), key="sort_asc")
     junk_toggle(c7)
     c5.button(t("Reset"), on_click=on_reset, use_container_width=True, help="ניקוי כל הפילטרים")
-    with c6.popover("💾", use_container_width=True, help="שמירת הסריקה הנוכחית / מחיקת סריקה שמורה"):
+    with c6.popover("", icon=":material/bookmark:", use_container_width=True, help="שמירת הסריקה הנוכחית / מחיקת סריקה שמורה"):
         st.text_input(t("Save current screen as"), key="save_name")
         st.button(t("Save"), on_click=on_save, type="primary")
         user = P.load_user()
@@ -472,8 +479,9 @@ def filter_panel(df: pd.DataFrame) -> None:
 def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
             prev: history.Previous | None) -> None:
     top = st.columns([3, 5, 1.6], vertical_alignment="center")
-    top[0].markdown(f"#### {len(res):,} {t('results')}"
-                    + (f" / {len(universe):,}" if len(res) != len(universe) else ""))
+    of = f"<small>/ {len(universe):,}</small>" if len(res) != len(universe) else ""
+    top[0].markdown(f'<div class="hs-count">{len(res):,} {html.escape(t("results"))}{of}</div>',
+                    unsafe_allow_html=True)
     with top[1]:
         st.segmented_control("View", list(VIEWS), key="view", label_visibility="collapsed", required=True,
                              format_func=t)
@@ -529,20 +537,20 @@ DETAIL_FIELDS = [
 def snapshot_table(row: pd.Series) -> str:
     """Compact Finviz-style key/value table (HTML, no scripts)."""
     end = "left" if L() == I.HE else "right"                 # values sit at the far end of the row
-    out = ['<table style="width:100%;border-collapse:collapse;font-size:13px">']
+    out = ['<table class="hs-snapshot" style="width:100%;border-collapse:collapse;font-size:13px">']
     for title, keys in DETAIL_FIELDS:
-        out.append(f'<tr><td colspan="2" style="padding:10px 4px 3px;font-weight:600;'
-                   f'border-bottom:1px solid #d0d7de">{html.escape(t(title))}</td></tr>')
+        out.append(f'<tr><td colspan="2" style="padding:12px 4px 3px;font-weight:600;color:{theme.ACCENT};'
+                   f'border-bottom:1px solid {theme.RULE}">{html.escape(t(title))}</td></tr>')
         for k in keys:
             v = fmt_value(k, row.get(k))
             color = ""
             if k in export._SIGNED and v.startswith(("+", "-")) and v not in ("+0.00%", "-0.00%"):
-                color = "color:#1a7f37;" if v.startswith("+") else "color:#cf222e;"
+                color = f"color:{theme.GAIN};" if v.startswith("+") else f"color:{theme.LOSS};"
             out.append(f'<tr title="{html.escape(COLUMNS[k].help)}">'
-                       f'<td style="padding:2px 4px;color:#57606a;border-bottom:1px solid #eef1f4">'
+                       f'<td style="padding:3px 4px;color:{theme.MUTED};border-bottom:1px solid {theme.HAIRLINE}">'
                        f'{html.escape(col_label(k))}</td>'
-                       f'<td style="padding:2px 4px;text-align:{end};font-weight:600;{color}'
-                       f'border-bottom:1px solid #eef1f4">{html.escape(v)}</td></tr>')
+                       f'<td dir="ltr" style="padding:3px 4px;text-align:{end};font-weight:600;{color}'
+                       f'border-bottom:1px solid {theme.HAIRLINE}">{html.escape(v)}</td></tr>')
     out.append("</table>")
     return "".join(out)
 
@@ -552,7 +560,7 @@ def detail(row: pd.Series) -> None:
     chart, info = st.columns([3, 1.25])
     with chart:
         tradingview_chart(row["tv_symbol"])
-    with info:
+    with info.container(key="detail"):
         st.markdown(f"### {row['ticker']}")
         sector, country = I.value("sector", row["sector"], L()), I.value("country", row["country"], L())
         lrm = "\u200e"     # keeps a trailing "." of English names ("Apple Inc.") in place in RTL
@@ -600,15 +608,16 @@ def export_bar(res: pd.DataFrame, view_cols: list[str], snap) -> None:
         return data
 
     empty = res.empty
-    c1.download_button("📊 Excel", xlsx, f"{stem}.xlsx", on_click="ignore", disabled=empty,
+    c1.download_button("Excel", xlsx, f"{stem}.xlsx", on_click="ignore", disabled=empty,
+                       icon=":material/table_view:",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        use_container_width=True, help="קובץ אקסל מעוצב + גיליון עם הפילטרים שהופעלו")
-    c2.download_button("📄 CSV", csv, f"{stem}.csv", mime="text/csv", on_click="ignore", disabled=empty,
-                       use_container_width=True)
-    c3.download_button(f"📋 {t('TradingView list')}", watchlist, f"{stem}_tradingview.txt", mime="text/plain",
-                       on_click="ignore", disabled=empty, use_container_width=True,
+    c2.download_button("CSV", csv, f"{stem}.csv", mime="text/csv", on_click="ignore", disabled=empty,
+                       icon=":material/description:", use_container_width=True)
+    c3.download_button(t("TradingView list"), watchlist, f"{stem}_tradingview.txt", mime="text/plain",
+                       on_click="ignore", disabled=empty, use_container_width=True, icon=":material/list_alt:",
                        help="ייבוא ל-TradingView: Watchlist ← Import list. המניות מחולקות לפי סקטורים")
-    with c4.popover(f"🔤 {t('Tickers')}", use_container_width=True, disabled=empty):
+    with c4.popover(t("Tickers"), icon=":material/content_copy:", use_container_width=True, disabled=empty):
         st.caption("לחץ על אייקון ההעתקה בפינה")
         st.code(export.tickers_text(res), language=None, wrap_lines=True)
     hebrew_note(f"עותק של כל קובץ שמורד נשמר גם בתיקייה: {export.EXPORT_DIR}")
@@ -696,30 +705,13 @@ def heatmap_page(universe: pd.DataFrame, res: pd.DataFrame) -> None:
 
 # ─────────────────────────── page ──────────────────────────────────────────
 
-CSS = """
-<style>
-  .block-container {padding-top: 3.5rem; padding-bottom: 2rem; max-width: 1800px;}  /* clear the fixed top bar */
-  [data-testid="stMetricValue"] {font-size: 1.6rem;}
-</style>
-"""
-# Hebrew: the interface runs right-to-left; tables, the heatmap, the chart and code stay left-to-right
-# (Streamlit's table can only pin columns on the left, and numbers/tickers read left-to-right).
-RTL_CSS = """
-<style>
-  .block-container, [data-baseweb="popover"], [data-testid="stTooltipContent"],
-  [data-testid="stToast"] {direction: rtl; text-align: right;}
-  [data-testid="stDataFrame"], [data-testid="stPlotlyChart"], [data-testid="stIFrame"],
-  [data-testid="stCode"], [data-testid="stMetricValue"], [data-testid="stMetricDelta"] {direction: ltr;}
-  [data-testid="stMetricValue"] {text-align: right;}
-</style>
-"""
-
-
 def goodbye() -> None:
     """Shown after Exit: the server stops a moment later, so this is the last thing the tab shows."""
-    st.html('<div dir="rtl" style="text-align:center;margin-top:18vh;font-size:1.6rem">'
-            '👋 הסקרינר נסגר</div>'
-            '<div dir="rtl" style="text-align:center;margin-top:1rem;color:#57606a">'
+    st.html('<div class="hs-brand" style="justify-content:center;margin-top:18vh"><i></i><b>HalgOM</b>'
+            '<span>Screener</span></div>'
+            '<div dir="rtl" style="text-align:center;margin-top:1.2rem;font-size:1.4rem;font-weight:600">'
+            'הסקרינר נסגר</div>'
+            f'<div dir="rtl" style="text-align:center;margin-top:0.6rem;color:{theme.MUTED}">'
             'אפשר לסגור את הלשונית הזו. כדי לפתוח שוב — לחיצה כפולה על הקיצור "HalgOM Screener" '
             'בשולחן העבודה.</div>')
     if not ss.get("exit_sent"):
@@ -730,7 +722,7 @@ def goodbye() -> None:
 def main() -> None:
     _setup_logging()
     ss.setdefault("lang", I.HE)
-    st.html(CSS + (RTL_CSS if L() == I.HE else ""))
+    st.html(theme.CSS + (theme.RTL_CSS if L() == I.HE else ""))
     if ss.get("exiting"):
         goodbye()
         return

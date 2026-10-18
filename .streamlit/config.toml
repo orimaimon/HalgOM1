@@ -1,0 +1,43 @@
+# HalgOM Screener look ("ledger"): warm paper, ink-blue accent, IBM Plex Sans Hebrew.
+# Green and red mean gain and loss only, so the accent is blue, not Streamlit's default red.
+# Streamlit reads this file from the folder it is started in (run_screener.bat starts it in the repo root).
+# Colors used in our own HTML/CSS/Plotly live in screener/theme.py; keep the two in sync.
+
+[theme]
+base = "light"
+primaryColor = "#1F4E8C"
+backgroundColor = "#F7F5EF"
+secondaryBackgroundColor = "#ECE9E0"
+textColor = "#1B2430"
+borderColor = "#D8D3C6"
+showWidgetBorder = true
+linkColor = "#1F4E8C"
+linkUnderline = false
+baseRadius = "small"
+buttonRadius = "small"
+baseFontSize = 15
+font = "IBM Plex Sans Hebrew:https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@300;400;500;600;700&display=swap, sans-serif"
+headingFont = "IBM Plex Sans Hebrew:https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@300;400;500;600;700&display=swap, sans-serif"
+codeFont = "IBM Plex Mono:https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap, monospace"
+headingFontWeights = [700, 600, 600, 600, 600, 600]
+metricValueFontSize = "1.45rem"
+metricValueFontWeight = 600
+codeBackgroundColor = "#EFEDE6"
+dataframeHeaderBackgroundColor = "#EFECE4"
+dataframeBorderColor = "#E4E0D5"
+greenColor = "#147A43"
+greenTextColor = "#106B3A"
+greenBackgroundColor = "#E1F0E6"
+redColor = "#C2352B"
+redTextColor = "#AE2E25"
+redBackgroundColor = "#F8E3E0"
+orangeColor = "#B5650D"
+orangeTextColor = "#9A5609"
+orangeBackgroundColor = "#F7EBD9"
+blueColor = "#1F4E8C"
+blueTextColor = "#1F4E8C"
+blueBackgroundColor = "#E2EAF4"
+grayColor = "#6B6A63"
+grayTextColor = "#5E5D57"
+grayBackgroundColor = "#EAE7DF"
+chartCategoricalColors = ["#1F4E8C", "#B5650D", "#147A43", "#7A4E9C", "#C2352B", "#2C8C99", "#8C7A1F", "#5E5D57"]
