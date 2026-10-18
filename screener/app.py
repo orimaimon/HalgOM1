@@ -25,6 +25,7 @@ import streamlit.components.v1 as components  # noqa: E402
 from screener import export  # noqa: E402
 from screener import groups as G  # noqa: E402
 from screener import history  # noqa: E402
+from screener import lifecycle  # noqa: E402
 from screener import presets as P  # noqa: E402
 from screener.data import Store, load_universe  # noqa: E402
 from screener.data.store import DATA_DIR  # noqa: E402
@@ -71,6 +72,12 @@ def _setup_logging() -> Path:
     root.addHandler(handler)
     root.info("screener %s started", VERSION)
     return log_dir / "screener.log"
+
+
+@st.cache_resource
+def _watchdog():
+    """One per server: stops it after 15 minutes with no open browser tab (lifecycle.py)."""
+    return lifecycle.start_idle_watchdog()
 
 
 @st.cache_resource
@@ -186,6 +193,10 @@ def on_save():
     ss.preset = USER_PREFIX + name
     ss.save_name = ""
     st.toast(f"Saved screen “{name}”", icon="💾")
+
+
+def on_exit():
+    ss.exiting = True
 
 
 def on_delete():
@@ -322,10 +333,14 @@ def header(snap, n_universe: int) -> None:
         src = {"live": "live", "cache": "cached", "stale": "OFFLINE"}[snap.source]
         st.caption(f"Data as of **{snap.fetched_at:%Y-%m-%d %H:%M}** ({src}) · {source_text(snap.meta)}",
                    help="מקור הנתונים ומצב העדכון כפי שהספק מדווח. delayed = בעיכוב, realtime = בזמן אמת")
-        if st.button("🔄 Refresh data", use_container_width=True):
+        r1, r2 = st.columns([2.2, 1])
+        if r1.button("🔄 Refresh data", use_container_width=True):
             get_data(force=True)
             _market.clear()
             st.rerun()
+        with r2.popover("⏻ Exit", use_container_width=True, help="סגירת הסקרינר"):
+            hebrew_note("סוגר את הסקרינר ואת החלון השחור. בפעם הבאה פותחים שוב מהקיצור בשולחן העבודה.")
+            st.button("Close the screener", key="exit", type="primary", on_click=on_exit)
     if snap.source == "stale":
         st.warning(f"⚠️ לא ניתן להתחבר ל-TradingView כרגע — מוצגים נתונים שמורים מ-"
                    f"{snap.fetched_at:%d/%m/%Y} בשעה {snap.fetched_at:%H:%M}. ננסה שוב אוטומטית בעוד כמה דקות.")
@@ -622,9 +637,25 @@ CSS = """
 """
 
 
+def goodbye() -> None:
+    """Shown after Exit: the server stops a moment later, so this is the last thing the tab shows."""
+    st.html('<div dir="rtl" style="text-align:center;margin-top:18vh;font-size:1.6rem">'
+            '👋 הסקרינר נסגר</div>'
+            '<div dir="rtl" style="text-align:center;margin-top:1rem;color:#57606a">'
+            'אפשר לסגור את הלשונית הזו. כדי לפתוח שוב — לחיצה כפולה על הקיצור "HalgOM Screener" '
+            'בשולחן העבודה.</div>')
+    if not ss.get("exit_sent"):
+        ss.exit_sent = True
+        lifecycle.stop_server("Exit button")
+
+
 def main() -> None:
     _setup_logging()
     st.html(CSS)
+    if ss.get("exiting"):
+        goodbye()
+        return
+    _watchdog()
     keep_widget_state()
     ss.setdefault("page", PAGES[0])
     ss.setdefault("view", "Overview")

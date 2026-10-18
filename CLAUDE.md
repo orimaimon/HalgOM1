@@ -53,6 +53,8 @@ Known: `tests/test_strategies.py::TestTopNVolumeStrategy::test_no_buys_in_bear_r
   columns (candles, N-month breakouts vs yesterday's high, crosses today, volume spike, consolidation).
 - `screener/history.py` — "New since yesterday": same pipeline on the previous snapshot day.
 - `screener/groups.py` — Groups page (sector/industry averages) and the plotly treemap heatmap.
+- `screener/lifecycle.py` — "Exit" button (clean `Runtime.stop()`, the console window closes) and an idle
+  watchdog that stops the server after 15 minutes with no open browser tab.
 - `screener/market.py` — regime header, same rules as `compute_macro_regime` in `DB/build_simulation_db.py`;
   plus SPY ADX trend strength as a separate badge (does not change the regime rules).
 - `screener/export.py` — Excel (numbers stay numeric; custom formats like `0.00,,,"B"`), CSV, TradingView watchlist.
@@ -63,6 +65,11 @@ Known: `tests/test_strategies.py::TestTopNVolumeStrategy::test_no_buys_in_bear_r
 Rules:
 - Keep the provider swappable: providers return canonical column keys from `fields.COLUMNS`.
 - `run_screener.bat` must stay ASCII with CRLF line endings (cmd breaks otherwise; see `.gitattributes`).
+- `run_screener.bat` updates itself (`git pull`) while cmd is running it, and cmd resumes at the same byte
+  offset: the update block (`if not defined SCREENER_NO_UPDATE ...`) must stay byte-identical at bytes
+  529–785. Edit below it freely; above it keep the length (pad the `rem ---` line). Tests enforce this.
+- Launcher behavior: fixed port 8501; a second launch only opens the browser (health check); a desktop
+  shortcut is created once (`screener/_data/shortcut.done`).
 - Built-in preset option labels must match filter labels exactly (tests enforce this).
 - `tests/test_screener.py::test_app_smoke` runs the whole app offline with `streamlit.testing.v1.AppTest`
   (provider and data dirs monkeypatched); paths in store/presets/export are resolved at call time for this.

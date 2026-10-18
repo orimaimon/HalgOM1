@@ -12,6 +12,7 @@ from openpyxl import load_workbook
 from screener import export
 from screener import groups as G
 from screener import history
+from screener import lifecycle
 from screener import presets as P
 from screener import signals as S
 from screener.data.store import Store, load_universe
@@ -577,6 +578,9 @@ def test_app_smoke(tmp_path, monkeypatch):
     monkeypatch.setattr(export, "EXPORT_DIR", tmp_path / "exports")
     monkeypatch.setattr(tv, "fetch_universe", lambda: raw)
     monkeypatch.setattr(tv, "fetch_market", lambda: market)
+    stops = []
+    monkeypatch.setattr(lifecycle, "start_idle_watchdog", lambda: None)
+    monkeypatch.setattr(lifecycle, "stop_server", lambda reason: stops.append(reason))
     snaps = tmp_path / "snapshots"
     snaps.mkdir()
     raw.head(250).to_parquet(snaps / f"{dt.date.today() - dt.timedelta(days=1)}.parquet")
@@ -628,6 +632,14 @@ def test_app_smoke(tmp_path, monkeypatch):
     assert at.session_state["hide_junk"] is False
     assert json.loads((tmp_path / "cache" / "latest_meta.json").read_text())["source"]["update_mode"] == "delayed"
 
+    # Exit: goodbye page, the server is asked to stop exactly once (even if the page reruns)
+    at.button(key="exit").click().run()
+    assert not at.exception, at.exception
+    assert stops == ["Exit button"]
+    at.run()
+    assert stops == ["Exit button"]
+    assert not at.dataframe                                      # only the goodbye page is left
+
 
 
 # ── review fixes ────────────────────────────────────────────────────────────
@@ -653,3 +665,85 @@ def test_six_month_breakdown():
     labels = option_labels(FILTERS_BY_KEY["breakout"])
     for months in ("1-month", "3-month", "6-month", "52-week"):
         assert f"New {months} high (breakout)" in labels and f"New {months} low (breakdown)" in labels
+
+
+
+# ── lifecycle: Exit button + idle watchdog ──────────────────────────────────
+
+def test_idle_watch_counts_consecutive_empty_polls():
+    w = lifecycle.IdleWatch(idle_polls=3)
+    assert [w.tick(n) for n in (0, 0, 1, 0, 0)] == [False] * 5     # an open tab resets the count
+    assert w.tick(0) is True
+    w = lifecycle.IdleWatch(idle_polls=2)
+    assert [w.tick(n) for n in (0, None, 0, 0)] == [False, False, False, True]   # unknown never stops
+
+
+def test_idle_watchdog_stops_server_once_idle():
+    import threading
+    counts = iter([2, 1, 0, 0, 0, 0, 0])
+    stopped = threading.Event()
+    reasons = []
+
+    def stop(reason):
+        reasons.append(reason)
+        stopped.set()
+
+    t = lifecycle.start_idle_watchdog(count=lambda: next(counts, 0), stop=stop, poll=0.01, idle_polls=3)
+    assert stopped.wait(5) and reasons == ["no browser tab for 3 checks"]
+    t.join(5)
+    assert not t.is_alive()
+
+
+def test_active_sessions_outside_a_server_is_unknown():
+    assert lifecycle.active_sessions() is None
+
+
+# ── launcher (run_screener.bat) ─────────────────────────────────────────────
+
+BAT = (ROOT / "run_screener.bat").read_bytes()
+# The update block exactly as in the first launcher users installed. git pull may rewrite the
+# running .bat, and cmd resumes at the same byte offset — so this block must end at byte 785.
+UPDATE_BLOCK = b"\r\n".join([
+    b'if not defined SCREENER_NO_UPDATE if exist ".git" (',
+    b"    where git >nul 2>nul",
+    b"    if not errorlevel 1 (",
+    b"        echo [2/3] Checking for updates...",
+    b"        git pull --ff-only --quiet || echo        update skipped - running the current version",
+    b"    )",
+    b")",
+    b"",
+])
+
+
+def test_launcher_is_ascii_crlf():
+    BAT.decode("ascii")
+    assert b"\n" not in BAT.replace(b"\r\n", b"")
+
+
+def test_launcher_update_block_frozen_at_offset():
+    assert BAT[529:785] == UPDATE_BLOCK
+    assert BAT[785:].startswith(b"\r\nrem ")        # an old launcher resumes here, at a line boundary
+
+
+def test_launcher_labels_and_port():
+    import re
+    text = BAT.decode("ascii")
+    labels = set(re.findall(r"^:(\w+)", text, re.M))
+    targets = set(re.findall(r"(?:goto|call) :(\w+)", text)) - {"eof"}
+    assert targets <= labels, targets - labels
+    assert "--server.port 8501" in text and "http://localhost:8501/_stcore/health" in text
+    for line in text.splitlines():              # "rem-" (no space) is not a comment in cmd
+        assert not re.match(r"\s*rem\S", line, re.I), line
+
+
+def test_launcher_echo_inside_blocks_has_no_parentheses():
+    depth = 0
+    for line in BAT.decode("ascii").splitlines():
+        stripped = line.strip()
+        if depth and stripped.lower().startswith("echo"):
+            assert "(" not in stripped and ")" not in stripped, line   # would close the block early
+        if stripped.endswith("(") and not stripped.lower().startswith("rem"):
+            depth += 1
+        elif stripped == ")":
+            depth -= 1
+    assert depth == 0
