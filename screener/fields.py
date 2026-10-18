@@ -96,6 +96,9 @@ COLUMNS: dict[str, Col] = {
 
     # ── Price & volume ──────────────────────────────────────────────────────
     "price":        Col("Price", "price", "close", "מחיר אחרון (בעיכוב של כ-15 דקות)"),
+    "adj_price":    Col("Adj Price", "price", None,
+                        "מחיר מתואם (לפיצולים ודיבידנדים). למחיר של היום הוא זהה ל-Price — "
+                        "תיאום משנה רק מחירי עבר, למשל בגרף או בחישוב תשואה"),
     "change":       Col("Change", "pct", "change", "שינוי יומי באחוזים"),
     "change_abs":   Col("Change $", "price", "change_abs", "שינוי יומי בדולרים"),
     "gap":          Col("Gap", "pct", "gap", "פער פתיחה: הפתיחה היום מול הסגירה אתמול"),
@@ -273,7 +276,8 @@ def tv_fields() -> dict[str, str]:
 # Finviz-style table views. "ticker" is always first and pinned by the UI.
 _TAIL = ["price", "change", "volume"]
 VIEWS: dict[str, list[str]] = {
-    "Overview":    ["ticker", "company", "sector", "industry", "country", "indexes", "market_cap", "pe", *_TAIL],
+    "Overview":    ["ticker", "company", "sector", "industry", "country", "indexes", "market_cap", "pe", "adj_price",
+                    *_TAIL],
     "Valuation":   ["ticker", "market_cap", "pe", "fwd_pe", "peg", "ps", "pb", "pocf", "pfcf", "ev_ebitda",
                     "eps_growth", "sales_growth", *_TAIL],
     "Financial":   ["ticker", "market_cap", "div_yield", "payout", "roa", "roe", "roic", "curr_ratio",

@@ -161,6 +161,12 @@ def test_user_presets_roundtrip(tmp_path):
 
 # ── derive / scores ─────────────────────────────────────────────────────────
 
+def test_adj_price_column(df):
+    assert df["adj_price"].equals(df["price"])
+    assert COLUMNS["adj_price"].kind == "price" and "Adj Price" == COLUMNS["adj_price"].label
+    assert "adj_price" in VIEWS["Overview"]
+
+
 def test_derived_columns(df):
     row = df.iloc[0]
     assert row["sma50_pct"] == pytest.approx((row["price"] / row["sma50"] - 1) * 100)

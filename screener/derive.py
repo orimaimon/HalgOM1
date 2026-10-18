@@ -30,6 +30,7 @@ def add_derived(raw: pd.DataFrame, today: dt.date | None = None) -> pd.DataFrame
     today = today or dt.date.today()
     p = df["price"]
 
+    df["adj_price"] = p     # today's adjusted price is the last price; adjustment only rescales past prices
     df["dollar_volume"] = df["avg_volume"] * p
     df["fwd_pe"] = p / df["eps_next_fy"].where(df["eps_next_fy"] > 0)
     for n in (20, 50, 150, 200):
