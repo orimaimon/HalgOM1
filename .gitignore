@@ -2,3 +2,20 @@
 *.gsheet
 __pycache__/
 .vscode/
+reports/
+backup/
+*.zip
+archive_legacy/
+*.parquet
+*.sqlite
+*.html
+*.json
+*.csv
+# Screener local data / env
+screener/_data/
+screener/.venv/
+
+# Saved website mirrors (reference only)
+finviz/
+finance.yahoo.com/
+www.tradingview.com/
