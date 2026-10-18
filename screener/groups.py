@@ -41,7 +41,8 @@ def group_performance(df: pd.DataFrame, by: str = "sector", weight: str = "equal
     return out.sort_values("market_cap", ascending=False, na_position="last").reset_index(drop=True)
 
 
-def heatmap_data(df: pd.DataFrame, color: str = "change") -> pd.DataFrame:
+def heatmap_data(df: pd.DataFrame, color: str = "change", root: str = "US stocks",
+                 stocks: str = "stocks") -> pd.DataFrame:
     """Treemap nodes (id, parent, label, value, color, text): root → sectors → industries → tickers."""
     d = df[(df["market_cap"] > 0)].copy()
     d["sector"] = d["sector"].fillna(OTHER).astype(str)
@@ -57,15 +58,17 @@ def heatmap_data(df: pd.DataFrame, color: str = "change") -> pd.DataFrame:
             key = key if isinstance(key, tuple) else (key,)
             rows.append({"id": SEP.join(key), "parent": parent(key), "label": key[-1],
                          "value": grp["market_cap"].sum(), "color": _wmean(grp[color], grp["market_cap"]),
-                         "text": f"{len(grp)} stocks"})
+                         "text": f"{len(grp)} {stocks}"})
         nodes.append(pd.DataFrame(rows, columns=leaves.columns))
-    root = pd.DataFrame([{"id": "All", "parent": "", "label": "US stocks", "value": d["market_cap"].sum(),
-                          "color": _wmean(d[color], d["market_cap"]), "text": f"{len(d)} stocks"}])
-    return pd.concat(nodes + [root], ignore_index=True)
+    top = pd.DataFrame([{"id": "All", "parent": "", "label": root, "value": d["market_cap"].sum(),
+                         "color": _wmean(d[color], d["market_cap"]), "text": f"{len(d)} {stocks}"}])
+    return pd.concat(nodes + [top], ignore_index=True)
 
 
-def heatmap_figure(df: pd.DataFrame, color: str = "change", limit: float = 3.0, height: int = 720) -> go.Figure:
-    n = heatmap_data(df, color)
+def heatmap_figure(df: pd.DataFrame, color: str = "change", limit: float = 3.0, height: int = 720,
+                   root: str = "US stocks", stocks: str = "stocks", cap_label: str = "Market cap") -> go.Figure:
+    """root / stocks / cap_label are display texts (Hebrew UI passes translations)."""
+    n = heatmap_data(df, color, root, stocks)
     shown = n["color"].clip(-limit, limit).fillna(0)
     fig = go.Figure(go.Treemap(
         ids=n["id"], parents=n["parent"], labels=n["label"], values=n["value"], branchvalues="total",
@@ -75,7 +78,7 @@ def heatmap_figure(df: pd.DataFrame, color: str = "change", limit: float = 3.0, 
                     colorbar=dict(title="%", ticksuffix="%", thickness=12)),
         texttemplate="<b>%{label}</b><br>%{customdata[0]:+.2f}%",
         hovertemplate="<b>%{label}</b> %{customdata[1]}<br>%{customdata[0]:+.2f}%"
-                      "<br>Market cap $%{value:,.3s}<extra></extra>",
+                      f"<br>{cap_label} $%{{value:,.3s}}<extra></extra>",
         textfont=dict(color="white"), pathbar=dict(visible=True), maxdepth=4,   # root > sector > industry > ticker
     ))
     fig.update_layout(margin=dict(t=30, l=0, r=0, b=0), height=height)

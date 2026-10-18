@@ -10,6 +10,7 @@ import datetime as dt
 import io
 import re
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 from openpyxl import Workbook
@@ -49,13 +50,17 @@ def tradingview_url(tv_symbol: str) -> str:
 
 
 def to_excel(df: pd.DataFrame, columns: list[str], filters: list[tuple[str, str]],
-             fetched_at: dt.datetime, title: str = "") -> bytes:
+             fetched_at: dt.datetime, title: str = "", headers: dict[str, str] | None = None,
+             t: Callable[[str], str] = str, rtl: bool = False) -> bytes:
+    """`headers` overrides column labels and `t` translates the fixed texts (Hebrew UI); `rtl` turns
+    both sheets right-to-left. Defaults produce the English workbook."""
     wb = Workbook()
     ws = wb.active
-    ws.title = "Results"
+    ws.title = t("Results")
+    ws.sheet_view.rightToLeft = rtl
     cols = [c for c in columns if c in df.columns]
 
-    headers = [COLUMNS[c].label for c in cols] + JOURNAL_COLUMNS
+    headers = [(headers or {}).get(c, COLUMNS[c].label) for c in cols] + [t(j) for j in JOURNAL_COLUMNS]
     ws.append(headers)
     for cell in ws[1]:
         cell.font = Font(bold=True, color="FFFFFF")
@@ -88,7 +93,7 @@ def to_excel(df: pd.DataFrame, columns: list[str], filters: list[tuple[str, str]
                  else max(10, len(COLUMNS[key].label) + 3))
         ws.column_dimensions[letter].width = width
     for j in range(len(cols) + 1, len(headers) + 1):
-        ws.column_dimensions[get_column_letter(j)].width = 18 if headers[j - 1] != "Notes" else 40
+        ws.column_dimensions[get_column_letter(j)].width = 40 if j == len(headers) else 18     # Notes is last
         for i in range(2, n + 2):
             ws.cell(row=i, column=j).fill = _JOURNAL_FILL
 
@@ -96,21 +101,22 @@ def to_excel(df: pd.DataFrame, columns: list[str], filters: list[tuple[str, str]
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{n + 1}"
     ws.row_dimensions[1].height = 30
 
-    meta = wb.create_sheet("Filters")
-    meta.append(["HalgOM Screener export"])
+    meta = wb.create_sheet(t("Filters"))
+    meta.sheet_view.rightToLeft = rtl
+    meta.append([t("HalgOM Screener export")])
     meta["A1"].font = Font(bold=True, size=14)
-    meta.append(["Screen", title or "(custom)"])
-    meta.append(["Data as of", fetched_at.strftime("%Y-%m-%d %H:%M")])
-    meta.append(["Exported", dt.datetime.now().strftime("%Y-%m-%d %H:%M")])
-    meta.append(["Results", n])
+    meta.append([t("Screen"), title or t("(custom)")])
+    meta.append([t("Data as of"), fetched_at.strftime("%Y-%m-%d %H:%M")])
+    meta.append([t("Exported"), dt.datetime.now().strftime("%Y-%m-%d %H:%M")])
+    meta.append([t("Results"), n])
     meta.append([])
-    meta.append(["Filter", "Value"])
+    meta.append([t("Filter"), t("Value")])
     for c in meta[7]:
         c.font = Font(bold=True)
-    for label, value in filters or [("(none)", "")]:
+    for label, value in filters or [(t("(none)"), "")]:
         meta.append([label, value])
     meta.append([])
-    meta.append(["Source: TradingView scanner (delayed ~15 min). Not investment advice."])
+    meta.append([t("Source: TradingView scanner (delayed ~15 min). Not investment advice.")])
     meta.column_dimensions["A"].width = 28
     meta.column_dimensions["B"].width = 36
 
@@ -129,9 +135,9 @@ def _cell_value(v):
     return v
 
 
-def to_csv(df: pd.DataFrame, columns: list[str]) -> bytes:
+def to_csv(df: pd.DataFrame, columns: list[str], headers: dict[str, str] | None = None) -> bytes:
     cols = [c for c in columns if c in df.columns]
-    out = df[cols].rename(columns={c: COLUMNS[c].label for c in cols})
+    out = df[cols].rename(columns={c: (headers or {}).get(c, COLUMNS[c].label) for c in cols})
     return out.to_csv(index=False).encode("utf-8-sig")  # BOM so Excel opens it correctly
 
 

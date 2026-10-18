@@ -7,8 +7,8 @@ Two products live in this repo:
 2. **HalgOM Screener** (`screener/`, `run_screener.bat`): a local, Finviz-style stock screener built for a
    non-technical end user (Ori's relative, "דוד חיים") who runs it on his own Windows PC.
 
-The user (Ori) writes in Hebrew; answer in Hebrew. UI terms stay in English (Finviz terminology),
-end-user explanations/tooltips are Hebrew.
+The user (Ori) writes in Hebrew; answer in Hebrew. The screener UI is Hebrew (RTL) by default with an
+English switch (`screener/i18n.py`); tooltips and explanations are Hebrew in both languages.
 
 ## Data is NOT in the repo
 
@@ -53,6 +53,12 @@ Known: `tests/test_strategies.py::TestTopNVolumeStrategy::test_no_buys_in_bear_r
   columns (candles, N-month breakouts vs yesterday's high, crosses today, volume spike, consolidation).
 - `screener/history.py` — "New since yesterday": same pipeline on the previous snapshot day.
 - `screener/groups.py` — Groups page (sector/industry averages) and the plotly treemap heatmap.
+- `screener/i18n.py` — display language. Internal values stay English (filter options, preset names, views,
+  pages, sector/country values) so saved screens, presets and tests are language-independent; only display
+  is translated (`format_func`, `display_values`). Hebrew style: Hebrew + familiar English abbreviation
+  ("מכפיל רווח (P/E)"); table headers keep short abbreviations; sectors and countries translated, the 128
+  industries stay English; unknown strings fall back to English. RTL for the interface, tables/heatmap/chart
+  stay LTR. Tests require a Hebrew translation for every filter, option, column, view and preset.
 - `screener/lifecycle.py` — "Exit" button (clean `Runtime.stop()`, the console window closes) and an idle
   watchdog that stops the server after 15 minutes with no open browser tab.
 - `screener/market.py` — regime header, same rules as `compute_macro_regime` in `DB/build_simulation_db.py`;
