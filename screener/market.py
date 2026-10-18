@@ -1,5 +1,5 @@
 """
-Market regime header — same rules as compute_macro_regime() in DB/build_simulation_db.py:
+Market regime header — same rules as compute_macro_regime() in the HalgOM backtester:
 
   bull  VIX < 18 and SPY > SMA200 and HYG > SMA20
   bear  at least 2 of: VIX > 25, SPY < SMA200, HYG < SMA20   (bear wins over bull)

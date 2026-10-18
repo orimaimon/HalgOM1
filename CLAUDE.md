@@ -1,21 +1,21 @@
-# HalgOM — project context
+# HalgOM Screener — project context
 
-Two products live in this repo:
+This repo is the **HalgOM Screener** (`screener/`, `run_screener.bat`): a local, Finviz-style stock screener
+built for a non-technical end user (Ori's relative, "דוד חיים") who runs it on his own Windows PC.
+`run_screener.bat` pulls `main` on every launch, so `main` is what the end user runs: keep it stable and
+work through branches + PRs.
 
-1. **HalgOM backtester** (root `*.py`, `strategies/`): Monte Carlo + walk-forward research engine for
-   US equity strategies. See `README.md`.
-2. **HalgOM Screener** (`screener/`, `run_screener.bat`): a local, Finviz-style stock screener built for a
-   non-technical end user (Ori's relative, "דוד חיים") who runs it on his own Windows PC.
+The HalgOM backtester (Monte Carlo / walk-forward engine, strategies, `DB/` build scripts) used to live here
+too; it was removed on 2026-10-18 (Ori keeps a backup; it is also in git history before the
+"screener-only" commit).
 
 The user (Ori) writes in Hebrew; answer in Hebrew. The screener UI is Hebrew (RTL) by default with an
 English switch (`screener/i18n.py`); tooltips and explanations are Hebrew in both languages.
 
-## Data is NOT in the repo
+## Data
 
-`DB/*.parquet` (~400MB) and `DB/mc_runs.sqlite` are gitignored and exceed GitHub limits.
-- Backtests need `DB/simulation_db.parquet`; rebuild with `python DB/build_simulation_db.py`
-  (downloads 20y of OHLCV from yfinance — long) or work on code/tests only.
-- The screener needs no local data: it fetches live from TradingView and caches in `screener/_data/`.
+The screener needs no data in the repo: it fetches live from TradingView and keeps its cache, daily
+snapshots, saved screens, exports and logs in `screener/_data/` (gitignored).
 
 ## Running
 
@@ -27,9 +27,6 @@ uv pip install --python screener/.venv -r screener/requirements.lock pytest
 screener/.venv/bin/python -m pytest tests/ -q          # Windows: screener\.venv\Scripts\python
 screener/.venv/bin/python -m streamlit run screener/app.py
 ```
-
-Known: `tests/test_strategies.py::TestTopNVolumeStrategy::test_no_buys_in_bear_regime` fails
-(pre-existing, backtester side — not caused by the screener).
 
 ## Screener architecture
 
@@ -61,7 +58,7 @@ Known: `tests/test_strategies.py::TestTopNVolumeStrategy::test_no_buys_in_bear_r
   stay LTR. Tests require a Hebrew translation for every filter, option, column, view and preset.
 - `screener/lifecycle.py` — "Exit" button (clean `Runtime.stop()`, the console window closes) and an idle
   watchdog that stops the server after 15 minutes with no open browser tab.
-- `screener/market.py` — regime header, same rules as `compute_macro_regime` in `DB/build_simulation_db.py`;
+- `screener/market.py` — regime header, same rules as `compute_macro_regime` in the HalgOM backtester;
   plus SPY ADX trend strength as a separate badge (does not change the regime rules).
 - `screener/export.py` — Excel (numbers stay numeric; custom formats like `0.00,,,"B"`), CSV, TradingView watchlist.
 - `screener/app.py` — Streamlit UI (pages: Screener / Groups / Heatmap). Selecting a row embeds the official
@@ -84,7 +81,7 @@ Rules:
 
 Phase 1 — done (2026-10-18).
 
-Phase 2 — done on branch `screener-phase2` (2026-10-18; PR, not merged to main yet):
+Phase 2 — done (2026-10-18; PRs #2 phase 2, #3 Hebrew UI, then the screener-only cleanup):
 Signals tab + "Signals" column, Index filter, weekly filters, SMA150 + Stage 2 (Minervini) preset,
 "Hide junk" (on by default), "New since yesterday", Groups page, Heatmap (plotly), SPY ADX badge,
 data-source metadata per snapshot.
@@ -112,8 +109,8 @@ the market header and the chart widget are TradingView too. Candidate sources: y
 SEC EDGAR (official fundamentals), paid APIs (FMP, Polygon, EODHD, Tiingo, Alpha Vantage — check current
 pricing/limits before choosing), Finviz (scraping or paid Elite).
 
-## Backtester research notes (as of 2026-05-17 — verify against `DB/mc_runs.sqlite` before relying on them)
+## Backtester note (for the Phase 3 strategy presets; the backtester itself is not in this repo)
 
-Production candidate validated on 11 OOS folds: `topn_focused_v2`, top_n=6, hold_days=130, min_price=2.0,
-equal sizing, regime filter on, `regime_entry_buffer=0.01`, `regime_confirm_days=1`
-(median excess vs QQQ ≈ +9.5pp across folds). DVMC is inferior. See `SANDBOX.md` for the latest session log.
+As of 2026-05-17 the production candidate was `topn_focused_v2`: top_n=6, hold_days=130, min_price=2.0,
+equal sizing, regime filter on, `regime_entry_buffer=0.01`, `regime_confirm_days=1` (median excess vs QQQ
+≈ +9.5pp across 11 OOS folds). Verify against the backtester before building a preset on it.

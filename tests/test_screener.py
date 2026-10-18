@@ -191,7 +191,7 @@ def test_scores_in_range(df):
         assert df[c].dropna().between(0, 100).all()
 
 
-# ── market regime (same rules as DB/build_simulation_db.py) ─────────────────
+# ── market regime (same rules as the HalgOM backtester) ──────────────────────
 
 def _market(vix, spy, spy200, hyg, hyg20):
     return pd.DataFrame({"close": [spy, 1, hyg, vix], "change": 0.0, "sma20": [1, 1, hyg20, 1],
