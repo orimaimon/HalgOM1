@@ -6,6 +6,7 @@ Run:  run_screener.bat   (or: streamlit run screener/app.py from the HalgOM fold
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import html
 import json
 import logging
@@ -30,8 +31,8 @@ from screener.data.store import DATA_DIR  # noqa: E402
 from screener.data.tradingview import fetch_market, fetch_universe  # noqa: E402
 from screener.derive import add_derived  # noqa: E402
 from screener.fields import COLUMNS, DEFAULT_SORT, GROUP_COLUMNS, VIEWS  # noqa: E402
-from screener.filters import (ANY, FILTERS, GROUPS, JUNK_RULES, active, describe, hide_junk,  # noqa: E402
-                              option_labels, screen, search)
+from screener.filters import (ANY, FILTERS, GROUPS, JUNK_RULES, active, apply_filters, describe,  # noqa: E402
+                              hide_junk, in_index, option_labels, search)
 from screener.market import compute_regime, trend_strength  # noqa: E402
 
 VERSION = "0.2.0"
@@ -117,7 +118,25 @@ def get_previous(snap) -> history.Previous | None:
     if ss.get("prev_for") != day:
         ss.prev = history.load_previous(_store(), day)
         ss.prev_for = day
+        ss.prev_hits = {}
     return ss.prev
+
+
+def new_column(res: pd.DataFrame, prev: history.Previous | None, sel: dict[str, str]) -> pd.Series:
+    """'NEW' tags; yesterday's matches are computed once per (filters, junk switch), not on every click."""
+    if prev is None:
+        return history.mark_new(res, None)
+    key = (tuple(sorted(active(sel).items())), ss.hide_junk)
+    if key not in ss.prev_hits:
+        ss.prev_hits[key] = history.previous_tickers(prev, sel, ss.hide_junk)
+    return history.mark_new(res, ss.prev_hits[key])
+
+
+def rows_key(res: pd.DataFrame) -> str:
+    """Table widget key tied to the rows shown: the selection is a row position, so when the rows change
+    (filters, Hide junk, Only new, sort) the key changes and the old selection is dropped instead of
+    opening the chart of whatever stock now sits in that position."""
+    return "table_" + hashlib.md5("\x1f".join(res["ticker"].astype(str)).encode()).hexdigest()[:12]
 
 
 def all_presets() -> dict[str, P.Preset]:
@@ -321,7 +340,11 @@ def source_text(meta: dict | None) -> str:
         return f"{provider} · realtime"
     if mode == "delayed" and meta.get("delay_min"):
         return f"{provider} · delayed {meta['delay_min']} min"
-    return f"{provider} · delayed ~15 min"
+    if mode == "endofday":
+        return f"{provider} · end of day"
+    if mode == "unknown" and meta.get("raw"):
+        return f"{provider} · update mode: {meta['raw']}"
+    return f"{provider} · delayed ~15 min"       # caches saved before metadata existed
 
 
 def junk_toggle(container) -> None:
@@ -382,26 +405,29 @@ def filter_panel(df: pd.DataFrame) -> None:
                         col.selectbox(f.label, labels, key=key, help=f.tooltip)
 
 
-def results(df: pd.DataFrame, res: pd.DataFrame, snap, prev: history.Previous | None) -> None:
-    universe = hide_junk(df, ss.hide_junk)
+def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
+            prev: history.Previous | None) -> None:
     top = st.columns([3, 5, 1.6], vertical_alignment="center")
     top[0].markdown(f"#### {len(res):,} results" + (f" / {len(universe):,}" if len(res) != len(universe) else ""))
     with top[1]:
         st.segmented_control("View", list(VIEWS), key="view", label_visibility="collapsed", required=True)
     view_cols = VIEWS[ss.view]
-    notes = [f"**{k}:** {v}" for k, v in describe(selections())]
+    chips = describe(selections())
+    if chips:
+        st.caption(" · ".join(f"**{k}:** {v}" for k, v in chips))
+    notes = []                                   # end-user explanations are Hebrew (CLAUDE.md)
     if ss.hide_junk and len(universe) < len(df):
-        notes.append(f"{len(df) - len(universe):,} junk stocks hidden")
+        notes.append(f"{len(df) - len(universe):,} מניות זבל מוסתרות (Hide junk)")
     if prev is not None:
         n_new = int((res["new"] == history.NEW).sum())
         top[2].toggle(f"Only new ({n_new:,})", key="only_new",
                       help=f"רק מניות שנכנסו לתוצאות מאז ה-snapshot של {prev.day:%d/%m/%Y}")
         view_cols = [view_cols[0], "new", *view_cols[1:]]
-        notes.append(f"NEW = not in these results on {prev.day:%Y-%m-%d}")
+        notes.append(f"NEW = המניה לא הייתה בתוצאות האלה ב-{prev.day:%d/%m/%Y}")
         if ss.get("only_new"):
             res = res[res["new"] == history.NEW]
     if notes:
-        st.caption(" · ".join(notes))
+        hebrew_note(" · ".join(notes))
     if prev is not None and prev.missing:
         hebrew_note(f"ההשוואה ל-{prev.day:%d/%m/%Y} חלקית: ה-snapshot נשמר בגרסה קודמת בלי {len(prev.missing)} "
                     "שדות חדשים, ולכן פילטרים על השדות האלה מסמנים יותר מניות כ-NEW. יסתדר מעצמו ממחר.")
@@ -411,7 +437,7 @@ def results(df: pd.DataFrame, res: pd.DataFrame, snap, prev: history.Previous | 
     if signed:
         table = table.style.map(_sign_color, subset=signed)
     event = st.dataframe(
-        table, hide_index=True, height=560, key="table",
+        table, hide_index=True, height=560, key=rows_key(res),
         column_config={k: column_config(k) for k in view_cols},
         on_select="rerun", selection_mode="single-row", placeholder="—",
     )
@@ -520,14 +546,14 @@ HEAT_COLORS = {"change": 3, "perf_w": 6, "perf_m": 10, "perf_q": 20, "perf_h": 3
 HEAT_UNIVERSES = ["S&P 500", "Nasdaq 100", "Screener results", "All stocks (top 1,000)"]
 
 
-def groups_page(df: pd.DataFrame, res: pd.DataFrame) -> None:
+def groups_page(universe: pd.DataFrame, res: pd.DataFrame) -> None:
     c1, c2, c3, c4, c5 = st.columns([1.6, 1.8, 2.4, 1.6, 1.2], vertical_alignment="bottom")
     ss.setdefault("g_by", "Sector")
     ss.setdefault("g_weight", "Equal")
     c1.segmented_control("Group by", ["Sector", "Industry"], key="g_by", required=True)
     c2.segmented_control("Averages", ["Equal", "Market cap"], key="g_weight", required=True,
                          help="Equal = כל מניה נספרת פעם אחת. Market cap = מניות גדולות משפיעות יותר (כמו מדד)")
-    base = res if ss.get("g_results") else hide_junk(df, ss.hide_junk)
+    base = res if ss.get("g_results") else universe
     by = ss.g_by.lower()
     if by == "industry":
         sectors = ["All sectors"] + sorted(base["sector"].dropna().astype(str).unique())
@@ -539,6 +565,9 @@ def groups_page(df: pd.DataFrame, res: pd.DataFrame) -> None:
     c4.toggle("Only screener results", key="g_results",
               help="דלוק: הקבוצות מחושבות רק מהמניות שעברו את הפילטרים בדף Screener")
     junk_toggle(c5)
+    if base.empty:
+        st.info("אין מניות להצגה — הפילטרים או החיפוש לא החזירו תוצאות")
+        return
     table = G.group_performance(base, by=by, weight="cap" if ss.g_weight == "Market cap" else "equal")
     st.markdown(f"#### {len(table):,} {'sectors' if by == 'sector' else 'industries'} · {len(base):,} stocks")
     cc = st.column_config
@@ -557,7 +586,7 @@ def groups_page(df: pd.DataFrame, res: pd.DataFrame) -> None:
                 "מומלץ להשאיר את Hide junk דלוק — מניות זבל עם תנועות של מאות אחוזים מעוותות ממוצע שווה-משקל.")
 
 
-def heatmap_page(df: pd.DataFrame, res: pd.DataFrame) -> None:
+def heatmap_page(universe: pd.DataFrame, res: pd.DataFrame) -> None:
     c1, c2, c3 = st.columns([2.4, 2.4, 1.2], vertical_alignment="bottom")
     ss.setdefault("h_universe", HEAT_UNIVERSES[0])
     ss.setdefault("h_color", "change")
@@ -566,14 +595,13 @@ def heatmap_page(df: pd.DataFrame, res: pd.DataFrame) -> None:
     c2.selectbox("Color by", list(HEAT_COLORS), key="h_color", format_func=lambda k: COLUMNS[k].label,
                  help="ירוק = עלייה, אדום = ירידה. הצבע רווי בקצוות הסקאלה (למשל ±3% לשינוי יומי)")
     junk_toggle(c3)
-    universe = hide_junk(df, ss.hide_junk)
     match ss.h_universe:
         case "Screener results":
             data = res
         case "All stocks (top 1,000)":
             data = universe.nlargest(1000, "market_cap")
         case label:
-            data = universe[universe["indexes"].fillna("").astype(str).str.contains(label, regex=False)]
+            data = universe[in_index(label)(universe)]
     if data.empty:
         st.info("אין מניות להצגה")
         return
@@ -614,16 +642,17 @@ def main() -> None:
         filter_panel(df)
 
     sel = selections()
-    res = search(screen(df, sel, ss.hide_junk), ss.get("query", ""))
-    prev = get_previous(snap)
-    res = res.assign(new=history.mark_new(res, prev, sel, ss.hide_junk))
-    res = res.sort_values(ss.sort_col, ascending=ss.sort_asc, na_position="last")
+    universe = hide_junk(df, ss.hide_junk)       # once per run, shared by every page
+    res = search(apply_filters(universe, sel), ss.get("query", ""))
     if page == "Groups":
-        groups_page(df, res)
+        groups_page(universe, res)
     elif page == "Heatmap":
-        heatmap_page(df, res)
+        heatmap_page(universe, res)
     else:
-        results(df, res, snap, prev)
+        prev = get_previous(snap)                # "New since yesterday" is only shown here
+        res = res.assign(new=new_column(res, prev, sel))
+        res = res.sort_values(ss.sort_col, ascending=ss.sort_asc, na_position="last")
+        results(df, universe, res, snap, prev)
     hebrew_note("נתונים: TradingView (בעיכוב של כ-15 דקות). הכלי לצורכי מחקר בלבד ואינו ייעוץ השקעות.")
 
 

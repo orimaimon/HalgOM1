@@ -45,19 +45,8 @@ def cross_down(a: str, b: str) -> Mask:
     return lambda d: (d[a] < d[b]) & (d[_prev(a)] >= d[_prev(b)])
 
 
-# Short tags for the Signals column; "+" bullish, "-" bearish.
-_CANDLE_TAGS = {
-    "cdl_engulfing_bull": "Engulfing", "cdl_engulfing_bear": "Engulfing", "cdl_hammer": "Hammer",
-    "cdl_inv_hammer": "Inv Hammer", "cdl_hanging_man": "Hanging Man", "cdl_shooting_star": "Shooting Star",
-    "cdl_morning_star": "Morning Star", "cdl_evening_star": "Evening Star", "cdl_3_soldiers": "3 Soldiers",
-    "cdl_3_crows": "3 Crows", "cdl_harami_bull": "Harami", "cdl_harami_bear": "Harami",
-    "cdl_kicking_bull": "Kicking", "cdl_kicking_bear": "Kicking", "cdl_baby_bull": "Aband. Baby",
-    "cdl_baby_bear": "Aband. Baby", "cdl_marubozu_white": "Marubozu", "cdl_marubozu_black": "Marubozu",
-    "cdl_doji": "Doji", "cdl_doji_dragonfly": "Dragonfly", "cdl_doji_gravestone": "Gravestone",
-}
-
 CANDLE_SIGNALS: list[Signal] = [
-    Signal(label, _CANDLE_TAGS[k] + bias, lambda d, k=k: d[k] == 1) for k, (_, label, bias, _) in CANDLES.items()
+    Signal(label, tag + bias, lambda d, k=k: d[k] == 1) for k, (_, label, bias, tag, _) in CANDLES.items()
 ]
 
 
@@ -75,6 +64,7 @@ BREAKOUTS: list[Signal] = [
 ]
 BREAKDOWNS: list[Signal] = [
     Signal("New 52-week low (breakdown)", "BD 52W", lambda d: d["price"] < d["low52_prev"]),
+    Signal("New 6-month low (breakdown)", "BD 6M", lambda d: d["price"] < d["low_6m_prev"]),
     Signal("New 3-month low (breakdown)", "BD 3M", lambda d: d["price"] < d["low_3m_prev"]),
     Signal("New 1-month low (breakdown)", "BD 1M", lambda d: d["price"] < d["low_1m_prev"]),
 ]

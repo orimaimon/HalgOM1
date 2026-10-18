@@ -44,9 +44,13 @@ def load_previous(store: Store, today: dt.date) -> Previous | None:
     return Previous(day, add_derived(raw, today=day), missing)
 
 
-def mark_new(res: pd.DataFrame, prev: Previous | None, selections: dict[str, str], junk: bool) -> pd.Series:
-    """'NEW' for rows of `res` that the same screen did not return on the previous snapshot day."""
-    if prev is None:
+def previous_tickers(prev: Previous, selections: dict[str, str], junk: bool) -> set[str]:
+    """Tickers the same screen returned on the previous snapshot day (the app caches this per screen)."""
+    return set(screen(prev.df, selections, junk)["ticker"])
+
+
+def mark_new(res: pd.DataFrame, before: set[str] | None) -> pd.Series:
+    """'NEW' for rows of `res` whose ticker is not in `before`; all blank when there is no previous day."""
+    if before is None:
         return pd.Series("", index=res.index)
-    before = set(screen(prev.df, selections, junk)["ticker"])
     return res["ticker"].map(lambda t: "" if t in before else NEW)

@@ -22,51 +22,53 @@ class Col:
     help: str = ""
 
 
-# Candlestick patterns TradingView detects on the latest daily bar: key -> (field, label, bias, Hebrew help).
-# bias: "+" bullish, "-" bearish, "" neutral. Values are 1 (pattern present) or 0.
+# Candlestick patterns TradingView detects on the latest daily bar:
+#   key -> (field, label, bias, short tag for the Signals column, Hebrew help)
+# bias: "+" bullish, "-" bearish, "" neutral (the Signals column shows tag + bias, e.g. "Engulfing+").
+# Values are 1 (pattern present) or 0.
 _CANDLE_NOTE = " (זוהה על הנר היומי האחרון; במהלך המסחר הנר עוד לא נסגר ויכול להשתנות)"
-CANDLES: dict[str, tuple[str, str, str, str]] = {
-    "cdl_engulfing_bull": ("Candle.Engulfing.Bullish", "Bullish Engulfing", "+",
+CANDLES: dict[str, tuple[str, str, str, str, str]] = {
+    "cdl_engulfing_bull": ("Candle.Engulfing.Bullish", "Bullish Engulfing", "+", "Engulfing",
                            "נר עולה גדול שבולע את הנר היורד של אתמול — סימן אפשרי להיפוך כלפי מעלה"),
-    "cdl_engulfing_bear": ("Candle.Engulfing.Bearish", "Bearish Engulfing", "-",
+    "cdl_engulfing_bear": ("Candle.Engulfing.Bearish", "Bearish Engulfing", "-", "Engulfing",
                            "נר יורד גדול שבולע את הנר העולה של אתמול — סימן אפשרי להיפוך כלפי מטה"),
-    "cdl_hammer":         ("Candle.Hammer", "Hammer", "+",
+    "cdl_hammer":         ("Candle.Hammer", "Hammer", "+", "Hammer",
                            "פטיש: גוף קטן למעלה וצל תחתון ארוך אחרי ירידה — הקונים החזירו את המחיר למעלה"),
-    "cdl_inv_hammer":     ("Candle.InvertedHammer", "Inverted Hammer", "+",
+    "cdl_inv_hammer":     ("Candle.InvertedHammer", "Inverted Hammer", "+", "Inv Hammer",
                            "פטיש הפוך: גוף קטן למטה וצל עליון ארוך אחרי ירידה — ניסיון ראשון של הקונים"),
-    "cdl_hanging_man":    ("Candle.HangingMan", "Hanging Man", "-",
+    "cdl_hanging_man":    ("Candle.HangingMan", "Hanging Man", "-", "Hanging Man",
                            "איש תלוי: צורת פטיש אחרי עלייה — סימן אזהרה להיחלשות"),
-    "cdl_shooting_star":  ("Candle.ShootingStar", "Shooting Star", "-",
+    "cdl_shooting_star":  ("Candle.ShootingStar", "Shooting Star", "-", "Shooting Star",
                            "כוכב נופל: צל עליון ארוך אחרי עלייה — המוכרים דחפו את המחיר חזרה למטה"),
-    "cdl_morning_star":   ("Candle.MorningStar", "Morning Star", "+",
+    "cdl_morning_star":   ("Candle.MorningStar", "Morning Star", "+", "Morning Star",
                            "כוכב בוקר: תבנית של 3 נרות בתחתית ירידה — היפוך כלפי מעלה"),
-    "cdl_evening_star":   ("Candle.EveningStar", "Evening Star", "-",
+    "cdl_evening_star":   ("Candle.EveningStar", "Evening Star", "-", "Evening Star",
                            "כוכב ערב: תבנית של 3 נרות בראש עלייה — היפוך כלפי מטה"),
-    "cdl_3_soldiers":     ("Candle.3WhiteSoldiers", "Three White Soldiers", "+",
+    "cdl_3_soldiers":     ("Candle.3WhiteSoldiers", "Three White Soldiers", "+", "3 Soldiers",
                            "שלושה חיילים לבנים: 3 נרות עולים חזקים ברצף — מומנטום קנייה"),
-    "cdl_3_crows":        ("Candle.3BlackCrows", "Three Black Crows", "-",
+    "cdl_3_crows":        ("Candle.3BlackCrows", "Three Black Crows", "-", "3 Crows",
                            "שלושה עורבים שחורים: 3 נרות יורדים חזקים ברצף — מומנטום מכירה"),
-    "cdl_harami_bull":    ("Candle.Harami.Bullish", "Bullish Harami", "+",
+    "cdl_harami_bull":    ("Candle.Harami.Bullish", "Bullish Harami", "+", "Harami",
                            "הראמי עולה: נר קטן בתוך הגוף של נר יורד גדול — הירידה מאבדת כוח"),
-    "cdl_harami_bear":    ("Candle.Harami.Bearish", "Bearish Harami", "-",
+    "cdl_harami_bear":    ("Candle.Harami.Bearish", "Bearish Harami", "-", "Harami",
                            "הראמי יורד: נר קטן בתוך הגוף של נר עולה גדול — העלייה מאבדת כוח"),
-    "cdl_kicking_bull":   ("Candle.Kicking.Bullish", "Bullish Kicking", "+",
+    "cdl_kicking_bull":   ("Candle.Kicking.Bullish", "Bullish Kicking", "+", "Kicking",
                            "בעיטה עולה: פער פתיחה חד כלפי מעלה אחרי נר יורד מלא — היפוך חזק"),
-    "cdl_kicking_bear":   ("Candle.Kicking.Bearish", "Bearish Kicking", "-",
+    "cdl_kicking_bear":   ("Candle.Kicking.Bearish", "Bearish Kicking", "-", "Kicking",
                            "בעיטה יורדת: פער פתיחה חד כלפי מטה אחרי נר עולה מלא — היפוך חזק"),
-    "cdl_baby_bull":      ("Candle.AbandonedBaby.Bullish", "Bullish Abandoned Baby", "+",
+    "cdl_baby_bull":      ("Candle.AbandonedBaby.Bullish", "Bullish Abandoned Baby", "+", "Aband. Baby",
                            "תינוק נטוש עולה: דוג'י מבודד בפערים בתחתית — היפוך נדיר וחזק"),
-    "cdl_baby_bear":      ("Candle.AbandonedBaby.Bearish", "Bearish Abandoned Baby", "-",
+    "cdl_baby_bear":      ("Candle.AbandonedBaby.Bearish", "Bearish Abandoned Baby", "-", "Aband. Baby",
                            "תינוק נטוש יורד: דוג'י מבודד בפערים בראש — היפוך נדיר וחזק"),
-    "cdl_marubozu_white": ("Candle.Marubozu.White", "White Marubozu", "+",
+    "cdl_marubozu_white": ("Candle.Marubozu.White", "White Marubozu", "+", "Marubozu",
                            "מרובוזו לבן: נר עולה מלא כמעט בלי צללים — הקונים שלטו כל היום"),
-    "cdl_marubozu_black": ("Candle.Marubozu.Black", "Black Marubozu", "-",
+    "cdl_marubozu_black": ("Candle.Marubozu.Black", "Black Marubozu", "-", "Marubozu",
                            "מרובוזו שחור: נר יורד מלא כמעט בלי צללים — המוכרים שלטו כל היום"),
-    "cdl_doji":           ("Candle.Doji", "Doji", "",
+    "cdl_doji":           ("Candle.Doji", "Doji", "", "Doji",
                            "דוג'י: פתיחה וסגירה כמעט באותו מחיר — חוסר הכרעה בין קונים למוכרים"),
-    "cdl_doji_dragonfly": ("Candle.Doji.Dragonfly", "Dragonfly Doji", "+",
+    "cdl_doji_dragonfly": ("Candle.Doji.Dragonfly", "Dragonfly Doji", "+", "Dragonfly",
                            "דוג'י שפירית: צל תחתון ארוך וסגירה בגבוה — דחייה של מחירים נמוכים"),
-    "cdl_doji_gravestone": ("Candle.Doji.Gravestone", "Gravestone Doji", "-",
+    "cdl_doji_gravestone": ("Candle.Doji.Gravestone", "Gravestone Doji", "-", "Gravestone",
                             "דוג'י מצבה: צל עליון ארוך וסגירה בנמוך — דחייה של מחירים גבוהים"),
 }
 
@@ -200,6 +202,7 @@ COLUMNS: dict[str, Col] = {
     "low_1m_prev":  Col("1M Low (prev)", "price", "Low.1M[1]",
                         "השפל החודשי כפי שהיה אתמול — סגירה מתחתיו היום = שבירה כלפי מטה"),
     "low_3m_prev":  Col("3M Low (prev)", "price", "Low.3M[1]", "שפל 3 החודשים כפי שהיה אתמול"),
+    "low_6m_prev":  Col("6M Low (prev)", "price", "Low.6M[1]", "שפל חצי השנה כפי שהיה אתמול"),
     "low52_prev":   Col("52W Low (prev)", "price", "price_52_week_low[1]", "השפל השנתי כפי שהיה אתמול"),
     "range_5d_pct": Col("5D Range", "pct", None,
                         "טווח המסחר של 5 הימים האחרונים: כמה אחוזים הגבוה מעל הנמוך. נמוך = התכנסות"),
@@ -242,7 +245,7 @@ COLUMNS: dict[str, Col] = {
     # ── Internal ────────────────────────────────────────────────────────────
     "tv_symbol":    Col("Symbol", "text", None, "סימול מלא ב-TradingView (בורסה:סימול)"),
 }
-COLUMNS.update({k: Col(label, "flag", tv, help_ + _CANDLE_NOTE) for k, (tv, label, _, help_) in CANDLES.items()})
+COLUMNS.update({k: Col(label, "flag", tv, help_ + _CANDLE_NOTE) for k, (tv, label, _, _, help_) in CANDLES.items()})
 
 # TradingView fields fetched in addition to COLUMNS — used for cleaning / metadata only.
 EXTRA_TV_FIELDS = ("is_primary", "typespecs", "currency", "update_mode")

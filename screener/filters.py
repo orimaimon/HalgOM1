@@ -91,6 +91,12 @@ def _perf(col: str) -> tuple[Option, ...]:
     return tuple(n.opt("Up", lambda s: s > 0) + n.opt("Down", lambda s: s < 0) + up + down)
 
 
+def _ma_vs(a: str, b: str) -> list[Option]:
+    """"SMA50 above SMA200" / "SMA50 below SMA200" — shared by the SMA filters and MA Cross."""
+    la, lb = COLUMNS[a].label, COLUMNS[b].label
+    return [Option(f"{la} above {lb}", lambda d: d[a] > d[b]), Option(f"{la} below {lb}", lambda d: d[a] < d[b])]
+
+
 def _sma(n: int) -> tuple[Option, ...]:
     sma, pct = f"sma{n}", f"sma{n}_pct"
     opts = [
@@ -100,15 +106,9 @@ def _sma(n: int) -> tuple[Option, ...]:
         *[Option(f"Price {v}% below SMA{n}", lambda d, v=v: d[pct] <= -v) for v in (10, 20, 30, 50)],
         Option(f"Price within 2% of SMA{n}", lambda d: d[pct].abs() <= 2),
     ]
-    if n == 50:
-        opts += [Option("SMA50 above SMA200", lambda d: d["sma50"] > d["sma200"]),
-                 Option("SMA50 below SMA200", lambda d: d["sma50"] < d["sma200"])]
-    if n == 20:
-        opts += [Option("SMA20 above SMA50", lambda d: d["sma20"] > d["sma50"]),
-                 Option("SMA20 below SMA50", lambda d: d["sma20"] < d["sma50"])]
-    if n == 150:
-        opts += [Option("SMA150 above SMA200", lambda d: d["sma150"] > d["sma200"]),
-                 Option("SMA150 below SMA200", lambda d: d["sma150"] < d["sma200"])]
+    slower = {20: "sma50", 50: "sma200", 150: "sma200"}.get(n)
+    if slower:
+        opts += _ma_vs(sma, slower)
     return tuple(opts)
 
 
@@ -116,8 +116,8 @@ def _signals(sigs: list[S.Signal]) -> list[Option]:
     return [Option(s.label, s.fn) for s in sigs]
 
 
-def _in_index(label: str) -> Mask:
-    # the column holds "S&P 500, Nasdaq 100" — match whole names only
+def in_index(label: str) -> Mask:
+    """Membership in a major index. The column holds "S&P 500, Nasdaq 100" — whole names only."""
     return lambda d: (", " + d["indexes"].fillna("").astype(str) + ",").str.contains(f", {label},", regex=False)
 
 
@@ -199,8 +199,8 @@ FILTERS: list[Filter] = [
     Filter("industry", "Industry", "Descriptive", "industry", dynamic=True),
     Filter("country", "Country", "Descriptive", "country", dynamic=True),
     Filter("index", "Index", "Descriptive", "indexes", tuple(
-        [Option(label, _in_index(label)) for label in INDEXES.values()]
-        + [Option("Not in S&P 500", lambda d: ~_in_index("S&P 500")(d)),
+        [Option(label, in_index(label)) for label in INDEXES.values()]
+        + [Option("Not in S&P 500", lambda d: ~in_index("S&P 500")(d)),
            Option("Any major index", lambda d: d["indexes"].fillna("").astype(str) != "")])),
     Filter("market_cap", "Market Cap.", "Descriptive", "market_cap", tuple(
         _cap.opt("Mega ($200B+)", lambda s: s >= 200e9)
@@ -374,11 +374,7 @@ FILTERS: list[Filter] = [
         help="קפיצת מחזור: מחזור היום חלקי המחזור הממוצע של 10 הימים האחרונים. "
              "עלייה במחזור כפול = קונים גדולים נכנסים"),
     Filter("ma_cross", "MA Cross", "Signals", "sma50_pct", tuple(
-        [Option("SMA50 above SMA200", lambda d: d["sma50"] > d["sma200"]),
-         Option("SMA50 below SMA200", lambda d: d["sma50"] < d["sma200"]),
-         Option("SMA20 above SMA50", lambda d: d["sma20"] > d["sma50"]),
-         Option("SMA20 below SMA50", lambda d: d["sma20"] < d["sma50"])]
-        + _signals(S.CROSSES)),
+        _ma_vs("sma50", "sma200") + _ma_vs("sma20", "sma50") + _signals(S.CROSSES)),
         help="מצב הממוצעים הנעים, או חצייה שקרתה היום (מול הערכים של אתמול). "
              "Golden Cross = הממוצע של 50 יום חצה מעל זה של 200 יום — סימן קלאסי לתחילת מגמת עלייה"),
     Filter("ma_stack", "MA Alignment", "Signals", "sma150_pct", (

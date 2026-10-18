@@ -15,6 +15,7 @@ import plotly.graph_objects as go
 
 PERF = ["change", "perf_w", "perf_m", "perf_q", "perf_h", "perf_ytd", "perf_y"]
 OTHER = "Other"
+SEP = "\x1f"     # treemap id separator — cannot appear in names (industries contain "/", e.g. "Investment Banks/Brokers")
 
 
 def _wmean(x: pd.Series, w: pd.Series) -> float:
@@ -23,15 +24,19 @@ def _wmean(x: pd.Series, w: pd.Series) -> float:
 
 
 def group_performance(df: pd.DataFrame, by: str = "sector", weight: str = "equal") -> pd.DataFrame:
-    d = df.assign(_g=df[by].fillna(OTHER).astype(str), _above=(df["price"] > df["sma50"]).astype(float).where(df["sma50"].notna()))
-    g = d.groupby("_g", sort=False)
-    out = pd.DataFrame({"stocks": g.size(), "market_cap": g["market_cap"].sum(min_count=1)})
+    """One row per group, largest market cap first. An empty input gives an empty table (same columns)."""
+    groups = df[by].fillna(OTHER).astype(str)
+    above = (df["price"] > df["sma50"]).astype(float).where(df["sma50"].notna())
+    out = pd.DataFrame({"stocks": groups.value_counts(sort=False),
+                        "market_cap": df["market_cap"].groupby(groups).sum(min_count=1)})
+    w = df["market_cap"].where(df["market_cap"] > 0)
     for c in PERF + ["rel_volume"]:
-        if weight == "cap":
-            out[c] = g[[c, "market_cap"]].apply(lambda x, c=c: _wmean(x[c], x["market_cap"]))
+        if weight == "cap":     # sum(x * cap) / sum(cap), over the stocks that have both
+            ok = df[c].notna() & w.notna()
+            out[c] = (df[c] * w).where(ok).groupby(groups).sum(min_count=1) / w.where(ok).groupby(groups).sum(min_count=1)
         else:
-            out[c] = g[c].mean()
-    out["pct_above_sma50"] = g["_above"].mean() * 100
+            out[c] = df[c].groupby(groups).mean()
+    out["pct_above_sma50"] = above.groupby(groups).mean() * 100
     out = out.rename_axis("group").reset_index()
     return out.sort_values("market_cap", ascending=False, na_position="last").reset_index(drop=True)
 
@@ -42,7 +47,7 @@ def heatmap_data(df: pd.DataFrame, color: str = "change") -> pd.DataFrame:
     d["sector"] = d["sector"].fillna(OTHER).astype(str)
     d["industry"] = d["industry"].fillna(OTHER).astype(str)
     leaves = pd.DataFrame({
-        "id": d["sector"] + "/" + d["industry"] + "/" + d["ticker"], "parent": d["sector"] + "/" + d["industry"],
+        "id": d["sector"] + SEP + d["industry"] + SEP + d["ticker"], "parent": d["sector"] + SEP + d["industry"],
         "label": d["ticker"], "value": d["market_cap"], "color": d[color], "text": d["company"].fillna(""),
     })
     nodes = [leaves]
@@ -50,7 +55,7 @@ def heatmap_data(df: pd.DataFrame, color: str = "change") -> pd.DataFrame:
         rows = []
         for key, grp in d.groupby(level, sort=False):
             key = key if isinstance(key, tuple) else (key,)
-            rows.append({"id": "/".join(key), "parent": parent(key), "label": key[-1],
+            rows.append({"id": SEP.join(key), "parent": parent(key), "label": key[-1],
                          "value": grp["market_cap"].sum(), "color": _wmean(grp[color], grp["market_cap"]),
                          "text": f"{len(grp)} stocks"})
         nodes.append(pd.DataFrame(rows, columns=leaves.columns))

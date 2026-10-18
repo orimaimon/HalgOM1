@@ -99,15 +99,25 @@ def fetch_universe(timeout: float = 60) -> pd.DataFrame:
 
 
 def source_meta(update_mode: pd.Series | None) -> dict:
-    """{"provider", "update_mode": delayed|realtime, "delay_min", "raw"} from TradingView's update_mode
-    (e.g. "delayed_streaming_900" = streaming with a 900-second delay)."""
+    """{"provider", "update_mode": delayed|realtime|endofday|unknown, "delay_min", "raw"} from TradingView's
+    update_mode: "delayed_streaming_900" = streaming with a 900-second delay, "streaming" = real time
+    (seen live on TVC:DXY / BINANCE:BTCUSDT). Anything unrecognized is "unknown", never "realtime"."""
     raw = None
     if update_mode is not None and update_mode.notna().any():
         raw = str(update_mode.dropna().astype(str).mode().iat[0])
     delay = None
     if raw and raw.rsplit("_", 1)[-1].isdigit():
         delay = int(raw.rsplit("_", 1)[-1]) // 60
-    mode = "unknown" if raw is None else "delayed" if "delayed" in raw else "realtime"
+    if raw is None:
+        mode = "unknown"
+    elif "delayed" in raw:
+        mode = "delayed"
+    elif raw in ("streaming", "realtime"):
+        mode = "realtime"
+    elif raw.replace("_", "") == "endofday":
+        mode = "endofday"
+    else:
+        mode = "unknown"
     return {"provider": "tradingview", "update_mode": mode, "delay_min": delay, "raw": raw}
 
 

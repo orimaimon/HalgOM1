@@ -411,6 +411,9 @@ def test_source_meta():
     assert source_meta(pd.Series(["delayed_streaming_900"] * 3)) == {
         "provider": "tradingview", "update_mode": "delayed", "delay_min": 15, "raw": "delayed_streaming_900"}
     assert source_meta(pd.Series(["streaming"]))["update_mode"] == "realtime"
+    assert source_meta(pd.Series(["endofday"]))["update_mode"] == "endofday"
+    # anything unrecognized must never be shown to the user as real time
+    assert source_meta(pd.Series(["something_new"]))["update_mode"] == "unknown"
     assert source_meta(None)["update_mode"] == "unknown"
 
 
@@ -476,10 +479,10 @@ def test_new_since_yesterday(tmp_path):
     today = add_derived(raw, today=TODAY)
     sel = {"price": "Over $5"}
     res = screen(today, sel, junk=False)
-    new = history.mark_new(res, prev, sel, junk=False)
+    new = history.mark_new(res, history.previous_tickers(prev, sel, junk=False))
     expected = {f"T{i:03d}" for i in range(10)} | {"T039"}
     assert set(res.loc[new == history.NEW, "ticker"]) == expected
-    assert history.mark_new(res, None, sel, junk=False).eq("").all()
+    assert history.mark_new(res, None).eq("").all()
 
 
 def test_new_since_yesterday_flags_old_snapshot(tmp_path):
@@ -506,6 +509,19 @@ def test_group_performance():
     assert set(G.group_performance(d, "industry").columns) <= set(GROUP_COLUMNS)
 
 
+@pytest.mark.parametrize("weight", ["equal", "cap"])
+def test_group_performance_empty_input(weight):
+    d = frame(price=[10.0], market_cap=[1e9], perf_w=[1.0]).iloc[:0]
+    out = G.group_performance(d, "sector", weight=weight)
+    assert out.empty and set(out.columns) <= set(GROUP_COLUMNS)
+
+
+def test_group_performance_cap_weight_skips_missing_values():
+    d = frame(price=[10.0] * 3, market_cap=[1e9, 3e9, 5e9], perf_w=[10.0, -10.0, np.nan], sector=["A"] * 3)
+    cap = G.group_performance(d, "sector", weight="cap").set_index("group")
+    assert cap.loc["A", "perf_w"] == pytest.approx(-5.0)       # the stock without Perf W adds no weight
+
+
 def test_heatmap_nodes_and_figure():
     d = frame(price=[10.0] * 4, market_cap=[1e9, 3e9, 4e9, np.nan], change=[1.0, -3.0, 2.0, 5.0],
               sector=["A", "A", "B", "B"], industry=["a1", "a2", "b1", "b1"])
@@ -516,6 +532,15 @@ def test_heatmap_nodes_and_figure():
     assert sector_a["value"] == 4e9 and sector_a["color"] == pytest.approx((1 - 9) / 4)   # cap-weighted
     fig = G.heatmap_figure(d)
     assert fig.data[0].type == "treemap" and len(fig.data[0].ids) == len(n)
+
+
+def test_heatmap_ids_survive_slashes_in_names():
+    # industry "X/Y" and ticker "Y" in industry "X" collided as "S/X/Y" with a "/" separator
+    d = frame(price=[10.0] * 2, market_cap=[1e9, 2e9], change=[1.0, 2.0], sector=["S", "S"],
+              industry=["X/Y", "X"], ticker=["AAA", "Y"])
+    n = G.heatmap_data(d)
+    assert n["id"].is_unique and set(n["parent"]) - {""} <= set(n["id"])
+    assert set(n["label"]) >= {"X/Y", "X", "Y", "AAA"}
 
 
 # ── market trend strength (SPY ADX) ─────────────────────────────────────────
@@ -585,6 +610,15 @@ def test_app_smoke(tmp_path, monkeypatch):
     at.session_state["g_by"] = "Industry"
     at.run()
     assert not at.exception, at.exception
+    # cap-weighted averages over an empty screen (used to raise ValueError)
+    at.session_state["g_weight"] = "Market cap"
+    at.session_state["g_results"] = True
+    at.session_state["query"] = "NO SUCH TICKER"
+    at.run()
+    assert not at.exception, at.exception
+    at.session_state["query"] = ""
+    at.session_state["g_results"] = False
+    at.run()
 
     at.session_state["page"] = "Screener"
     at.run()
@@ -593,3 +627,29 @@ def test_app_smoke(tmp_path, monkeypatch):
     assert at.session_state["f_ma_stack"] == "Price > SMA50 > SMA150 > SMA200 (Stage 2)"
     assert at.session_state["hide_junk"] is False
     assert json.loads((tmp_path / "cache" / "latest_meta.json").read_text())["source"]["update_mode"] == "delayed"
+
+
+
+# ── review fixes ────────────────────────────────────────────────────────────
+
+def test_candle_registry_carries_its_own_tags():
+    assert all(len(c) == 5 and c[3] for c in CANDLES.values())
+    assert [s.tag for s in S.CANDLE_SIGNALS] == [c[3] + c[2] for c in CANDLES.values()]
+
+
+def test_ma_comparisons_identical_across_filters():
+    d = frame(price=[10.0] * 3, sma20=[3.0, 1.0, np.nan], sma50=[2.0, 2.0, 2.0], sma200=[1.0, 3.0, np.nan])
+    for label in ("SMA50 above SMA200", "SMA50 below SMA200"):
+        assert apply_filters(d, {"sma50": label}).equals(apply_filters(d, {"ma_cross": label}))
+    for label in ("SMA20 above SMA50", "SMA20 below SMA50"):
+        assert apply_filters(d, {"sma20": label}).equals(apply_filters(d, {"ma_cross": label}))
+
+
+def test_six_month_breakdown():
+    d = frame(price=[50.0, 50.0], low52_prev=[40.0, 40.0], low_6m_prev=[55.0, 45.0], low_3m_prev=[56.0, 48.0],
+              low_1m_prev=[57.0, 49.0])
+    assert apply_filters(d, {"breakout": "New 6-month low (breakdown)"})["ticker"].tolist() == ["X0"]
+    assert d["signals"].tolist() == ["BD 6M", ""]                 # strongest breakdown only
+    labels = option_labels(FILTERS_BY_KEY["breakout"])
+    for months in ("1-month", "3-month", "6-month", "52-week"):
+        assert f"New {months} high (breakout)" in labels and f"New {months} low (breakdown)" in labels
