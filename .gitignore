@@ -9,6 +9,7 @@ archive_legacy/
 *.parquet
 *.sqlite
 *.html
+!screener/guide.html
 *.json
 *.csv
 # Screener local data / env

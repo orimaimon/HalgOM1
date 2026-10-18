@@ -626,7 +626,7 @@ def test_app_smoke(tmp_path, monkeypatch):
     at.run()
     assert not at.exception, at.exception
 
-    for page in ("Groups", "Heatmap"):
+    for page in ("Groups", "Guide", "Heatmap"):
         at.session_state["page"] = page
         at.run()
         assert not at.exception, (page, at.exception)
@@ -839,3 +839,23 @@ def test_excel_export_in_hebrew(df):
     assert [c.value for c in ws[1]][-3:] == ["סטטוס / פעולה", "מחיר כניסה", "הערות"]
     assert ws.cell(row=2, column=2).value == "פיננסים"
     assert wb["פילטרים"]["A8"].value == "מכפיל רווח (P/E)"
+
+# ── user guide (screener/guide.html) ────────────────────────────────────────
+
+GUIDE = ROOT / "screener" / "guide.html"
+
+
+def test_guide_covers_presets_and_ui_names():
+    """The guide quotes the Hebrew UI; renaming a preset, page, tab or view must update the guide too."""
+    text = GUIDE.read_text(encoding="utf-8")
+    assert "<script" not in text.lower()
+    for name in I.PRESETS_HE.values():
+        assert f"<td>{name}</td>" in text, name
+    quoted = set(re.findall(r'<span class="ui">([^<]+)</span>', text))
+    for en in ["Screener", "Groups", "Heatmap", *GROUPS, *VIEWS]:
+        assert I.ui(en, I.HE) in quoted, en
+    known = (set(I.UI.values()) | set(I.FILTERS_HE.values()) | set(I.OPTIONS_HE.values())
+             | set(I.LANGS.values()) | {"HalgOM Screener", "Excel", "CSV"})
+    assert quoted <= known, quoted - known
+    for anchor in re.findall(r'href="#([\w-]+)"', text):
+        assert f'id="{anchor}"' in text, anchor

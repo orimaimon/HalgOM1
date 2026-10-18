@@ -44,7 +44,8 @@ RETRY_AFTER = dt.timedelta(minutes=2)    # when offline, don't hammer the networ
 CUSTOM = "— Custom —"
 USER_PREFIX = "★ "
 GRID = 6
-PAGES = ["Screener", "Groups", "Heatmap"]
+PAGES = ["Screener", "Groups", "Heatmap", "Guide"]
+GUIDE = Path(__file__).with_name("guide.html")
 # provider columns a cached snapshot must have; an older cache without them is refetched
 REQUIRED = [k for k, c in COLUMNS.items() if c.tv]
 # widget keys that must survive while their widget is not on the current page
@@ -421,7 +422,8 @@ def junk_toggle(container) -> None:
 
 def nav() -> str:
     st.segmented_control("Page", PAGES, key="page", label_visibility="collapsed", required=True, format_func=t,
-                         help="סורק = סריקת מניות, קבוצות = ביצועים לפי סקטור ותעשייה, מפת חום = מפת השוק")
+                         help="סורק = סריקת מניות, קבוצות = ביצועים לפי סקטור ותעשייה, מפת חום = מפת השוק, "
+                              "מדריך = הסבר על הסקרינר ועל המונחים")
     return ss.page
 
 
@@ -746,7 +748,9 @@ def main() -> None:
     sel = selections()
     universe = hide_junk(df, ss.hide_junk)       # once per run, shared by every page
     res = search(apply_filters(universe, sel), ss.get("query", ""))
-    if page == "Groups":
+    if page == "Guide":
+        st.html(GUIDE.read_text(encoding="utf-8"))      # Hebrew only, like all end-user explanations
+    elif page == "Groups":
         groups_page(universe, res)
     elif page == "Heatmap":
         heatmap_page(universe, res)
