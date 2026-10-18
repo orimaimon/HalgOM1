@@ -2,6 +2,7 @@
 import datetime as dt
 import io
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +13,7 @@ from openpyxl import load_workbook
 from screener import export
 from screener import groups as G
 from screener import history
+from screener import i18n as I
 from screener import lifecycle
 from screener import presets as P
 from screener import signals as S
@@ -596,8 +598,23 @@ def test_app_smoke(tmp_path, monkeypatch):
     at = AppTest.from_file(str(ROOT / "screener" / "app.py"), default_timeout=60).run()
     assert not at.exception, at.exception
     assert at.session_state["hide_junk"] is True
-    assert any("results" in m.value for m in at.markdown)
-    assert any("delayed 15 min" in c.value for c in at.caption)
+    # Hebrew is the default; values stay English internally
+    assert at.session_state["lang"] == "he"
+    assert any("תוצאות" in m.value for m in at.markdown)
+    assert any("בעיכוב 15 דק'" in c.value for c in at.caption)
+    assert at.selectbox(key="f_pe").options[1] == "נמוך (<15)"          # displayed in Hebrew...
+    at.selectbox(key="f_pe").select("Low (<15)").run()                   # ...stored in English
+    assert at.session_state["f_pe"] == "Low (<15)"
+    at.selectbox(key="f_pe").select("Any").run()
+    # English (a separate AppTest: its selectbox bookkeeping does not follow a language switch mid-test;
+    # the real switch is checked in the browser)
+    en = AppTest.from_file(str(ROOT / "screener" / "app.py"), default_timeout=60)
+    en.session_state["lang"] = "en"
+    en.run()
+    assert not en.exception, en.exception
+    assert any("results" in m.value for m in en.markdown)
+    assert any("delayed 15 min" in c.value for c in en.caption)
+    assert en.selectbox(key="f_pe").options[1] == "Low (<15)"
     assert at.session_state["prev"] is not None                     # yesterday's snapshot was found
 
     at.selectbox(key="preset").select("Stage 2 (Minervini)").run()
@@ -753,3 +770,72 @@ def test_launcher_echo_inside_blocks_has_no_parentheses():
         elif stripped == ")":
             depth -= 1
     assert depth == 0
+
+
+
+# ── Hebrew display (i18n.py) ────────────────────────────────────────────────
+
+ALLOWED_ENGLISH = re.compile(r"\b(SMA\d*|ATR|RSI|EPS|PEG|ROA|ROE|ROIC|FCF|EV|EBITDA|P|E|S|B|M|K|x|"
+                             r"Float|Gap|Beta|Payout|Fwd|HalgOM|Value|Quality|Momentum|Golden|Death|Cross|"
+                             r"Minervini|Nasdaq|DJIA|Russell|TradingView|Doji|Marubozu|Harami|Engulfing|Hammer|"
+                             r"Inverted|Hanging|Man|Shooting|Star|Morning|Evening|Three|White|Soldiers|Black|Crows|"
+                             r"Bullish|Bearish|Kicking|Abandoned|Baby|Dragonfly|Gravestone|OCF)\b")
+
+
+def english_left(text: str) -> set[str]:
+    text = re.sub(r"\d[\d.,]*[KMBx]", "", text)          # amounts like $200B, 50K, 3x
+    return set(re.findall(r"[A-Za-z]+", ALLOWED_ENGLISH.sub("", text)))
+
+
+def test_every_filter_and_option_has_hebrew():
+    for f in FILTERS:
+        label = I.filter_label(f.key, f.label, I.HE)
+        assert f.key in I.FILTERS_HE and not english_left(label), (f.key, label)
+        for o in f.options:
+            he = I.option(o.label, I.HE)
+            index_name = o.label in set(I.option(x, I.EN) for x in ("S&P 500", "Nasdaq 100", "DJIA",
+                                                                       "Russell 1000", "Russell 2000"))
+            assert index_name or he != o.label, (f.key, o.label)
+            assert not english_left(he), (f.key, o.label, he)
+
+
+def test_columns_views_presets_groups_have_hebrew():
+    for k, c in COLUMNS.items():
+        assert not english_left(I.column(k, c.label, I.HE)), k
+    for k, c in GROUP_COLUMNS.items():
+        assert not english_left(I.group_column(k, c.label, I.HE)), k
+    for name in [*VIEWS, *GROUPS, "Screener", "Groups", "Heatmap"]:
+        assert I.ui(name, I.HE) != name, name
+    for name in P.BUILTIN:
+        assert I.preset(name, I.HE) != name, name
+
+
+def test_english_mode_is_unchanged():
+    assert I.option("Under 15", I.EN) == "Under 15"
+    assert I.column("pe", "P/E", I.EN) == "P/E"
+    assert I.value("sector", "Finance", I.EN) == "Finance"
+    assert I.ui("Refresh data", I.EN) == "Refresh data"
+
+
+def test_hebrew_values_and_patterns():
+    assert I.value("sector", "Finance", I.HE) == "פיננסים"
+    assert I.value("country", "Israel", I.HE) == "ישראל"
+    assert I.value("industry", "Semiconductors", I.HE) == "Semiconductors"     # industries stay English
+    assert I.option("Under -10%", I.HE) == "מתחת ל -10%"
+    assert I.option("$5 to $10", I.HE) == "$5 עד $10"
+    assert I.option("Price 10% below SMA50 (weekly)", I.HE) == "מחיר 10% מתחת ל-SMA50 (שבועי)"
+    assert I.option("Something new", I.HE) == "Something new"                   # unknown -> English fallback
+
+
+def test_excel_export_in_hebrew(df):
+    cols = ["ticker", "sector", "pe"]
+    data = export.to_excel(df.head(3).assign(sector="פיננסים"), cols, [("מכפיל רווח (P/E)", "נמוך (<15)")],
+                           dt.datetime(2026, 10, 18, 15, 30), "ערך", headers={"ticker": "סימול", "pe": "P/E"},
+                           t=lambda x: I.ui(x, I.HE), rtl=True)
+    wb = load_workbook(io.BytesIO(data))
+    ws = wb["תוצאות"]
+    assert ws.sheet_view.rightToLeft
+    assert [c.value for c in ws[1]][:3] == ["סימול", "Sector", "P/E"]          # missing header -> English label
+    assert [c.value for c in ws[1]][-3:] == ["סטטוס / פעולה", "מחיר כניסה", "הערות"]
+    assert ws.cell(row=2, column=2).value == "פיננסים"
+    assert wb["פילטרים"]["A8"].value == "מכפיל רווח (P/E)"

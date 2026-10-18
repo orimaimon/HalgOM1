@@ -10,6 +10,7 @@ Layout:
   history.py       "New since yesterday" against the previous daily snapshot
   groups.py        sector / industry performance and the market heatmap (plotly treemap)
   lifecycle.py     Exit button + idle shutdown of the local server
+  i18n.py          Hebrew / English display texts (internal values stay English)
   presets.py       built-in and user-saved screens
   export.py        Excel / CSV / TradingView watchlist export
   market.py        market regime (same rules as DB/build_simulation_db.py)
