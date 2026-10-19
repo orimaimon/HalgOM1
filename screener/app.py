@@ -233,6 +233,12 @@ def on_reset():
     ss.query = ""
 
 
+def on_clear_all():
+    """The empty-results button: every filter, the search and "Only new"."""
+    on_reset()
+    ss.only_new = False
+
+
 def on_save():
     name = (ss.get("save_name") or "").strip()
     if not name:
@@ -518,6 +524,12 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
     if prev is not None and prev.missing:
         hebrew_note(f"ההשוואה ל-{prev.day:%d/%m/%Y} חלקית: ה-snapshot נשמר בגרסה קודמת בלי {len(prev.missing)} "
                     "שדות חדשים, ולכן פילטרים על השדות האלה מסמנים יותר מניות כ-NEW. יסתדר מעצמו ממחר.")
+
+    if res.empty:
+        hebrew_note("אף מניה לא עומדת בכל התנאים. אפשר להחליש או להסיר פילטר (הם מופיעים למעלה), "
+                    "לנקות את החיפוש, או לאפס הכול בלחיצה אחת:")
+        st.button(t("Clear all filters"), on_click=on_clear_all, type="primary", key="clear_all")
+        return
 
     table = display_values(res[view_cols])
     if L() == I.HE and "signals" in table.columns:   # grid only: Excel/CSV get the plain text

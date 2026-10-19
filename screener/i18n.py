@@ -40,6 +40,7 @@ UI: dict[str, str] = {
     "Screen": "סריקה", "— Custom —": "— מותאם אישית —", "Search": "חיפוש",
     "Ticker / company, or list: AAPL, MSFT": "סימול / חברה, או רשימה: AAPL, MSFT",
     "Order by": "מיון לפי", "Ascending": "סדר עולה", "Hide junk": "הסתר זבל", "Reset": "איפוס",
+    "Clear all filters": "איפוס כל הפילטרים והחיפוש",
     "Save current screen as": "שמירת הסריקה הנוכחית בשם", "Save": "שמירה",
     "Delete saved screen": "מחיקת סריקה שמורה", "Delete": "מחיקה",
     "Saved screen": "הסריקה נשמרה", "Deleted": "נמחקה",
