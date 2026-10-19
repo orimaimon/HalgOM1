@@ -345,6 +345,12 @@ def value(column_key: str, v, lang: str):
     return VALUES_HE.get(column_key, {}).get(v, v)
 
 
+def rtl_cell(text):
+    """Wrap Hebrew text for the LTR results grid (RLE ... PDF), so a cell that mixes Hebrew and Latin tags
+    ("בליעה+, SMA20↑SMA50") keeps the tag order and the +/- next to the right word."""
+    return f"\u202b{text}\u202c" if isinstance(text, str) and text else text
+
+
 def signal_tags(text: str, lang: str) -> str:
     """Translate signals tag list 'Engulfing+, Vol 2.8x' -> 'בליעה+, מחזור ×2.8'."""
     if lang != HE or not text:

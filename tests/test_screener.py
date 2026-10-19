@@ -333,6 +333,9 @@ def test_signal_tags_have_hebrew_translations():
     assert I.signal_tags("Engulfing+, Vol 2.8x, BO 1M", "he") == "בליעה+, מחזור ×2.8, פריצה חודשית"
     assert I.signal_tags("Engulfing+, Vol 2.8x, BO 1M", "en") == "Engulfing+, Vol 2.8x, BO 1M"
     assert I.signal_tags("Unknown, Vol 1.5x", "he") == "Unknown, מחזור ×1.5"
+    # Hebrew cells are wrapped for the LTR grid; empty cells and non-strings stay as they are
+    assert I.rtl_cell("בליעה+, SMA20↑SMA50") == "\u202bבליעה+, SMA20↑SMA50\u202c"
+    assert I.rtl_cell("") == "" and I.rtl_cell(None) is None
 
 
 def test_signals_column_combines_and_counts():

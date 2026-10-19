@@ -520,6 +520,8 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
                     "שדות חדשים, ולכן פילטרים על השדות האלה מסמנים יותר מניות כ-NEW. יסתדר מעצמו ממחר.")
 
     table = display_values(res[view_cols])
+    if L() == I.HE and "signals" in table.columns:   # grid only: Excel/CSV get the plain text
+        table["signals"] = table["signals"].map(I.rtl_cell)
     signed = [c for c in view_cols if c in export._SIGNED]
     if signed:
         table = table.style.map(_sign_color, subset=signed)
