@@ -68,7 +68,7 @@ exit /b %errorlevel%
 
 :open
 echo  HalgOM Screener is already running - opening it in the browser.
-start "" http://localhost:8501
+if not defined SCREENER_NO_BROWSER start "" http://localhost:8501
 exit /b 0
 
 :fail

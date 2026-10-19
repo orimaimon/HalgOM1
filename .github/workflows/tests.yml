@@ -10,7 +10,9 @@ jobs:
   tests:
     name: Run Pytest on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
@@ -20,6 +22,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
+      # Same commands as the "Running" section of CLAUDE.md
       - name: Create venv and install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -40,86 +43,111 @@ jobs:
         if: runner.os == 'Windows'
         run: screener\.venv\Scripts\python -m pytest tests/ -q
 
+  # Runs the real run_screener.bat on a clean Windows machine, like the end user's first launch.
+  # Only the health endpoint is requested: the app page is never opened, so CI sends nothing to TradingView.
   launcher-smoke:
     name: Windows Launcher Smoke Test
     runs-on: windows-latest
+    timeout-minutes: 30
     env:
-      SCREENER_NO_UPDATE: "1"
-      STREAMLIT_SERVER_HEADLESS: "true"
+      SCREENER_NO_UPDATE: "1"           # no git pull in CI
+      STREAMLIT_SERVER_HEADLESS: "true" # Streamlit does not open a browser
+      SCREENER_NO_BROWSER: "1"          # the second launch does not open a browser either
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Start run_screener.bat in the background
         run: |
-          # Redirect input from NUL so if it fails and runs `pause`, it won't hang
-          # Start-Process runs independently and won't get killed when this step completes
-          Start-Process cmd.exe -ArgumentList '/c "run_screener.bat < NUL > screener_run.log 2>&1"' -WindowStyle Hidden
+          # stdin from NUL: the launcher's failure path ends with `pause`, which must not hang
+          $p = Start-Process -FilePath cmd.exe `
+                 -ArgumentList '/c', 'run_screener.bat < NUL > screener_run.log 2>&1' `
+                 -WorkingDirectory $env:GITHUB_WORKSPACE -WindowStyle Hidden -PassThru
+          "LAUNCHER_PID=$($p.Id)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Launcher started (pid $($p.Id))"
 
       - name: Wait for server health endpoint
         run: |
-          $maxRetries = 600
-          $delaySeconds = 1
           $url = "http://localhost:8501/_stcore/health"
-
-          for ($i = 0; $i -lt $maxRetries; $i++) {
+          $deadline = (Get-Date).AddMinutes(15)   # first run installs uv, Python and the packages
+          $nextReport = Get-Date
+          while ((Get-Date) -lt $deadline) {
               try {
-                  $response = Invoke-WebRequest -Uri $url -UseBasicParsing -ErrorAction Stop
-                  if ($response.Content -eq "ok") {
-                      Write-Host "Server is up and healthy!"
-                      exit 0
-                  }
-              } catch {
-                  # Ignore errors and keep polling
+                  $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+                  if ($r.Content -eq "ok") { Write-Host "Server is up and healthy."; exit 0 }
+              } catch { }
+              # fail fast if the launcher window already closed (it printed why)
+              if (-not (Get-Process -Id $env:LAUNCHER_PID -ErrorAction SilentlyContinue)) {
+                  Write-Host "run_screener.bat exited before the server came up. Its output:"
+                  Get-Content screener_run.log -ErrorAction SilentlyContinue
+                  exit 1
               }
-              Start-Sleep -Seconds $delaySeconds
+              if ((Get-Date) -ge $nextReport) {
+                  Write-Host "--- still waiting; last launcher output:"
+                  Get-Content screener_run.log -Tail 5 -ErrorAction SilentlyContinue
+                  $nextReport = (Get-Date).AddSeconds(60)
+              }
+              Start-Sleep -Seconds 3
           }
-          Write-Host "Server health check failed after 10 minutes."
+          Write-Host "Server did not answer within 15 minutes. Launcher output:"
+          Get-Content screener_run.log -ErrorAction SilentlyContinue
           exit 1
 
       - name: Run run_screener.bat a second time
         run: |
-          # The second run should detect the running server and exit within a minute
-          # Without NUL redirect so we can ensure it exits on its own
-          $process = Start-Process cmd.exe -ArgumentList "/c run_screener.bat < NUL" -PassThru
-          if (-not $process.WaitForExit(60000)) {
-              Write-Host "Second run of run_screener.bat hung for more than 60 seconds."
-              $process.Kill()
+          # It must find the running server, only "open" it (browser disabled here) and exit 0 by itself
+          $p = Start-Process -FilePath cmd.exe `
+                 -ArgumentList '/c', 'run_screener.bat < NUL > screener_second_run.log 2>&1' `
+                 -WorkingDirectory $env:GITHUB_WORKSPACE -WindowStyle Hidden -PassThru
+          if (-not $p.WaitForExit(60000)) {
+              Write-Host "Second run did not exit within 60 seconds."
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+              exit 1
+          }
+          Get-Content screener_second_run.log
+          if ($p.ExitCode -ne 0) { Write-Host "Second run exit code: $($p.ExitCode)"; exit 1 }
+          if (-not (Select-String -Path screener_second_run.log -Pattern "already running" -Quiet)) {
+              Write-Host "Second run did not detect the running screener."
               exit 1
           }
 
       - name: Check health endpoint again
         run: |
-          $response = Invoke-WebRequest -Uri "http://localhost:8501/_stcore/health" -UseBasicParsing
-          if ($response.Content -ne "ok") {
-              Write-Host "Health check failed after second run."
-              exit 1
-          }
+          $r = Invoke-WebRequest -Uri "http://localhost:8501/_stcore/health" -UseBasicParsing -TimeoutSec 10
+          if ($r.Content -ne "ok") { Write-Host "Health check failed after the second run."; exit 1 }
 
-      - name: Verify single Streamlit process
+      - name: Verify a single server
         run: |
-          $processes = Get-Process -Name "python" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match "streamlit" }
-          if ($processes.Count -ne 1) {
-              Write-Host "Expected 1 Streamlit process, found $($processes.Count)."
-              exit 1
+          # Count listening processes on the port, not python.exe processes (the venv launcher
+          # starts a child interpreter, so one server can show up as two python processes)
+          $owners = @(Get-NetTCPConnection -LocalPort 8501 -State Listen -ErrorAction SilentlyContinue |
+                      Select-Object -ExpandProperty OwningProcess -Unique)
+          Write-Host "Processes listening on 8501: $($owners -join ', ')"
+          if ($owners.Count -ne 1) { exit 1 }
+          if (Get-NetTCPConnection -LocalPort 8502 -State Listen -ErrorAction SilentlyContinue) {
+              Write-Host "A second server is listening on 8502."; exit 1
           }
 
       - name: Check shortcut flag file
         run: |
           if (-not (Test-Path "screener\_data\shortcut.done")) {
-              Write-Host "Shortcut flag file screener\_data\shortcut.done not found."
+              Write-Host "screener\_data\shortcut.done not found (desktop shortcut step did not run)."
               exit 1
           }
 
       - name: Stop server
         if: always()
         run: |
-          Stop-Process -Name "python" -Force -ErrorAction SilentlyContinue
+          Get-Process -Name python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          if ($env:LAUNCHER_PID) { Stop-Process -Id $env:LAUNCHER_PID -Force -ErrorAction SilentlyContinue }
 
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: screener-logs
-          path: screener\_data\logs\
+          path: |
+            screener_run.log
+            screener_second_run.log
+            screener\_data\logs\
           if-no-files-found: ignore
