@@ -60,18 +60,27 @@ def old_add_derived(raw: pd.DataFrame, today: dt.date | None = None) -> pd.DataF
     df["new"] = ""
     return add_scores(df)
 
-def test_performance_equality():
-    df = generate_synthetic_data()
-    today = dt.date(2024, 1, 1)
-
+@pytest.mark.parametrize("drop", [[], ["earnings_date", "target", "close_w"]])   # + an old snapshot
+def test_performance_equality(drop):
     import warnings
-    warnings.simplefilter("ignore")
-
-    baseline = old_add_derived(df, today)
-    derived = add_derived(df, today)
-
-    # ensure that it's equal
+    df = generate_synthetic_data().drop(columns=drop)
+    today = dt.date(2024, 1, 1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", pd.errors.PerformanceWarning)
+        baseline = old_add_derived(df, today)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pd.errors.PerformanceWarning)   # the point of the change
+        derived = add_derived(df, today)
     pd.testing.assert_frame_equal(baseline, derived)
+
+
+def test_derived_columns_replace_existing_ones():
+    """A column that is already there (e.g. "new" from an earlier pass) is replaced, not duplicated."""
+    df = generate_synthetic_data(50).assign(new="NEW", adj_price=-1.0)
+    out = add_derived(df, dt.date(2024, 1, 1))
+    assert not out.columns.duplicated().any()
+    assert (out["new"] == "").all()
+    pd.testing.assert_series_equal(out["adj_price"], out["price"], check_names=False)   # NaN == NaN here
 
 if __name__ == "__main__":
     pytest.main([__file__, "-s"])
