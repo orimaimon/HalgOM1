@@ -59,6 +59,9 @@ jobs:
 
       - name: Start run_screener.bat in the background
         run: |
+          # The job shell is pwsh 7, whose PSModulePath breaks Windows PowerShell 5.1 (the launcher's uv
+          # install fails with "module could not be loaded"). A double-click starts with a clean env.
+          Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue
           # stdin from NUL: the launcher's failure path ends with `pause`, which must not hang
           $p = Start-Process -FilePath cmd.exe `
                  -ArgumentList '/c', 'run_screener.bat < NUL > screener_run.log 2>&1' `
@@ -96,6 +99,7 @@ jobs:
       - name: Run run_screener.bat a second time
         run: |
           # It must find the running server, only "open" it (browser disabled here) and exit 0 by itself
+          Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue   # see the start step
           $p = Start-Process -FilePath cmd.exe `
                  -ArgumentList '/c', 'run_screener.bat < NUL > screener_second_run.log 2>&1' `
                  -WorkingDirectory $env:GITHUB_WORKSPACE -WindowStyle Hidden -PassThru
