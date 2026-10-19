@@ -46,12 +46,12 @@ def cross_down(a: str, b: str) -> Mask:
 
 
 CANDLE_SIGNALS: list[Signal] = [
-    Signal(label, tag + bias, lambda d, k=k: d[k] == 1) for k, (_, label, bias, tag, _) in CANDLES.items()
+    Signal(label, tag + bias, lambda d, k=k: d[k] == 1) for k, (label, bias, tag, _) in CANDLES.items()
 ]
 
 
 def any_candle(bias: str) -> Mask:
-    keys = [k for k, c in CANDLES.items() if c[2] == bias]
+    keys = [k for k, c in CANDLES.items() if c[1] == bias]
     return lambda d: d[keys].eq(1).any(axis=1)
 
 

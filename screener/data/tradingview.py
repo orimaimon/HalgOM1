@@ -19,7 +19,6 @@ import numpy as np
 import pandas as pd
 import requests
 
-from screener.fields import COLUMNS, EXTRA_TV_FIELDS, INDEXES, tv_fields
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +125,7 @@ def index_names(value) -> str | None:
     if not isinstance(value, (list, tuple, np.ndarray)):
         return None
     pronames = {i.get("proname") for i in value if isinstance(i, dict)}
+    from screener.fields import INDEXES
     return ", ".join(label for p, label in INDEXES.items() if p in pronames)
 
 
@@ -134,6 +134,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if "indexes" in df.columns:
         df["indexes"] = df["indexes"].map(index_names)
+    from screener.fields import COLUMNS
     for key, col in COLUMNS.items():
         if key not in df.columns:
             continue
@@ -170,3 +171,125 @@ def fetch_market(timeout: float = 20) -> pd.DataFrame:
     data = {name: by_symbol.get(sym, [np.nan] * len(MARKET_FIELDS)) for name, sym in MARKET_SYMBOLS.items()}
     return pd.DataFrame.from_dict(data, orient="index", columns=list(MARKET_FIELDS.values())
                                   ).apply(pd.to_numeric, errors="coerce")
+
+
+
+# TradingView fields fetched in addition to COLUMNS — used for cleaning / metadata only.
+EXTRA_TV_FIELDS = ("is_primary", "typespecs", "currency", "update_mode")
+
+TV_MAPPING: dict[str, str] = {
+    "name": "ticker",
+    "description": "company",
+    "exchange": "exchange",
+    "sector": "sector",
+    "industry": "industry",
+    "country": "country",
+    "type": "sec_type",
+    "indexes": "indexes",
+    "number_of_employees": "employees",
+    "close": "price",
+    "change": "change",
+    "change_abs": "change_abs",
+    "gap": "gap",
+    "premarket_change": "premarket",
+    "postmarket_change": "postmarket",
+    "volume": "volume",
+    "average_volume_30d_calc": "avg_volume",
+    "relative_volume_10d_calc": "rel_volume",
+    "market_cap_basic": "market_cap",
+    "float_shares_outstanding": "float_shares",
+    "total_shares_outstanding_current": "shares_out",
+    "price_earnings_ttm": "pe",
+    "earnings_per_share_forecast_next_fy": "eps_next_fy",
+    "price_earnings_growth_ttm": "peg",
+    "price_sales_current": "ps",
+    "price_book_fq": "pb",
+    "price_to_cash_f_operating_activities_ttm": "pocf",
+    "price_free_cash_flow_ttm": "pfcf",
+    "enterprise_value_ebitda_ttm": "ev_ebitda",
+    "earnings_per_share_diluted_ttm": "eps",
+    "earnings_per_share_diluted_yoy_growth_ttm": "eps_growth",
+    "earnings_per_share_diluted_yoy_growth_fq": "eps_growth_q",
+    "total_revenue_ttm": "revenue",
+    "total_revenue_yoy_growth_ttm": "sales_growth",
+    "total_revenue_yoy_growth_fq": "sales_growth_q",
+    "return_on_assets": "roa",
+    "return_on_equity": "roe",
+    "return_on_invested_capital": "roic",
+    "current_ratio_fq": "curr_ratio",
+    "quick_ratio_fq": "quick_ratio",
+    "long_term_debt_to_equity_fq": "lt_debt_eq",
+    "debt_to_equity_fq": "debt_eq",
+    "gross_margin_ttm": "gross_margin",
+    "operating_margin_ttm": "oper_margin",
+    "net_margin_ttm": "net_margin",
+    "free_cash_flow_margin_ttm": "fcf_margin",
+    "dividends_yield_current": "div_yield",
+    "dividend_payout_ratio_ttm": "payout",
+    "Perf.W": "perf_w",
+    "Perf.1M": "perf_m",
+    "Perf.3M": "perf_q",
+    "Perf.6M": "perf_h",
+    "Perf.YTD": "perf_ytd",
+    "Perf.Y": "perf_y",
+    "Perf.5Y": "perf_5y",
+    "Volatility.W": "vol_w",
+    "Volatility.M": "vol_m",
+    "RSI": "rsi",
+    "SMA20": "sma20",
+    "SMA50": "sma50",
+    "SMA150": "sma150",
+    "SMA200": "sma200",
+    "close[1]": "close_prev",
+    "SMA20[1]": "sma20_prev",
+    "SMA50[1]": "sma50_prev",
+    "SMA200[1]": "sma200_prev",
+    "close|1W": "close_w",
+    "RSI|1W": "rsi_w",
+    "SMA50|1W": "sma50_w",
+    "High.5D": "high_5d",
+    "Low.5D": "low_5d",
+    "High.1M": "high_1m",
+    "Low.1M": "low_1m",
+    "High.1M[1]": "high_1m_prev",
+    "High.3M[1]": "high_3m_prev",
+    "High.6M[1]": "high_6m_prev",
+    "price_52_week_high[1]": "high52_prev",
+    "Low.1M[1]": "low_1m_prev",
+    "Low.3M[1]": "low_3m_prev",
+    "Low.6M[1]": "low_6m_prev",
+    "price_52_week_low[1]": "low52_prev",
+    "price_52_week_high": "high52",
+    "price_52_week_low": "low52",
+    "ATR": "atr",
+    "ATRP": "atr_pct",
+    "beta_1_year": "beta",
+    "earnings_release_next_date": "earnings_date",
+    "recommendation_mark": "recom",
+    "price_target_average": "target",
+    "Candle.Engulfing.Bullish": "cdl_engulfing_bull",
+    "Candle.Engulfing.Bearish": "cdl_engulfing_bear",
+    "Candle.Hammer": "cdl_hammer",
+    "Candle.InvertedHammer": "cdl_inv_hammer",
+    "Candle.HangingMan": "cdl_hanging_man",
+    "Candle.ShootingStar": "cdl_shooting_star",
+    "Candle.MorningStar": "cdl_morning_star",
+    "Candle.EveningStar": "cdl_evening_star",
+    "Candle.3WhiteSoldiers": "cdl_3_soldiers",
+    "Candle.3BlackCrows": "cdl_3_crows",
+    "Candle.Harami.Bullish": "cdl_harami_bull",
+    "Candle.Harami.Bearish": "cdl_harami_bear",
+    "Candle.Kicking.Bullish": "cdl_kicking_bull",
+    "Candle.Kicking.Bearish": "cdl_kicking_bear",
+    "Candle.AbandonedBaby.Bullish": "cdl_baby_bull",
+    "Candle.AbandonedBaby.Bearish": "cdl_baby_bear",
+    "Candle.Marubozu.White": "cdl_marubozu_white",
+    "Candle.Marubozu.Black": "cdl_marubozu_black",
+    "Candle.Doji": "cdl_doji",
+    "Candle.Doji.Dragonfly": "cdl_doji_dragonfly",
+    "Candle.Doji.Gravestone": "cdl_doji_gravestone"
+}
+
+def tv_fields() -> dict[str, str]:
+    """Map TradingView field -> column key, for every column fetched from TradingView."""
+    return TV_MAPPING
