@@ -123,7 +123,7 @@ def get_data(force: bool = False):
            or (snap.source != "stale" and snap.age > MAX_AGE))
     if due:
         ss.last_attempt = now
-        with st.spinner(t("Loading market data from TradingView… (≈15 sec)")):
+        with st.spinner(t("Loading data…")):
             try:
                 snap = load_universe(_store(), fetch_universe, MAX_AGE, force=force, required=REQUIRED)
             except Exception as e:
@@ -188,6 +188,22 @@ def selections() -> dict[str, str]:
 def described() -> list[tuple[str, str]]:
     """(filter, option) of the active filters in the display language — for the chips and the exports."""
     return [(I.filter_label(k, FILTERS_BY_KEY[k].label, L()), opt(v)) for k, v in active(selections()).items()]
+
+def find_removed_pill(active_keys: list[str], selected_pills: list[str]) -> str | None:
+    """Given the old active filters and the new selected pills, return the key that was deselected."""
+    for key in active_keys:
+        if key not in selected_pills:
+            return key
+    return None
+
+def on_remove_pill():
+    active_keys = list(active(selections()).keys())
+    removed = find_removed_pill(active_keys, ss.get("active_pills", []))
+    if removed:
+        ss[f"f_{removed}"] = ANY
+        # if another pill is removed, we want to reset active_pills so it doesn't cause issues?
+        # keep_widget_state will handle it if we delete active_pills, but we shouldn't.
+        # Streamlit resets the pills options when the page reruns anyway if we don't persist it.
 
 
 def display_values(df: pd.DataFrame) -> pd.DataFrame:
@@ -271,7 +287,12 @@ def column_config(key: str):
     kw = {"label": col_label(key), "help": c.help}
     match c.kind:
         case "text":
-            width = {"signals": 300, "indexes": 240, "new": 60}.get(key)
+            width_map = {
+                "signals": 300, "indexes": 240, "new": 60,
+                "ticker": "small", "exchange": "small", "country": "small", "sec_type": "small",
+                "company": "medium", "sector": "medium", "industry": "medium"
+            }
+            width = width_map.get(key)
             return cc.TextColumn(pinned=key == "ticker", width=width, **kw)
         case "price":
             return cc.NumberColumn(format="%.2f", **kw)
@@ -371,8 +392,10 @@ def _header(snap, n_universe: int) -> None:
     with left:
         st.html('<div class="hs-brand"><i></i><b>HalgOM</b><span>Screener</span></div>')
         st.caption(f"v{VERSION} · {t('US stocks')} · {n_universe:,} {t('in universe')}")
-        st.segmented_control("Language", list(I.LANGS), key="lang", format_func=I.LANGS.get, required=True,
+        c1, c2 = st.columns([1, 1], vertical_alignment="center")
+        c1.segmented_control("Language", list(I.LANGS), key="lang", format_func=I.LANGS.get, required=True,
                              label_visibility="collapsed")
+        c2.toggle(t("Large text"), key="large_text")
     with mid:
         market, regime = _market()
         if market is None:
@@ -399,7 +422,7 @@ def _header(snap, n_universe: int) -> None:
                     c.caption(vs200.removeprefix(" · "))
     with right:
         src = t({"live": "live", "cache": "cached", "stale": "OFFLINE"}[snap.source])
-        st.caption(f"{t('Data as of')} **{snap.fetched_at:%Y-%m-%d %H:%M}** ({src}) · {source_text(snap.meta)}",
+        st.caption(f"{t('Data from')}**{snap.fetched_at:%H:%M}** ({snap.fetched_at:%Y-%m-%d}) ({src}) · {source_text(snap.meta)}",
                    help="מקור הנתונים ומצב העדכון כפי שהספק מדווח. delayed = בעיכוב, realtime = בזמן אמת")
         r1, r2 = st.columns([1.7, 1.2])
         if r1.button(t("Refresh data"), icon=":material/refresh:", use_container_width=True):
@@ -448,7 +471,7 @@ def toolbar(presets: dict[str, P.Preset]) -> None:
     names = [CUSTOM] + list(presets)
     if ss.get("preset") not in names:
         ss.preset = CUSTOM
-    c1, c2, c3, c4, c7, c5, c6 = st.columns([2.6, 2.4, 1.8, 1.1, 1.2, 1, 1], vertical_alignment="bottom")
+    c1, c2, c3, c4, c7, c5, c6 = st.columns([2.5, 2.3, 1.7, 1.3, 1.4, 1.1, 1.1], vertical_alignment="bottom")
     def preset_name(n: str) -> str:
         return t(n) if n == CUSTOM else n if n.startswith(USER_PREFIX) else I.preset(n, L())
 
@@ -507,7 +530,17 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
     view_cols = VIEWS[ss.view]
     chips = described()
     if chips:
-        st.caption(" · ".join(f"**{k}:** {v}" for k, v in chips))
+        active_keys = list(active(selections()).keys())
+        st.pills(
+            t("Active filters"),
+            options=active_keys,
+            default=active_keys,
+            selection_mode="multi",
+            format_func=lambda k: f"{I.filter_label(k, FILTERS_BY_KEY[k].label, L())}: {opt(selections()[k])}",
+            label_visibility="collapsed",
+            key="active_pills",
+            on_change=on_remove_pill
+        )
     notes = []                                   # end-user explanations are Hebrew (CLAUDE.md)
     if ss.hide_junk and len(universe) < len(df):
         notes.append(f"{len(df) - len(universe):,} מניות זבל מוסתרות ({t('Hide junk')})")
@@ -590,6 +623,22 @@ def snapshot_table(row: pd.Series) -> str:
     return "".join(out)
 
 
+def range52_bar(price: float, low: float, high: float) -> str:
+    """A visual progress bar indicating where the price sits between the 52-week low and high."""
+    if pd.isna(price) or pd.isna(low) or pd.isna(high) or low >= high:
+        pct = 50.0  # fallback to middle if data is invalid
+    else:
+        pct = max(0.0, min(100.0, (price - low) / (high - low) * 100))
+
+    return (f'<div dir="ltr" style="display:flex;align-items:center;gap:6px;font-size:12px;color:{theme.MUTED};'
+            f'margin-bottom:8px">'
+            f'<span>{low:.2f}</span>'
+            f'<div style="flex:1;height:4px;background:{theme.HAIRLINE};border-radius:2px;position:relative">'
+            f'<div style="position:absolute;left:{pct}%;top:-3px;width:6px;height:10px;'
+            f'background:{theme.ACCENT};border-radius:2px;transform:translateX(-50%)"></div>'
+            f'</div><span>{high:.2f}</span></div>')
+
+
 def detail(row: pd.Series) -> None:
     st.divider()
     chart, info = st.columns([3, 1.25])
@@ -602,6 +651,8 @@ def detail(row: pd.Series) -> None:
         st.caption(f"{row['company']}{lrm}  \n{sector} · {row['industry']}{lrm} · {country}"
                    + (f"  \n{row['indexes']}" if row.get("indexes") else ""))
         st.metric(t("Price"), fmt_value("price", row["price"]), f"{row['change']:+.2f}%")
+        st.caption(f"**{t('52-Week Range')}**")
+        st.html(range52_bar(row.get("price", float('nan')), row.get("low52", float('nan')), row.get("high52", float('nan'))))
         if row.get("signals"):
             st.caption(f"**{t('Signals')}:** {I.signal_tags(row['signals'], L())}")
         st.html(snapshot_table(row))
@@ -757,7 +808,9 @@ def goodbye() -> None:
 def main() -> None:
     _setup_logging()
     ss.setdefault("lang", I.HE)
-    st.html(theme.CSS + (theme.RTL_CSS if L() == I.HE else ""))
+    ss.setdefault("large_text", False)
+    css = theme.CSS + (theme.RTL_CSS if L() == I.HE else "") + (theme.LARGE_TEXT_CSS if ss.large_text else "")
+    st.html(css)
     if ss.get("exiting"):
         goodbye()
         return

@@ -64,6 +64,18 @@ CSS = f"""
 </style>
 """
 
+LARGE_TEXT_CSS = f"""
+<style>
+  :root {{
+    font-size: 115%;
+  }}
+  /* increase specific elements that might have fixed sizes */
+  [data-testid="stDataFrame"], [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {{
+    font-size: 110%;
+  }}
+</style>
+"""
+
 # Hebrew: the interface runs right-to-left; tables, the heatmap, the chart and code stay left-to-right
 # (Streamlit's table can only pin columns on the left, and numbers/tickers read left-to-right).
 RTL_CSS = """
