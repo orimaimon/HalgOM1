@@ -1,0 +1,125 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  tests:
+    name: Run Pytest on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Create venv and install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          uv venv --python 3.12 screener/.venv
+          uv pip install --python screener/.venv -r screener/requirements.lock pytest
+
+      - name: Create venv and install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          uv venv --python 3.12 screener\.venv
+          uv pip install --python screener\.venv -r screener\requirements.lock pytest
+
+      - name: Run Pytest (Linux)
+        if: runner.os == 'Linux'
+        run: screener/.venv/bin/python -m pytest tests/ -q
+
+      - name: Run Pytest (Windows)
+        if: runner.os == 'Windows'
+        run: screener\.venv\Scripts\python -m pytest tests/ -q
+
+  launcher-smoke:
+    name: Windows Launcher Smoke Test
+    runs-on: windows-latest
+    env:
+      SCREENER_NO_UPDATE: "1"
+      STREAMLIT_SERVER_HEADLESS: "true"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start run_screener.bat in the background
+        run: |
+          # Redirect input from NUL so if it fails and runs `pause`, it won't hang
+          # Start-Process runs independently and won't get killed when this step completes
+          Start-Process cmd.exe -ArgumentList '/c "run_screener.bat < NUL > screener_run.log 2>&1"' -WindowStyle Hidden
+
+      - name: Wait for server health endpoint
+        run: |
+          $maxRetries = 600
+          $delaySeconds = 1
+          $url = "http://localhost:8501/_stcore/health"
+
+          for ($i = 0; $i -lt $maxRetries; $i++) {
+              try {
+                  $response = Invoke-WebRequest -Uri $url -UseBasicParsing -ErrorAction Stop
+                  if ($response.Content -eq "ok") {
+                      Write-Host "Server is up and healthy!"
+                      exit 0
+                  }
+              } catch {
+                  # Ignore errors and keep polling
+              }
+              Start-Sleep -Seconds $delaySeconds
+          }
+          Write-Host "Server health check failed after 10 minutes."
+          exit 1
+
+      - name: Run run_screener.bat a second time
+        run: |
+          # The second run should detect the running server and exit within a minute
+          # Without NUL redirect so we can ensure it exits on its own
+          $process = Start-Process cmd.exe -ArgumentList "/c run_screener.bat < NUL" -PassThru
+          if (-not $process.WaitForExit(60000)) {
+              Write-Host "Second run of run_screener.bat hung for more than 60 seconds."
+              $process.Kill()
+              exit 1
+          }
+
+      - name: Check health endpoint again
+        run: |
+          $response = Invoke-WebRequest -Uri "http://localhost:8501/_stcore/health" -UseBasicParsing
+          if ($response.Content -ne "ok") {
+              Write-Host "Health check failed after second run."
+              exit 1
+          }
+
+      - name: Verify single Streamlit process
+        run: |
+          $processes = Get-Process -Name "python" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match "streamlit" }
+          if ($processes.Count -ne 1) {
+              Write-Host "Expected 1 Streamlit process, found $($processes.Count)."
+              exit 1
+          }
+
+      - name: Check shortcut flag file
+        run: |
+          if (-not (Test-Path "screener\_data\shortcut.done")) {
+              Write-Host "Shortcut flag file screener\_data\shortcut.done not found."
+              exit 1
+          }
+
+      - name: Stop server
+        if: always()
+        run: |
+          Stop-Process -Name "python" -Force -ErrorAction SilentlyContinue
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screener-logs
+          path: screener\_data\logs\
+          if-no-files-found: ignore
