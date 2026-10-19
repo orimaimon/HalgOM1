@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -109,5 +110,7 @@ def delete_user(name: str, path: Path | None = None) -> None:
 
 def _write(presets: dict[str, Preset], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({n: asdict(p) for n, p in presets.items()}, ensure_ascii=False, indent=2),
-                    encoding="utf-8")
+    text = json.dumps({n: asdict(p) for n, p in presets.items()}, ensure_ascii=False, indent=2)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)               # a crash mid-write never leaves a half-written file

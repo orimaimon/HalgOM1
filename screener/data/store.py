@@ -21,12 +21,14 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 log = logging.getLogger(__name__)
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "_data"
+MARKET_TZ = "America/New_York"      # snapshot days are US market days
 
 
 @dataclass
@@ -67,10 +69,17 @@ class Store:
         meta = json.dumps({"fetched_at": fetched_at.isoformat(timespec="seconds"), "rows": len(df),
                            "source": df.attrs.get("source") or {}})
         _atomic_parquet(df, self.latest_path)
-        self.meta_path.write_text(meta, encoding="utf-8")
-        day = fetched_at.date().isoformat()
+        _atomic_write_text(meta, self.meta_path)
+        day = market_date(fetched_at).isoformat()
         _atomic_parquet(df, self.snap_dir / f"{day}.parquet")
-        (self.snap_dir / f"{day}.json").write_text(meta, encoding="utf-8")
+        _atomic_write_text(meta, self.snap_dir / f"{day}.json")
+
+    def latest_fetched_at(self) -> dt.datetime | None:
+        """Time of the last successful fetch, from the small meta file (no parquet read)."""
+        try:
+            return dt.datetime.fromisoformat(json.loads(self.meta_path.read_text(encoding="utf-8"))["fetched_at"])
+        except (OSError, ValueError, KeyError):
+            return None
 
     def snapshot_dates(self) -> list[dt.date]:
         if not self.snap_dir.exists():
@@ -99,11 +108,26 @@ class Store:
         return days[-1] if days else None
 
 
+def market_date(ts: dt.datetime) -> dt.date:
+    """New York date of a fetch time (naive = local time). A fetch after midnight in Israel still
+    belongs to the same US session, so it must not start a new snapshot day."""
+    try:
+        return ts.astimezone(ZoneInfo(MARKET_TZ)).date()
+    except Exception:            # no time-zone database: the local date
+        return ts.date()
+
+
 def _atomic_parquet(df: pd.DataFrame, path: Path) -> None:
     tmp = path.with_suffix(".tmp")
     df = df.copy()
     df.attrs = {}        # metadata lives in the JSON next to the file
     df.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
+
+
+def _atomic_write_text(text: str, path: Path) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
 
 

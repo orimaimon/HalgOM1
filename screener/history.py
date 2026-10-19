@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from screener.data.store import Store
+from screener.data.store import Store, market_date
 from screener.derive import add_derived
 from screener.fields import COLUMNS
 from screener.filters import screen
@@ -32,7 +32,8 @@ class Previous:
 
 
 def load_previous(store: Store, today: dt.date) -> Previous | None:
-    day = store.previous_snapshot_date(today)
+    fetched_at = store.latest_fetched_at()     # snapshot days are New York dates (store.market_date)
+    day = store.previous_snapshot_date(market_date(fetched_at) if fetched_at else today)
     if day is None:
         return None
     try:
