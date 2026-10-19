@@ -76,8 +76,10 @@ Rules:
 - `run_screener.bat` updates itself (`git pull`) while cmd is running it, and cmd resumes at the same byte
   offset: the update block (`if not defined SCREENER_NO_UPDATE ...`) must stay byte-identical at bytes
   529–785. Edit below it freely; above it keep the length (pad the `rem ---` line). Tests enforce this.
-- Launcher behavior: fixed port 8501; a second launch only opens the browser (health check); a desktop
-  shortcut is created once (`screener/_data/shortcut.done`).
+- Launcher behavior: fixed port 8501; a second launch only opens the browser (health check;
+  `SCREENER_NO_BROWSER=1` skips the browser); a desktop shortcut is created once (`screener/_data/shortcut.done`).
+- CI (`.github/workflows/tests.yml`): pytest on Linux + Windows, and a launcher smoke test that runs the real
+  `run_screener.bat` on a clean Windows runner (health endpoint only, never the app page, so no TradingView calls).
 - Built-in preset option labels must match filter labels exactly (tests enforce this).
 - `tests/test_screener.py::test_app_smoke` runs the whole app offline with `streamlit.testing.v1.AppTest`
   (provider and data dirs monkeypatched); paths in store/presets/export are resolved at call time for this.
