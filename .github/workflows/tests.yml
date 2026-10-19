@@ -43,6 +43,85 @@ jobs:
         if: runner.os == 'Windows'
         run: screener\.venv\Scripts\python -m pytest tests/ -q
 
+  # screener/update.py against the real GitHub on Windows: a folder without .git (as from a ZIP or a
+  # copied folder) must become a clean checkout of main with the launcher's CRLF line endings intact.
+  # With the HALGOM_DEPLOY_KEY secret (the read-only deploy key) it goes over SSH, as on the end user's PC
+  # once the repo is private; without it, anonymous HTTPS (works while the repo is public).
+  updater:
+    name: Windows Updater Test
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Create venv and install dependencies
+        run: |
+          uv venv --python 3.12 screener\.venv
+          uv pip install --python screener\.venv -r screener\requirements.lock
+
+      - name: Turn a copy without .git into a checkout of main
+        env:
+          HALGOM_DEPLOY_KEY: ${{ secrets.HALGOM_DEPLOY_KEY }}
+        run: |
+          $home_dir = Join-Path $env:RUNNER_TEMP "home"
+          New-Item -ItemType Directory -Force -Path (Join-Path $home_dir ".halgom") | Out-Null
+          if ($env:HALGOM_DEPLOY_KEY) {
+              Set-Content -Path (Join-Path $home_dir ".halgom\deploy_key") -Value $env:HALGOM_DEPLOY_KEY -NoNewline
+              Write-Host "Using the deploy key (SSH)"
+          } else { Write-Host "No deploy key secret: anonymous HTTPS" }
+          $env:USERPROFILE = $home_dir; $env:HOME = $home_dir
+          $copy = Join-Path $env:RUNNER_TEMP "HalgOM copy"
+          git archive --format=zip -o "$env:RUNNER_TEMP\src.zip" HEAD
+          Expand-Archive "$env:RUNNER_TEMP\src.zip" -DestinationPath $copy
+          screener\.venv\Scripts\python -m screener.update --root $copy
+          if ($LASTEXITCODE -ne 3) { Write-Host "expected exit code 3 (updated), got $LASTEXITCODE"; $failed = $true }
+          screener\.venv\Scripts\python -m screener.update --root $copy
+          if ($LASTEXITCODE -ne 0) { Write-Host "expected exit code 0 (up to date), got $LASTEXITCODE"; $failed = $true }
+          Get-Content (Join-Path $copy "screener\_data\logs\update.log")
+          $dirty = git -C $copy status --porcelain --untracked-files=no   # the copy is the PR head: its new files are untracked in main
+          if ($dirty) { Write-Host "checkout is not clean:"; $dirty; $failed = $true }
+          $bat = [IO.File]::ReadAllBytes((Join-Path $copy "run_screener.bat"))
+          $lf = ($bat | Where-Object { $_ -eq 10 }).Count
+          $crlf = ([Text.Encoding]::ASCII.GetString($bat) -split "`r`n").Count - 1
+          if ($lf -ne $crlf) { Write-Host "run_screener.bat lost its CRLF line endings"; $failed = $true }
+          if ($failed) { exit 1 }
+
+      # The whole double-click flow in a ZIP folder whose name has a space and parentheses: the launcher
+      # updates (exit 3), restarts itself from its single update line, and the server comes up.
+      - name: Double-click flow in a ZIP folder (update, restart, start)
+        env:
+          STREAMLIT_SERVER_HEADLESS: "true"
+          SCREENER_NO_BROWSER: "1"
+        run: |
+          Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue   # see the launcher-smoke job
+          $copy = Join-Path $env:RUNNER_TEMP "HalgOM zip (1)"
+          Expand-Archive "$env:RUNNER_TEMP\src.zip" -DestinationPath $copy
+          $log = Join-Path $env:RUNNER_TEMP "zip_run.log"
+          $p = Start-Process -FilePath cmd.exe -ArgumentList '/c', "run_screener.bat < NUL > `"$log`" 2>&1" `
+                 -WorkingDirectory $copy -WindowStyle Hidden -PassThru
+          $deadline = (Get-Date).AddMinutes(12)
+          $up = $false
+          while ((Get-Date) -lt $deadline) {
+              try {
+                  $r = Invoke-WebRequest -Uri "http://localhost:8501/_stcore/health" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+                  if ($r.Content -eq "ok") { $up = $true; break }
+              } catch { }
+              if ($p.HasExited) { break }
+              Start-Sleep -Seconds 3
+          }
+          Get-Content $log
+          Get-Process -Name python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if (-not $up) { Write-Host "server did not come up"; exit 1 }
+          if (-not (Select-String -Path $log -Pattern "this folder now updates itself" -Quiet)) {
+              Write-Host "the launcher did not run the update"; exit 1
+          }
+          if (-not (Test-Path (Join-Path $copy ".git"))) { Write-Host "no .git after the update"; exit 1 }
+
   # Runs the real run_screener.bat on a clean Windows machine, like the end user's first launch.
   # Only the health endpoint is requested: the app page is never opened, so CI sends nothing to TradingView.
   launcher-smoke:
