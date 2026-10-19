@@ -180,6 +180,22 @@ COUNTRIES_HE: dict[str, str] = {
 }
 VALUES_HE = {"sector": SECTORS_HE, "country": COUNTRIES_HE}
 
+SIGNALS_HE: dict[str, str] = {
+    "Engulfing+": "בליעה+", "Engulfing-": "בליעה-", "Hammer+": "פטיש+", "Inv Hammer+": "פטיש הפוך+",
+    "Hanging Man-": "איש תלוי-", "Shooting Star-": "כוכב נופל-", "Morning Star+": "כוכב בוקר+",
+    "Evening Star-": "כוכב ערב-", "3 Soldiers+": "3 חיילים+", "3 Crows-": "3 עורבים-",
+    "Harami+": "הראמי+", "Harami-": "הראמי-", "Kicking+": "בעיטה+", "Kicking-": "בעיטה-",
+    "Aband. Baby+": "תינוק נטוש+", "Aband. Baby-": "תינוק נטוש-", "Marubozu+": "מרובוזו+",
+    "Marubozu-": "מרובוזו-", "Doji": "דוג'י", "Dragonfly+": "שפירית+", "Gravestone-": "מצבה-",
+    "BO 52W": "פריצה שנתית", "BO 6M": "פריצה חצי שנה", "BO 3M": "פריצה 3 חודשים", "BO 1M": "פריצה חודשית",
+    "BD 52W": "שבירה שנתית", "BD 6M": "שבירה חצי שנה", "BD 3M": "שבירה 3 חודשים", "BD 1M": "שבירה חודשית",
+    "Tight 1M": "התכנסות חודשית",
+    "Golden Cross": "Golden Cross", "Death Cross": "Death Cross",
+    "SMA20↑SMA50": "SMA20↑SMA50", "SMA20↓SMA50": "SMA20↓SMA50",
+    "Px↑SMA50": "מחיר↑SMA50", "Px↓SMA50": "מחיר↓SMA50",
+    "Px↑SMA200": "מחיר↑SMA200", "Px↓SMA200": "מחיר↓SMA200",
+}
+
 # ── filter options ─────────────────────────────────────────────────────────
 CANDLES_HE: dict[str, str] = {
     "Bullish Engulfing": "בליעה עולה", "Bearish Engulfing": "בליעה יורדת", "Hammer": "פטיש",
@@ -327,3 +343,18 @@ def value(column_key: str, v, lang: str):
     if lang != HE or not isinstance(v, str):
         return v
     return VALUES_HE.get(column_key, {}).get(v, v)
+
+
+def signal_tags(text: str, lang: str) -> str:
+    """Translate signals tag list 'Engulfing+, Vol 2.8x' -> 'בליעה+, מחזור ×2.8'."""
+    if lang != HE or not text:
+        return text
+    parts = []
+    for tag in text.split(", "):
+        if tag in SIGNALS_HE:
+            parts.append(SIGNALS_HE[tag])
+        elif tag.startswith("Vol ") and tag.endswith("x"):
+            parts.append(f"מחזור ×{tag[4:-1]}")
+        else:
+            parts.append(tag)
+    return ", ".join(parts)
