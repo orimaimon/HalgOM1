@@ -106,6 +106,21 @@ def test_other_branch_or_local_commits_are_left_alone(remote, zip_copy):
     assert U.update(zip_copy, url=str(remote)) == U.NOTHING
 
 
+def test_index_matches_the_commit_and_index_quirks_do_not_block_updates(remote, zip_copy):
+    import dataclasses
+    from dulwich.object_store import iter_tree_contents
+    U.update(zip_copy, url=str(remote))
+    with Repo(str(zip_copy)) as r:
+        tree = {e.path: e.sha for e in iter_tree_contents(r.object_store, r[r.refs[U.MAIN]].tree)}
+        index = r.open_index()
+        assert {p: index[p].sha for p in tree} == tree                  # as `git checkout` writes it
+        # what CI saw on Windows: the index holds the CRLF file's hash, so git/dulwich call it modified
+        index[b"run.bat"] = dataclasses.replace(index[b"run.bat"], sha=b"0" * 40)
+        index.write()
+    new = commit(remote, {"a.txt": "v2\n"}, "v2")
+    assert U.update(zip_copy, url=str(remote)) == U.UPDATED and head(zip_copy) == new
+
+
 def test_half_done_conversion_is_finished(remote, zip_copy):
     Repo.init(str(zip_copy)).close()                              # .git exists, no main yet
     assert U.update(zip_copy, url=str(remote)) == U.UPDATED

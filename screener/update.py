@@ -162,18 +162,43 @@ def _is_ancestor(repo, old: bytes, new: bytes) -> bool:
     return any(entry.commit.id == old for entry in repo.get_walker(include=[new]))
 
 
+def _tracked(repo, commit: bytes):
+    from dulwich.object_store import iter_tree_contents
+    return iter_tree_contents(repo.object_store, repo[commit].tree)
+
+
 def _local_changes(repo) -> list[str]:
-    from dulwich import porcelain
-    st = porcelain.status(repo, untracked_files="no")
-    changed = [p for paths in st.staged.values() for p in paths] + list(st.unstaged)
-    return [p.decode(errors="replace") if isinstance(p, bytes) else str(p) for p in changed]
+    """Tracked files whose content differs from HEAD (line endings ignored).
+
+    By content, not through the index: dulwich's index after a checkout on Windows (Git for Windows'
+    core.autocrlf, run_screener.bat's eol=crlf) can disagree with git's, and then every later update
+    would be skipped. A missing file is not an edit: the next checkout restores it."""
+    root = Path(repo.path)
+    changed = []
+    for entry in _tracked(repo, repo.refs[MAIN]):
+        path = root / os.fsdecode(entry.path)
+        if not path.is_file():
+            continue
+        data, blob = path.read_bytes(), repo[entry.sha].data
+        if data != blob and data.replace(b"\r\n", b"\n") != blob.replace(b"\r\n", b"\n"):
+            changed.append(os.fsdecode(entry.path))
+    return changed
 
 
 def _checkout(repo, sha: bytes) -> None:
     from dulwich import porcelain
+    from dulwich.index import index_entry_from_stat
     repo.refs[MAIN] = sha
     repo.refs.set_symbolic_ref(b"HEAD", MAIN)
     porcelain.reset(repo, "hard", sha)
+    # Index = the commit's blobs + the files' stat, as `git checkout` writes it, so git (Ori's
+    # machine) and later updates see a clean checkout whatever dulwich hashed on Windows.
+    root, index = Path(repo.path), repo.open_index()
+    for entry in _tracked(repo, sha):
+        path = root / os.fsdecode(entry.path)
+        if path.is_file():
+            index[entry.path] = index_entry_from_stat(os.lstat(path), entry.sha, mode=entry.mode)
+    index.write()
 
 
 def update(root: Path = ROOT, url: str | None = None, key_file: Path | None = None) -> int:

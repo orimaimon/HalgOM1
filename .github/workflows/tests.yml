@@ -82,7 +82,7 @@ jobs:
           screener\.venv\Scripts\python -m screener.update --root $copy
           if ($LASTEXITCODE -ne 0) { Write-Host "expected exit code 0 (up to date), got $LASTEXITCODE"; $failed = $true }
           Get-Content (Join-Path $copy "screener\_data\logs\update.log")
-          $dirty = git -C $copy status --porcelain
+          $dirty = git -C $copy status --porcelain --untracked-files=no   # the copy is the PR head: its new files are untracked in main
           if ($dirty) { Write-Host "checkout is not clean:"; $dirty; $failed = $true }
           $bat = [IO.File]::ReadAllBytes((Join-Path $copy "run_screener.bat"))
           $lf = ($bat | Where-Object { $_ -eq 10 }).Count
