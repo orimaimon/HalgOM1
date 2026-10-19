@@ -73,6 +73,10 @@ def test_zip_folder_becomes_a_checkout(remote, zip_copy):
     assert (zip_copy / "run.bat").read_bytes() == BAT.replace("\n", "\r\n").encode()   # .gitattributes eol=crlf
     assert (zip_copy / "screener/_data/presets.json").read_text() == "{}"              # local data kept
     assert U.update(zip_copy, url=str(remote)) == U.NOTHING                             # now up to date
+    with Repo(str(zip_copy)) as r:                                  # plain `git pull` works there too
+        config = r.get_config()
+        assert config.get((b"branch", b"main"), b"remote") == b"origin"
+        assert config.get((b"branch", b"main"), b"merge") == U.MAIN
 
 
 def test_fast_forward_updates_changes_and_deletes(remote, zip_copy):

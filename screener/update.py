@@ -209,6 +209,8 @@ def update(root: Path = ROOT, url: str | None = None, key_file: Path | None = No
             config = repo.get_config()               # so `git pull` also works here, for a developer
             config.set((b"remote", b"origin"), b"url", HTTPS_URL.encode())
             config.set((b"remote", b"origin"), b"fetch", b"+refs/heads/*:refs/remotes/origin/*")
+            config.set((b"branch", b"main"), b"remote", b"origin")
+            config.set((b"branch", b"main"), b"merge", MAIN)
             config.write_to_path()
             sha = fetch_main(repo, url, key_file)
             _checkout(repo, sha)
