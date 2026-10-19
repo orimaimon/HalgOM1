@@ -32,7 +32,18 @@ class Previous:
 
 
 def load_previous(store: Store, today: dt.date) -> Previous | None:
-    day = store.previous_snapshot_date(today)
+    cached = store.load_latest()
+    if cached is not None:
+        try:
+            from zoneinfo import ZoneInfo
+            ny_date = cached[1].astimezone(ZoneInfo("America/New_York")).date()
+            target_date = ny_date
+        except Exception:
+            target_date = today
+    else:
+        target_date = today
+
+    day = store.previous_snapshot_date(target_date)
     if day is None:
         return None
     try:

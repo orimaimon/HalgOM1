@@ -30,14 +30,14 @@ def stop_server(reason: str, delay: float = 1.5) -> None:
     log.info("stopping server: %s", reason)
 
     def _stop() -> None:
+        hard = threading.Timer(FORCE_EXIT_AFTER, os._exit, args=(0,))
+        hard.daemon = True
+        hard.start()
         try:
             from streamlit.runtime import Runtime
             Runtime.instance().stop()           # documented as safe from any thread
         except Exception:
             log.exception("clean stop failed")
-        hard = threading.Timer(FORCE_EXIT_AFTER, os._exit, args=(0,))
-        hard.daemon = True
-        hard.start()
 
     t = threading.Timer(delay, _stop)
     t.daemon = True

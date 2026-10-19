@@ -162,7 +162,7 @@ def tickers_text(df: pd.DataFrame) -> str:
 
 def file_stem(title: str, when: dt.datetime | None = None) -> str:
     when = when or dt.datetime.now()
-    slug = re.sub(r"[^A-Za-z0-9]+", "-", title or "screen").strip("-").lower() or "screen"
+    slug = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", title or "screen").strip("-").strip() or "screen"
     return f"{when:%Y-%m-%d_%H%M}_{slug}"
 
 

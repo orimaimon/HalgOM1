@@ -67,10 +67,15 @@ class Store:
         meta = json.dumps({"fetched_at": fetched_at.isoformat(timespec="seconds"), "rows": len(df),
                            "source": df.attrs.get("source") or {}})
         _atomic_parquet(df, self.latest_path)
-        self.meta_path.write_text(meta, encoding="utf-8")
-        day = fetched_at.date().isoformat()
+        _atomic_write_text(meta, self.meta_path)
+        try:
+            from zoneinfo import ZoneInfo
+            ny_date = fetched_at.astimezone(ZoneInfo("America/New_York")).date()
+        except Exception:
+            ny_date = fetched_at.date()
+        day = ny_date.isoformat()
         _atomic_parquet(df, self.snap_dir / f"{day}.parquet")
-        (self.snap_dir / f"{day}.json").write_text(meta, encoding="utf-8")
+        _atomic_write_text(meta, self.snap_dir / f"{day}.json")
 
     def snapshot_dates(self) -> list[dt.date]:
         if not self.snap_dir.exists():
@@ -104,6 +109,12 @@ def _atomic_parquet(df: pd.DataFrame, path: Path) -> None:
     df = df.copy()
     df.attrs = {}        # metadata lives in the JSON next to the file
     df.to_parquet(tmp, index=False)
+    os.replace(tmp, path)
+
+
+def _atomic_write_text(text: str, path: Path) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
 
 
