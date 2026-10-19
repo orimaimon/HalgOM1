@@ -40,7 +40,8 @@ def load_previous(store: Store, today: dt.date) -> Previous | None:
     except Exception as e:      # a damaged snapshot must not break the screener
         log.warning("cannot read snapshot %s: %s", day, e)
         return None
-    missing = [k for k, c in COLUMNS.items() if c.tv and k not in raw.columns]
+    from screener.fields import provider_columns
+    missing = [k for k in provider_columns() if k not in raw.columns]
     return Previous(day, add_derived(raw, today=day), missing)
 
 

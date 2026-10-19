@@ -20,7 +20,8 @@ from screener import signals as S
 from screener.data.store import Store, load_universe
 from screener.data.tradingview import clean, index_names, source_meta
 from screener.derive import add_derived
-from screener.fields import CANDLES, COLUMNS, GROUP_COLUMNS, INDEXES, VIEWS, tv_fields
+from screener.fields import CANDLES, COLUMNS, GROUP_COLUMNS, INDEXES, VIEWS, provider_columns
+from screener.data.tradingview import tv_fields, TV_MAPPING
 from screener.filters import (ANY, FILTERS, FILTERS_BY_KEY, GROUPS, apply_filters, hide_junk, junk_mask,
                               option_labels, screen, search)
 from screener.market import compute_regime, trend_strength
@@ -35,7 +36,7 @@ def make_raw(n: int = 300, seed: int = 7) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     data = {}
     for key, col in COLUMNS.items():
-        if not col.tv:
+        if col.source != 'provider':
             continue
         if col.kind == "text":
             continue
@@ -284,7 +285,7 @@ def test_watchlist_and_csv(df):
 def frame(**cols) -> pd.DataFrame:
     """Minimal raw frame for targeted tests: every provider column present (NaN unless given)."""
     n = len(next(iter(cols.values())))
-    base = {k: [np.nan] * n for k, c in COLUMNS.items() if c.tv and c.kind != "text"}
+    base = {k: [np.nan] * n for k, c in COLUMNS.items() if c.source == 'provider' and c.kind != 'text'}
     base.update({"ticker": [f"X{i}" for i in range(n)], "company": [f"Co {i}" for i in range(n)],
                  "sector": ["Tech"] * n, "industry": ["Software"] * n, "country": ["United States"] * n,
                  "exchange": ["NASDAQ"] * n, "indexes": [None] * n,
@@ -302,8 +303,8 @@ def test_new_columns_registered_with_hebrew_help():
     for k in [*CANDLES, "indexes", "sma150", "rsi_w", "sma50_w", "close_w", "sma50w_pct", "signals", "n_signals",
               "new", "range_1m_pct", "high52_prev"]:
         assert k in COLUMNS and hebrew(COLUMNS[k].help), k
-    assert all(COLUMNS[k].kind == "flag" and COLUMNS[k].tv.startswith("Candle.") for k in CANDLES)
-    assert {COLUMNS[k].tv for k in ("rsi_w", "sma50_w", "close_w")} == {"RSI|1W", "SMA50|1W", "close|1W"}
+    assert all(COLUMNS[k].kind == "flag" and next(tk for tk, v in TV_MAPPING.items() if v == k).startswith("Candle.") for k in CANDLES)
+    assert {tk for tk, v in TV_MAPPING.items() if v in ("rsi_w", "sma50_w", "close_w")} == {"RSI|1W", "SMA50|1W", "close|1W"}
     assert all(hebrew(c.help) for c in GROUP_COLUMNS.values())
     assert "Signals" in GROUPS and "Signals" in VIEWS
 
@@ -668,8 +669,8 @@ def test_app_smoke(tmp_path, monkeypatch):
 # ── review fixes ────────────────────────────────────────────────────────────
 
 def test_candle_registry_carries_its_own_tags():
-    assert all(len(c) == 5 and c[3] for c in CANDLES.values())
-    assert [s.tag for s in S.CANDLE_SIGNALS] == [c[3] + c[2] for c in CANDLES.values()]
+    assert all(len(c) == 4 and c[2] for c in CANDLES.values())
+    assert [s.tag for s in S.CANDLE_SIGNALS] == [c[2] + c[1] for c in CANDLES.values()]
 
 
 def test_ma_comparisons_identical_across_filters():

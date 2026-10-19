@@ -22,7 +22,8 @@ def _pct_from(a: pd.Series, b: pd.Series) -> pd.Series:
 def add_derived(raw: pd.DataFrame, today: dt.date | None = None) -> pd.DataFrame:
     df = raw.copy()
     # Snapshots saved by an older version lack newer fields: add them as missing (NaN never passes a filter).
-    missing = [k for k, c in COLUMNS.items() if c.tv and k not in df.columns]
+    from screener.fields import provider_columns
+    missing = [k for k in provider_columns() if k not in df.columns]
     for k in missing:
         df[k] = None if COLUMNS[k].kind == "text" else np.nan
     if "earnings_date" in missing:

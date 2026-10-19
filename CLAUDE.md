@@ -30,7 +30,7 @@ screener/.venv/bin/python -m streamlit run screener/app.py
 
 ## Screener architecture
 
-- `screener/fields.py` — column registry (TradingView field, label, format kind, Hebrew tooltip) + table views.
+- `screener/fields.py` — column registry (canonical keys, label, format kind, source marker, Hebrew tooltip) + table views.
   Percent columns hold percent numbers (5.0 == 5%).
 - `screener/filters.py` — Finviz-style dropdown filters; each option is a predicate on the whole DataFrame.
 - `screener/data/tradingview.py` — direct `requests` client for `scanner.tradingview.com` (unofficial,
@@ -103,7 +103,7 @@ Phase 3:
 - Optional: real-time data via the user's own TradingView `sessionid` cookie (account-flag risk — opt-in only).
 
 Later — less dependence on TradingView (discussed 2026-10-18; add layers, don't replace it; own branch/PR):
-1. Move the TradingView field mapping out of `fields.COLUMNS` (`Col.tv`) into the provider module, so the
+1. **[DONE]** Move the TradingView field mapping out of `fields.COLUMNS` (`Col.tv`) into the provider module, so the
    registry holds canonical keys only and each provider brings its own mapping. Small, safe first step.
 2. History layer from yfinance: adjusted daily OHLCV stored locally, updated once a day. Enables a real
    adjusted price history, total return incl. dividends (TradingView has neither — checked live: no

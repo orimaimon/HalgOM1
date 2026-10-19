@@ -33,7 +33,7 @@ from screener.data import Store, load_universe  # noqa: E402
 from screener.data.store import DATA_DIR  # noqa: E402
 from screener.data.tradingview import fetch_market, fetch_universe  # noqa: E402
 from screener.derive import add_derived  # noqa: E402
-from screener.fields import COLUMNS, DEFAULT_SORT, GROUP_COLUMNS, VIEWS  # noqa: E402
+from screener.fields import COLUMNS, DEFAULT_SORT, GROUP_COLUMNS, VIEWS, provider_columns  # noqa: E402
 from screener.filters import (ANY, FILTERS, FILTERS_BY_KEY, GROUPS, JUNK_RULES, active,  # noqa: E402
                               apply_filters, hide_junk, in_index, option_labels, search)
 from screener.market import compute_regime, trend_strength  # noqa: E402
@@ -47,7 +47,7 @@ GRID = 6
 PAGES = ["Screener", "Groups", "Heatmap", "Guide"]
 GUIDE = Path(__file__).with_name("guide.html")
 # provider columns a cached snapshot must have; an older cache without them is refetched
-REQUIRED = [k for k, c in COLUMNS.items() if c.tv]
+REQUIRED = provider_columns()
 # widget keys that must survive while their widget is not on the current page
 PERSIST = ["lang", "preset", "query", "sort_col", "sort_asc", "view", "hide_junk", "only_new", "export_all",
            "g_by", "g_weight", "g_sector", "g_results", "h_universe", "h_color"]
