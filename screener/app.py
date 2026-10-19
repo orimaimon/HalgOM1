@@ -50,7 +50,7 @@ GUIDE = Path(__file__).with_name("guide.html")
 REQUIRED = provider_columns()
 # widget keys that must survive while their widget is not on the current page
 PERSIST = ["lang", "preset", "query", "sort_col", "sort_asc", "view", "hide_junk", "only_new", "export_all",
-           "g_by", "g_weight", "g_sector", "g_results", "h_universe", "h_color"]
+           "g_by", "g_weight", "g_sector", "g_results", "h_universe", "h_color", "large_text"]
 
 st.set_page_config(page_title="HalgOM Screener", page_icon="📈", layout="wide")
 ss = st.session_state
@@ -123,7 +123,7 @@ def get_data(force: bool = False):
            or (snap.source != "stale" and snap.age > MAX_AGE))
     if due:
         ss.last_attempt = now
-        with st.spinner(t("Loading data…")):
+        with st.spinner(t("Loading market data from TradingView… (≈15 sec)")):
             try:
                 snap = load_universe(_store(), fetch_universe, MAX_AGE, force=force, required=REQUIRED)
             except Exception as e:
@@ -196,14 +196,16 @@ def find_removed_pill(active_keys: list[str], selected_pills: list[str]) -> str 
             return key
     return None
 
-def on_remove_pill():
-    active_keys = list(active(selections()).keys())
-    removed = find_removed_pill(active_keys, ss.get("active_pills", []))
+def pills_key(labels: list[str]) -> str:
+    """A new pills widget for every set of active filters: a kept widget would keep its old selection,
+    and a filter added later would show as an unselected (removed-looking) pill."""
+    return "active_pills_" + hashlib.md5("|".join(labels).encode()).hexdigest()[:10]
+
+
+def on_remove_pill(key: str, filter_of: dict[str, str]):
+    removed = find_removed_pill(list(filter_of), ss.get(key) or [])
     if removed:
-        ss[f"f_{removed}"] = ANY
-        # if another pill is removed, we want to reset active_pills so it doesn't cause issues?
-        # keep_widget_state will handle it if we delete active_pills, but we shouldn't.
-        # Streamlit resets the pills options when the page reruns anyway if we don't persist it.
+        ss[f"f_{filter_of[removed]}"] = ANY
 
 
 def display_values(df: pd.DataFrame) -> pd.DataFrame:
@@ -422,7 +424,8 @@ def _header(snap, n_universe: int) -> None:
                     c.caption(vs200.removeprefix(" · "))
     with right:
         src = t({"live": "live", "cache": "cached", "stale": "OFFLINE"}[snap.source])
-        st.caption(f"{t('Data from')}**{snap.fetched_at:%H:%M}** ({snap.fetched_at:%Y-%m-%d}) ({src}) · {source_text(snap.meta)}",
+        st.caption(f"{t('Data time')}: **{snap.fetched_at:%H:%M}** · {snap.fetched_at:%d/%m/%Y} ({src}) · "
+                   f"{source_text(snap.meta)}",
                    help="מקור הנתונים ומצב העדכון כפי שהספק מדווח. delayed = בעיכוב, realtime = בזמן אמת")
         r1, r2 = st.columns([1.7, 1.2])
         if r1.button(t("Refresh data"), icon=":material/refresh:", use_container_width=True):
@@ -530,17 +533,12 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
     view_cols = VIEWS[ss.view]
     chips = described()
     if chips:
-        active_keys = list(active(selections()).keys())
-        st.pills(
-            t("Active filters"),
-            options=active_keys,
-            default=active_keys,
-            selection_mode="multi",
-            format_func=lambda k: f"{I.filter_label(k, FILTERS_BY_KEY[k].label, L())}: {opt(selections()[k])}",
-            label_visibility="collapsed",
-            key="active_pills",
-            on_change=on_remove_pill
-        )
+        filter_of = {f"{k}: {v}": f for (k, v), f in zip(chips, active(selections()))}   # pill label -> filter
+        labels = list(filter_of)
+        key = pills_key(labels)
+        st.pills(t("Active filters"), options=labels, default=labels, selection_mode="multi",
+                 label_visibility="collapsed", key=key, on_change=on_remove_pill, args=(key, filter_of),
+                 help="לחיצה על פילטר מבטלת אותו")
     notes = []                                   # end-user explanations are Hebrew (CLAUDE.md)
     if ss.hide_junk and len(universe) < len(df):
         notes.append(f"{len(df) - len(universe):,} מניות זבל מוסתרות ({t('Hide junk')})")
@@ -624,11 +622,10 @@ def snapshot_table(row: pd.Series) -> str:
 
 
 def range52_bar(price: float, low: float, high: float) -> str:
-    """A visual progress bar indicating where the price sits between the 52-week low and high."""
+    """Where the price sits between the 52-week low and high; "" when that cannot be drawn honestly."""
     if pd.isna(price) or pd.isna(low) or pd.isna(high) or low >= high:
-        pct = 50.0  # fallback to middle if data is invalid
-    else:
-        pct = max(0.0, min(100.0, (price - low) / (high - low) * 100))
+        return ""
+    pct = max(0.0, min(100.0, (price - low) / (high - low) * 100))
 
     return (f'<div dir="ltr" style="display:flex;align-items:center;gap:6px;font-size:12px;color:{theme.MUTED};'
             f'margin-bottom:8px">'
@@ -651,8 +648,10 @@ def detail(row: pd.Series) -> None:
         st.caption(f"{row['company']}{lrm}  \n{sector} · {row['industry']}{lrm} · {country}"
                    + (f"  \n{row['indexes']}" if row.get("indexes") else ""))
         st.metric(t("Price"), fmt_value("price", row["price"]), f"{row['change']:+.2f}%")
-        st.caption(f"**{t('52-Week Range')}**")
-        st.html(range52_bar(row.get("price", float('nan')), row.get("low52", float('nan')), row.get("high52", float('nan'))))
+        bar = range52_bar(row.get("price"), row.get("low52"), row.get("high52"))
+        if bar:
+            st.caption(f"**{t('52-Week Range')}**")
+            st.html(bar)
         if row.get("signals"):
             st.caption(f"**{t('Signals')}:** {I.signal_tags(row['signals'], L())}")
         st.html(snapshot_table(row))

@@ -59,13 +59,10 @@ def test_range52_bar():
     html = range52_bar(150.0, 100.0, 200.0)
     assert "left:50.0%" in html
 
-    # NaN price
-    html_nan = range52_bar(float('nan'), 100.0, 200.0)
-    assert "left:50.0%" in html_nan
-
-    # Low == High
-    html_eq = range52_bar(150.0, 150.0, 150.0)
-    assert "left:50.0%" in html_eq
+    # Missing data or no range: no bar at all (a bar in the middle would be made up)
+    assert range52_bar(float('nan'), 100.0, 200.0) == ""
+    assert range52_bar(150.0, float('nan'), 200.0) == ""
+    assert range52_bar(150.0, 150.0, 150.0) == ""
 
     # Price above High
     html_above = range52_bar(250.0, 100.0, 200.0)
@@ -90,15 +87,19 @@ def test_active_filters_pills(app):
     app.selectbox(key="f_pe").select("Low (<15)").run()
     assert not app.exception, app.exception
 
-    # Pill should exist for 'pe'
-    pills = app.pills(key="active_pills")
-    assert any("P/E" in o for o in pills.options)
+    def pills():
+        return next(p for p in app.get("button_group") if (p.key or "").startswith("active_pills_"))
 
-    # Simulate clicking the pill (which desejects it in multi-select mode)
-    pills.set_value([]).run()
+    app.selectbox(key="f_market_cap").select(app.selectbox(key="f_market_cap").options[2]).run()
+    # a filter added later is shown selected too (the old single-key widget kept only ['pe'])
+    assert len(pills().value) == 2 and pills().value == pills().options
 
-    # Filter should be removed
-    assert app.session_state["f_pe"] == "Any"
+    # clicking the P/E pill removes only that filter; the market-cap pill stays selected
+    cap = next(o for o in pills().options if "P/E" not in o)
+    pills().set_value([cap]).run()
+    assert not app.exception, app.exception
+    assert app.session_state["f_pe"] == "Any" and app.session_state["f_market_cap"] != "Any"
+    assert pills().value == [cap]
 
 
 def test_large_text_toggle(app):
@@ -118,8 +119,7 @@ def test_large_text_toggle(app):
 def test_data_time_header(app):
     app.run()
     assert not app.exception, app.exception
-    # check that the header contains "נתונים מ-"
-    assert any("נתונים מ-" in c.value for c in app.caption)
+    assert any("שעת הנתונים:" in c.value for c in app.caption)
 
 
 def test_empty_results_explain_and_clear_everything(app):
