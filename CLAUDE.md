@@ -41,6 +41,7 @@ screener/.venv/bin/python -m streamlit run screener/app.py
   Field syntax: `|1W` = weekly timeframe, `[1]` = previous bar (works). `[5]` and deeper offsets return
   nothing (checked live 2026-10-18), so "crossed in the last N days" is not available — only "today".
   Unknown fields come back as null (NaN), not as an error: verify fill rates live before adding one.
+- `screener/data/prices.py` — history layer from yfinance (adjusted daily OHLCV, local daily cache).
 - `screener/data/store.py` — latest-cache (15 min), one snapshot per day (+ `YYYY-MM-DD.json` with the
   data source: provider / update_mode / delay), offline fallback ("stale"). A cache missing required
   columns (saved by an older version) is refetched.
@@ -114,7 +115,7 @@ Phase 3:
 Later — less dependence on TradingView (discussed 2026-10-18; add layers, don't replace it; own branch/PR):
 1. **[DONE]** Move the TradingView field mapping out of `fields.COLUMNS` (`Col.tv`) into the provider module, so the
    registry holds canonical keys only and each provider brings its own mapping. Small, safe first step.
-2. History layer from yfinance: adjusted daily OHLCV stored locally, updated once a day. Enables a real
+2. **[DONE]** History layer from yfinance (data layer done, no UI yet): adjusted daily OHLCV stored locally, updated once a day. Enables a real
    adjusted price history, total return incl. dividends (TradingView has neither — checked live: no
    adjusted/total-return field, `adjustment` options are ignored), crosses "within N days" (`[5]` offsets
    are empty on TradingView) and breakouts over any window, computed by us. TradingView stays the fast

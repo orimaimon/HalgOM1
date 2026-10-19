@@ -7,3 +7,4 @@ openpyxl>=3.1
 plotly>=5.24
 dulwich>=0.24
 paramiko>=3.4
+yfinance>=0.2.36
