@@ -569,6 +569,22 @@ def test_regime_rules_unchanged_by_adx():
 
 # ── app smoke test (Streamlit AppTest, offline) ─────────────────────────────
 
+def test_selection_index():
+    from screener.app import selection_index
+    df = pd.DataFrame({"ticker": ["A", "B", "C", "B"]})
+    df.index = [10, 20, 30, 40]
+
+    # Ticker present
+    assert selection_index(df, "B") == {"selection": {"rows": [1]}}
+    # Ticker absent
+    assert selection_index(df, "D") is None
+    # Empty dataframe
+    assert selection_index(pd.DataFrame(columns=["ticker"]), "A") is None
+    # No remembered ticker
+    assert selection_index(df, None) is None
+    assert selection_index(df, "") is None
+
+
 def test_app_smoke(tmp_path, monkeypatch):
     import streamlit as st
     from streamlit.testing.v1 import AppTest

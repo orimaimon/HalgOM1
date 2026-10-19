@@ -166,6 +166,15 @@ def rows_key(res: pd.DataFrame) -> str:
     return "table_" + hashlib.md5("\x1f".join(res["ticker"].astype(str)).encode()).hexdigest()[:12]
 
 
+def selection_index(res: pd.DataFrame, ticker: str | None) -> dict | None:
+    if not ticker or res.empty:
+        return None
+    matches = res.index[res["ticker"] == ticker].tolist()
+    if matches:
+        return {"selection": {"rows": [res.index.get_loc(matches[0])]}}
+    return None
+
+
 def all_presets() -> dict[str, P.Preset]:
     out = dict(P.BUILTIN)
     out.update({USER_PREFIX + n: p for n, p in P.load_user().items()})
@@ -512,15 +521,23 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
     signed = [c for c in view_cols if c in export._SIGNED]
     if signed:
         table = table.style.map(_sign_color, subset=signed)
+
+    sel_ticker = ss.get("selected_ticker")
+    sel_default = selection_index(res, sel_ticker)
+
     event = st.dataframe(
         table, hide_index=True, height=560, key=rows_key(res),
         column_config={k: column_config(k) for k in view_cols},
         on_select="rerun", selection_mode="single-row", placeholder="—",
+        selection_default=sel_default,
     )
     rows = event.selection.rows if event and event.selection else []
     if rows and rows[0] < len(res):
-        detail(res.iloc[rows[0]])
+        selected_row = res.iloc[rows[0]]
+        ss["selected_ticker"] = selected_row["ticker"]
+        detail(selected_row)
     else:
+        ss.pop("selected_ticker", None)
         hebrew_note("👆 לחץ על שורה בטבלה כדי לפתוח גרף ונתונים של המניה")
     export_bar(res, view_cols, snap)
 
