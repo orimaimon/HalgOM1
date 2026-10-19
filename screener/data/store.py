@@ -21,12 +21,14 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 log = logging.getLogger(__name__)
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "_data"
+MARKET_TZ = "America/New_York"      # snapshot days are US market days
 
 
 @dataclass
@@ -68,14 +70,16 @@ class Store:
                            "source": df.attrs.get("source") or {}})
         _atomic_parquet(df, self.latest_path)
         _atomic_write_text(meta, self.meta_path)
-        try:
-            from zoneinfo import ZoneInfo
-            ny_date = fetched_at.astimezone(ZoneInfo("America/New_York")).date()
-        except Exception:
-            ny_date = fetched_at.date()
-        day = ny_date.isoformat()
+        day = market_date(fetched_at).isoformat()
         _atomic_parquet(df, self.snap_dir / f"{day}.parquet")
         _atomic_write_text(meta, self.snap_dir / f"{day}.json")
+
+    def latest_fetched_at(self) -> dt.datetime | None:
+        """Time of the last successful fetch, from the small meta file (no parquet read)."""
+        try:
+            return dt.datetime.fromisoformat(json.loads(self.meta_path.read_text(encoding="utf-8"))["fetched_at"])
+        except (OSError, ValueError, KeyError):
+            return None
 
     def snapshot_dates(self) -> list[dt.date]:
         if not self.snap_dir.exists():
@@ -102,6 +106,15 @@ class Store:
         """The last snapshot day strictly before `before` (Friday's, on a Monday)."""
         days = [d for d in self.snapshot_dates() if d < before]
         return days[-1] if days else None
+
+
+def market_date(ts: dt.datetime) -> dt.date:
+    """New York date of a fetch time (naive = local time). A fetch after midnight in Israel still
+    belongs to the same US session, so it must not start a new snapshot day."""
+    try:
+        return ts.astimezone(ZoneInfo(MARKET_TZ)).date()
+    except Exception:            # no time-zone database: the local date
+        return ts.date()
 
 
 def _atomic_parquet(df: pd.DataFrame, path: Path) -> None:

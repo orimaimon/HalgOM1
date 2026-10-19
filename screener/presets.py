@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -112,5 +113,4 @@ def _write(presets: dict[str, Preset], path: Path) -> None:
     text = json.dumps({n: asdict(p) for n, p in presets.items()}, ensure_ascii=False, indent=2)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(text, encoding="utf-8")
-    import os
-    os.replace(tmp, path)
+    os.replace(tmp, path)               # a crash mid-write never leaves a half-written file
