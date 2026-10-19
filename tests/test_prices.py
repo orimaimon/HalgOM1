@@ -9,7 +9,8 @@ import pytest
 from screener.data import prices
 
 @pytest.fixture
-def mock_data_dir(tmp_path):
+def mock_data_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(prices, "PAUSE", 0)
     with patch("screener.data.prices.DATA_DIR", tmp_path):
         with patch("screener.data.prices.STATE_FILE", tmp_path / "update_state.json"):
             yield tmp_path
@@ -153,3 +154,37 @@ def test_total_return(mock_data_dir, mock_yf_download):
     # Return from Jan 3 to Jan 5. Adj close goes from 25.0 to 26.0
     ret = prices.total_return("AAPL", dt.date(2023, 1, 3), dt.date(2023, 1, 5))
     assert pytest.approx(ret) == (26.0 / 25.0) - 1.0
+
+
+# ── review fixes ──────────────────────────────────────────────────────────────
+
+def test_last_stored_bar_is_downloaded_again(mock_data_dir, mock_yf_download):
+    """A bar stored during the session is not final: the next update replaces it."""
+    mock_yf_download.return_value = create_mock_df(["2023-01-03", "2023-01-04"], [100.0, 101.0], [100.0, 101.0])
+    prices.ensure(["AAPL"], dt.date(2023, 1, 1))
+    (mock_data_dir / "update_state.json").write_text("{}")
+    mock_yf_download.return_value = create_mock_df(["2023-01-04", "2023-01-05"], [102.5, 103.0], [102.5, 103.0])
+    prices.ensure(["AAPL"], dt.date(2023, 1, 1))
+    assert mock_yf_download.call_args.kwargs["start"] == "2023-01-04"
+    df = prices.history("AAPL")
+    assert df["close"].tolist() == [100.0, 102.5, 103.0]
+
+
+def test_new_dividend_reloads_the_whole_adjusted_history(mock_data_dir, mock_yf_download):
+    mock_yf_download.return_value = create_mock_df(["2023-01-03", "2023-01-04"], [100.0, 100.0], [100.0, 100.0])
+    prices.ensure(["AAPL"], dt.date(2023, 1, 1))
+    (mock_data_dir / "update_state.json").write_text("{}")
+    recent = create_mock_df(["2023-01-04", "2023-01-05"], [100.0, 99.0], [100.0, 99.0])
+    recent.loc[pd.Timestamp("2023-01-05"), "Dividends"] = 1.0
+    full = create_mock_df(["2023-01-03", "2023-01-04", "2023-01-05"], [100.0, 100.0, 99.0], [99.0, 99.0, 99.0])
+    mock_yf_download.side_effect = [recent, full]
+    assert prices.ensure(["AAPL"], dt.date(2023, 1, 1)) == (["AAPL"], [])
+    assert mock_yf_download.call_args.kwargs["start"] == "2023-01-03"          # from the first stored day
+    assert prices.history("AAPL")["adj_close"].tolist() == [99.0, 99.0, 99.0]  # old rows re-adjusted
+
+
+def test_empty_first_download_is_a_failure_and_is_retried(mock_data_dir, mock_yf_download):
+    mock_yf_download.return_value = pd.DataFrame()             # what yfinance returns when rate-limited
+    assert prices.ensure(["AAPL"], dt.date(2023, 1, 1)) == ([], ["AAPL"])
+    mock_yf_download.return_value = create_mock_df(["2023-01-03"], [100.0], [100.0])
+    assert prices.ensure(["AAPL"], dt.date(2023, 1, 1)) == (["AAPL"], [])      # same day: not marked done

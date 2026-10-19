@@ -109,126 +109,81 @@ def total_return(ticker: str, start: dt.date, end: dt.date) -> float | None:
     return float(adj_end / adj_start) - 1.0
 
 
+COLUMNS = ["open", "high", "low", "close", "adj_close", "volume", "dividends", "splits"]
+PAUSE = 0.5          # seconds between downloads: Yahoo rate-limits, never download in parallel
+
+
+def _download(ticker: str, start: dt.date) -> pd.DataFrame:
+    """Daily bars from `start`, in our column names, naive date index. Empty when Yahoo has nothing."""
+    dl = yf.download(_ticker_to_yf(ticker), start=start.isoformat(), actions=True, auto_adjust=False,
+                     threads=False, progress=False)
+    if dl is None or dl.empty:
+        return pd.DataFrame(columns=COLUMNS)
+    if isinstance(dl.columns, pd.MultiIndex):             # (field, ticker) even for one ticker
+        dl.columns = dl.columns.droplevel(1)
+    dl = dl.rename(columns={"Open": "open", "High": "high", "Low": "low", "Close": "close",
+                            "Adj Close": "adj_close", "Volume": "volume", "Dividends": "dividends",
+                            "Stock Splits": "splits"})
+    for c in COLUMNS:
+        if c not in dl.columns:
+            dl[c] = 0.0 if c in ("dividends", "splits") else pd.NA
+    dl.index.name = "date"
+    if dl.index.tz is not None:
+        dl.index = dl.index.tz_localize(None)
+    return dl[COLUMNS]
+
+
+def _has_actions(df: pd.DataFrame) -> bool:
+    """A dividend or a split: Yahoo then re-adjusts the whole history (close for splits, adj_close for both)."""
+    return bool((df["dividends"].fillna(0) > 0).any() or (~df["splits"].fillna(0).isin([0.0, 1.0])).any())
+
+
+def _write(ticker: str, df: pd.DataFrame) -> None:
+    tmp = _parquet_path(ticker).with_suffix(".parquet.tmp")
+    df.to_parquet(tmp)
+    os.replace(tmp, _parquet_path(ticker))              # a crash mid-write never leaves a broken file
+
+
 def ensure(tickers: list[str], start: dt.date) -> tuple[list[str], list[str]]:
-    """
-    Brings each ticker up to date from `start` (or from its last stored day).
-    Returns (updated, failed).
+    """Bring each ticker up to date. Returns (updated, failed); never raises.
+
+    - At most one check per ticker per New York day (update_state.json).
+    - The last stored day is downloaded again: a bar stored during the session was not final.
+    - Yahoo's history is back-adjusted: a new dividend or split changes adj_close (and, for a split,
+      close) of every earlier day. Then the whole history is downloaded again instead of appended.
+    - One ticker at a time with a pause in between; nothing downloaded for a new ticker is a failure
+      (yfinance returns an empty frame rather than raising when it is rate-limited).
     """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     state = _read_state()
     today_ny = dt.datetime.now(NY_TZ).date().isoformat()
-
-    to_update = {}
-    for ticker in tickers:
-        if state.get(ticker) == today_ny:
-            continue
-
-        df = history(ticker)
-        if df.empty:
-            ticker_start = start
-        else:
-            # Get the last date in history and add 1 day
-            last_date = df.index.max().date()
-            ticker_start = last_date + dt.timedelta(days=1)
-
-        # We only fetch if ticker_start <= today.
-        # But even if it is today, there might be new data.
-        # We'll just ask yfinance for start=ticker_start.
-        # If ticker_start > today_ny, it might just return empty, which is fine.
-        to_update[ticker] = ticker_start
-
-    updated = []
-    failed = []
-
-    if not to_update:
-        return updated, failed
-
-    # Process in batches
-    batch_size = 20
-    tickers_to_update = list(to_update.keys())
-
-    for i in range(0, len(tickers_to_update), batch_size):
-        batch = tickers_to_update[i:i + batch_size]
-
-        for ticker in batch:
-            ticker_start = to_update[ticker]
-            yf_ticker = _ticker_to_yf(ticker)
-
-            try:
-                # yf.download signature requires start as a string or datetime
-                # auto_adjust=False, actions=True needed to get Adj Close, Dividends, Stock Splits
-                start_str = ticker_start.isoformat()
-                dl = yf.download(
-                    yf_ticker,
-                    start=start_str,
-                    actions=True,
-                    auto_adjust=False,
-                    threads=False,
-                    progress=False
-                )
-
-                if not dl.empty:
-                    # Rename columns to our format
-                    # Columns might be a MultiIndex if yf.download thinks we requested multiple,
-                    # but for a single ticker it's usually flat or we can flatten it.
-                    if isinstance(dl.columns, pd.MultiIndex):
-                        # Drop the ticker level (level 1)
-                        dl.columns = dl.columns.droplevel(1)
-
-                    dl = dl.rename(columns={
-                        "Open": "open",
-                        "High": "high",
-                        "Low": "low",
-                        "Close": "close",
-                        "Adj Close": "adj_close",
-                        "Volume": "volume",
-                        "Dividends": "dividends",
-                        "Stock Splits": "splits"
-                    })
-
-                    # Ensure index is named "date" and we only keep dates
-                    dl.index.name = "date"
-                    # Remove timezone if any, just keep naive datetime
-                    if dl.index.tz is not None:
-                        dl.index = dl.index.tz_localize(None)
-
-                    # Ensure only the correct columns exist, ignoring others
-                    expected_cols = ["open", "high", "low", "close", "adj_close", "volume", "dividends", "splits"]
-                    missing_cols = [c for c in expected_cols if c not in dl.columns]
-                    for c in missing_cols:
-                        dl[c] = 0.0 if c in ["dividends", "splits"] else pd.NA
-                    dl = dl[expected_cols]
-
-                    df_old = history(ticker)
-                    if not df_old.empty:
-                        # Ensure old index is naive
-                        if df_old.index.tz is not None:
-                            df_old.index = df_old.index.tz_localize(None)
-                        df_new = pd.concat([df_old, dl])
-                        # Remove duplicates, keeping the last (newest) downloaded data
-                        df_new = df_new[~df_new.index.duplicated(keep='last')]
-                        df_new = df_new.sort_index()
-                    else:
-                        df_new = dl
-
-                    # Write to parquet atomically
-                    temp_file = _parquet_path(ticker).with_suffix(".parquet.tmp")
-                    df_new.to_parquet(temp_file)
-                    os.replace(temp_file, _parquet_path(ticker))
-
-                # Mark as updated today
-                state[ticker] = today_ny
-                updated.append(ticker)
-
-            except Exception as e:
-                log.error(f"Failed to update {ticker}: {e}")
-                failed.append(ticker)
-
-        # Save state after each batch
+    updated: list[str] = []
+    failed: list[str] = []
+    todo = [t for t in dict.fromkeys(tickers) if state.get(t) != today_ny]
+    for n, ticker in enumerate(todo):
+        if n:
+            time.sleep(PAUSE)
+        try:
+            old = history(ticker)
+            if old.empty:
+                new = _download(ticker, start)
+                if new.empty:
+                    raise ValueError("no data")
+            else:
+                last = old.index.max()
+                recent = _download(ticker, last.date())
+                if _has_actions(recent[recent.index > last]):
+                    new = _download(ticker, old.index.min().date())
+                    if new.empty:
+                        raise ValueError("no data on the full re-download")
+                else:
+                    new = pd.concat([old, recent]) if not recent.empty else old
+                    new = new[~new.index.duplicated(keep="last")].sort_index()   # re-downloaded day wins
+            _write(ticker, new)
+            state[ticker] = today_ny
+            updated.append(ticker)
+        except Exception as e:                           # keep what is stored, try again next time
+            log.warning("price history: %s not updated: %s", ticker, e)
+            failed.append(ticker)
         _write_state(state)
-
-        # Pause between batches
-        if i + batch_size < len(tickers_to_update):
-            time.sleep(1.0)
-
     return updated, failed
