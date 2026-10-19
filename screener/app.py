@@ -166,6 +166,15 @@ def rows_key(res: pd.DataFrame) -> str:
     return "table_" + hashlib.md5("\x1f".join(res["ticker"].astype(str)).encode()).hexdigest()[:12]
 
 
+def selection_index(res: pd.DataFrame, ticker: str | None) -> dict | None:
+    if not ticker or res.empty:
+        return None
+    matches = res.index[res["ticker"] == ticker].tolist()
+    if matches:
+        return {"selection": {"rows": [res.index.get_loc(matches[0])]}}
+    return None
+
+
 def all_presets() -> dict[str, P.Preset]:
     out = dict(P.BUILTIN)
     out.update({USER_PREFIX + n: p for n, p in P.load_user().items()})
@@ -191,6 +200,8 @@ def display_values(df: pd.DataFrame) -> pd.DataFrame:
             out[c] = out[c].map(lambda v, c=c: I.value("sector" if c == "group" else c, v, I.HE))
     if "new" in out.columns:
         out["new"] = out["new"].replace(history.NEW, t("NEW"))
+    if "signals" in out.columns:
+        out["signals"] = out["signals"].map(lambda v: I.signal_tags(v, L()) if isinstance(v, str) else v)
     return out
 
 
@@ -509,18 +520,28 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
                     "שדות חדשים, ולכן פילטרים על השדות האלה מסמנים יותר מניות כ-NEW. יסתדר מעצמו ממחר.")
 
     table = display_values(res[view_cols])
+    if L() == I.HE and "signals" in table.columns:   # grid only: Excel/CSV get the plain text
+        table["signals"] = table["signals"].map(I.rtl_cell)
     signed = [c for c in view_cols if c in export._SIGNED]
     if signed:
         table = table.style.map(_sign_color, subset=signed)
+
+    sel_ticker = ss.get("selected_ticker")
+    sel_default = selection_index(res, sel_ticker)
+
     event = st.dataframe(
         table, hide_index=True, height=560, key=rows_key(res),
         column_config={k: column_config(k) for k in view_cols},
         on_select="rerun", selection_mode="single-row", placeholder="—",
+        selection_default=sel_default,
     )
     rows = event.selection.rows if event and event.selection else []
     if rows and rows[0] < len(res):
-        detail(res.iloc[rows[0]])
+        selected_row = res.iloc[rows[0]]
+        ss["selected_ticker"] = selected_row["ticker"]
+        detail(selected_row)
     else:
+        ss.pop("selected_ticker", None)
         hebrew_note("👆 לחץ על שורה בטבלה כדי לפתוח גרף ונתונים של המניה")
     export_bar(res, view_cols, snap)
 
@@ -570,7 +591,7 @@ def detail(row: pd.Series) -> None:
                    + (f"  \n{row['indexes']}" if row.get("indexes") else ""))
         st.metric(t("Price"), fmt_value("price", row["price"]), f"{row['change']:+.2f}%")
         if row.get("signals"):
-            st.caption(f"**{t('Signals')}:** {row['signals']}")
+            st.caption(f"**{t('Signals')}:** {I.signal_tags(row['signals'], L())}")
         st.html(snapshot_table(row))
         st.markdown(f"[{t('Open in TradingView')} ↗]({export.tradingview_url(row['tv_symbol'])}) · "
                     f"[Finviz ↗](https://finviz.com/quote.ashx?t={row['ticker']})")

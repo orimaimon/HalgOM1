@@ -1,6 +1,6 @@
-from screener.data.tradingview import TV_MAPPING, fetch_universe, EXTRA_TV_FIELDS
-from screener.fields import COLUMNS, provider_columns, CANDLES
-import pandas as pd
+"""The TradingView field mapping lives in the provider module; fields.COLUMNS only marks provider columns."""
+import screener.data.tradingview as tv
+from screener.fields import CANDLES, COLUMNS, provider_columns
 
 # This snapshot represents the literal result of `list(tv_fields()) + list(EXTRA_TV_FIELDS)`
 # as it was output from `origin/main` before refactoring.
@@ -34,51 +34,22 @@ FIELDS_SNAPSHOT = [
 ]
 
 
-def test_tv_mapping_consistency():
-    # every column with source="provider" has exactly one TradingView field
-    prov_keys = provider_columns()
-    mapped_keys = [v for v in TV_MAPPING.values()]
-    assert set(prov_keys) == set(mapped_keys)
+def test_tv_mapping_covers_exactly_the_provider_columns():
+    provider = provider_columns()
+    assert sorted(tv.TV_MAPPING.values()) == sorted(provider)     # one TradingView field per provider column
+    for key in CANDLES:
+        assert COLUMNS[key].source == "provider" and COLUMNS[key].kind == "flag"
+        assert any(k == key and f.startswith("Candle.") for f, k in tv.TV_MAPPING.items())
 
-    # every TradingView mapping key is a provider column (no orphans)
-    for k, v in TV_MAPPING.items():
-        assert v in prov_keys
 
-    # no duplicate TradingView fields
-    assert len(TV_MAPPING) == len(prov_keys)
+def test_fetch_universe_request_and_columns_unchanged(monkeypatch):
+    sent = {}
 
-    # every CANDLES key is a provider "flag" column
-    for c in CANDLES:
-        assert COLUMNS[c].source == "provider"
-        assert COLUMNS[c].kind == "flag"
+    def fake_scan(market, query, timeout):
+        sent.update(query)
+        return [{"s": "NASDAQ:AAPL", "d": [1.0] * len(query["columns"])}]
 
-def test_fetch_universe_payload_and_columns(monkeypatch):
-    captured_payload = {}
-
-    def mock_scan(market, query, timeout):
-        captured_payload.update(query)
-        # return a fake response with one row, populated with dummy float data mostly
-        d = {k: 1.0 for k in query["columns"]}
-        d["s"] = "NASDAQ:AAPL"
-        return [{"s": d["s"], "d": list(d.values())[:-1]}] # -1 because 's' isn't part of 'd' typically... actually we can just return what TV returns.
-        # TV returns {"s": "symbol", "d": [col1, col2, ...]}
-
-    def mock_scan_accurate(market, query, timeout):
-        captured_payload.update(query)
-        d = [1.0] * len(query["columns"])
-        return [{"s": "NASDAQ:AAPL", "d": d}]
-
-    import screener.data.tradingview as tv
-    monkeypatch.setattr(tv, "_scan", mock_scan_accurate)
-
+    monkeypatch.setattr(tv, "_scan", fake_scan)
     df = tv.fetch_universe()
-
-    # assert payload["columns"] equals the snapshot list (same order)
-    assert captured_payload["columns"] == FIELDS_SNAPSHOT
-
-    # assert the returned DataFrame's columns equal the canonical provider columns (the set main returned)
-    # The set main returned is the provider columns + tv_symbol
-    expected_cols = ["tv_symbol"] + provider_columns()
-    # Wait, fetch_universe clean() strips EXTRA_TV_FIELDS and is_primary, etc
-    # Let's check exactly what columns are left
-    assert set(df.columns) == set(expected_cols)
+    assert sent["columns"] == FIELDS_SNAPSHOT                     # same fields, same order as before
+    assert set(df.columns) == {"tv_symbol", *provider_columns()}  # clean() drops the extra TV fields
