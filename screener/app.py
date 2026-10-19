@@ -200,6 +200,8 @@ def display_values(df: pd.DataFrame) -> pd.DataFrame:
             out[c] = out[c].map(lambda v, c=c: I.value("sector" if c == "group" else c, v, I.HE))
     if "new" in out.columns:
         out["new"] = out["new"].replace(history.NEW, t("NEW"))
+    if "signals" in out.columns:
+        out["signals"] = out["signals"].map(lambda v: I.signal_tags(v, L()) if isinstance(v, str) else v)
     return out
 
 
@@ -518,6 +520,8 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
                     "שדות חדשים, ולכן פילטרים על השדות האלה מסמנים יותר מניות כ-NEW. יסתדר מעצמו ממחר.")
 
     table = display_values(res[view_cols])
+    if L() == I.HE and "signals" in table.columns:   # grid only: Excel/CSV get the plain text
+        table["signals"] = table["signals"].map(I.rtl_cell)
     signed = [c for c in view_cols if c in export._SIGNED]
     if signed:
         table = table.style.map(_sign_color, subset=signed)
@@ -587,7 +591,7 @@ def detail(row: pd.Series) -> None:
                    + (f"  \n{row['indexes']}" if row.get("indexes") else ""))
         st.metric(t("Price"), fmt_value("price", row["price"]), f"{row['change']:+.2f}%")
         if row.get("signals"):
-            st.caption(f"**{t('Signals')}:** {row['signals']}")
+            st.caption(f"**{t('Signals')}:** {I.signal_tags(row['signals'], L())}")
         st.html(snapshot_table(row))
         st.markdown(f"[{t('Open in TradingView')} ↗]({export.tradingview_url(row['tv_symbol'])}) · "
                     f"[Finviz ↗](https://finviz.com/quote.ashx?t={row['ticker']})")

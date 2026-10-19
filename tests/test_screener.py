@@ -4,6 +4,7 @@ import io
 import json
 import re
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -316,6 +317,27 @@ def test_every_filter_group_is_known():
 
 # ── signals ─────────────────────────────────────────────────────────────────
 
+def test_signal_tags_have_hebrew_translations():
+    import re
+    # Every base tag must exist in SIGNALS_HE and contain no stray English letters except SMA and Cross
+    for group in (S.CANDLE_SIGNALS, S.BREAKOUTS, S.BREAKDOWNS, S.CONSOLIDATION, S.CROSSES):
+        for s in group:
+            hebrew = I.SIGNALS_HE.get(s.tag)
+            assert hebrew is not None, f"Missing translation for {s.tag}"
+            if s.tag not in ("Golden Cross", "Death Cross"):
+                # strip allowed English words and numbers, and punctuation
+                stripped = re.sub(r"(SMA\d+|[0-9.x]+|\s|\+|-|↑|↓|')", "", hebrew)
+                # the rest should be Hebrew (or empty)
+                assert all("\u0590" <= ch <= "\u05FF" for ch in stripped), f"Stray English in {hebrew}"
+
+    assert I.signal_tags("Engulfing+, Vol 2.8x, BO 1M", "he") == "בליעה+, מחזור ×2.8, פריצה חודשית"
+    assert I.signal_tags("Engulfing+, Vol 2.8x, BO 1M", "en") == "Engulfing+, Vol 2.8x, BO 1M"
+    assert I.signal_tags("Unknown, Vol 1.5x", "he") == "Unknown, מחזור ×1.5"
+    # Hebrew cells are wrapped for the LTR grid; empty cells and non-strings stay as they are
+    assert I.rtl_cell("בליעה+, SMA20↑SMA50") == "\u202bבליעה+, SMA20↑SMA50\u202c"
+    assert I.rtl_cell("") == "" and I.rtl_cell(None) is None
+
+
 def test_signals_column_combines_and_counts():
     d = frame(price=[105.0, 50.0, 10.0], rel_volume=[2.8, 1.0, np.nan],
               high_1m_prev=[100.0, 60.0, np.nan], high_3m_prev=[110.0, 70.0, np.nan],
@@ -325,6 +347,17 @@ def test_signals_column_combines_and_counts():
     assert d.loc[0, "n_signals"] == 3
     assert d.loc[1, "signals"] == "BO 52W"            # strongest breakout only, not 52W + 6M + 3M + 1M
     assert d.loc[2, "signals"] == "" and d.loc[2, "n_signals"] == 0   # missing data never signals
+
+    from screener.app import display_values
+    with patch("screener.i18n.HE", "he"), patch("screener.app.L", lambda: "he"):
+        disp = display_values(d)
+        assert disp.loc[0, "signals"] == "בליעה+, מחזור ×2.8, פריצה חודשית"
+        assert disp.loc[1, "signals"] == "פריצה שנתית"
+
+    with patch("screener.i18n.HE", "he"), patch("screener.app.L", lambda: "en"):
+        disp = display_values(d)
+        assert disp.loc[0, "signals"] == "Engulfing+, Vol 2.8x, BO 1M"
+        assert disp.loc[1, "signals"] == "BO 52W"
 
 
 def test_crosses_today_use_previous_bar():
