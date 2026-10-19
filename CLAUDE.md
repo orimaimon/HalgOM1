@@ -73,11 +73,20 @@ screener/.venv/bin/python -m streamlit run screener/app.py
 Rules:
 - Keep the provider swappable: providers return canonical column keys from `fields.COLUMNS`.
 - `run_screener.bat` must stay ASCII with CRLF line endings (cmd breaks otherwise; see `.gitattributes`).
-- `run_screener.bat` updates itself (`git pull`) while cmd is running it, and cmd resumes at the same byte
-  offset: the update block (`if not defined SCREENER_NO_UPDATE ...`) must stay byte-identical at bytes
-  529–785. Edit below it freely; above it keep the length (pad the `rem ---` line). Tests enforce this.
+- `run_screener.bat` updates itself while cmd is running it, and cmd resumes at the same byte offset.
+  Launchers before 2026-10-19 ran `git pull` in an update block (`if not defined SCREENER_NO_UPDATE ...`)
+  that must stay byte-identical at bytes 529–785 (an old launcher that pulls the new file resumes at 785).
+  Edit below it freely; above it keep the length (pad the `rem ---` line). The block is now switched off
+  (`SCREENER_NO_UPDATE=1` just before it, restored right after it).
+- Updates: `screener/update.py` (dulwich, no git needed), run by step 4 of the launcher, which must stay ONE line
+  (update.py may rewrite the .bat; the line restarts the launcher with `cmd /c` on exit code 3). It turns a
+  ZIP/copied folder into a checkout of main, fast-forwards a clean checkout on main, and leaves anything else
+  alone; it never blocks the start. Remote: SSH with a read-only deploy key if `%USERPROFILE%\.halgom\deploy_key`
+  exists (a `deploy_key` file next to the .bat is moved there on first run; it is gitignored, never commit it),
+  else anonymous HTTPS. GitHub's SSH host keys are pinned in update.py. Log: `screener/_data/logs/update.log`.
 - Launcher behavior: fixed port 8501; a second launch only opens the browser (health check;
-  `SCREENER_NO_BROWSER=1` skips the browser); a desktop shortcut is created once (`screener/_data/shortcut.done`).
+  `SCREENER_NO_BROWSER=1` skips the browser); a desktop shortcut is created once (`screener/_data/shortcut.done`);
+  a venv that does not start (copied from another PC) is rebuilt; without uv it falls back to an installed Python.
 - CI (`.github/workflows/tests.yml`): pytest on Linux + Windows, and a launcher smoke test that runs the real
   `run_screener.bat` on a clean Windows runner (health endpoint only, never the app page, so no TradingView calls).
 - Built-in preset option labels must match filter labels exactly (tests enforce this).

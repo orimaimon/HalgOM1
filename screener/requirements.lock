@@ -10,14 +10,24 @@ attrs==26.1.0
     # via
     #   jsonschema
     #   referencing
+bcrypt==5.0.0
+    # via paramiko
 certifi==2026.10.18
     # via requests
+cffi==2.1.1
+    # via
+    #   cryptography
+    #   pynacl
 charset-normalizer==3.5.2
     # via requests
 click==8.5.0
     # via
     #   streamlit
     #   uvicorn
+cryptography==50.0.2
+    # via paramiko
+dulwich==1.2.17
+    # via -r screener/requirements.txt
 et-xmlfile==2.0.0
     # via openpyxl
 h11==0.16.0
@@ -26,6 +36,8 @@ idna==3.20
     # via
     #   anyio
     #   requests
+invoke==3.0.3
+    # via paramiko
 itsdangerous==2.2.0
     # via streamlit
 jinja2==3.1.6
@@ -58,6 +70,8 @@ pandas==3.0.6
     # via
     #   -r screener/requirements.txt
     #   streamlit
+paramiko==5.1.0
+    # via -r screener/requirements.txt
 pillow==12.3.0
     # via streamlit
 plotly==7.1.0
@@ -68,8 +82,12 @@ pyarrow==26.0.0
     # via
     #   -r screener/requirements.txt
     #   streamlit
+pycparser==3.11
+    # via cffi
 pydeck==0.9.3
     # via streamlit
+pynacl==1.6.2
+    # via paramiko
 python-dateutil==2.9.0.post0
     # via pandas
 python-multipart==0.0.32
@@ -102,7 +120,9 @@ typing-extensions==4.16.0
 tzdata==2026.5
     # via pandas
 urllib3==2.8.0
-    # via requests
+    # via
+    #   dulwich
+    #   requests
 uvicorn==0.54.0
     # via streamlit
 watchdog==6.0.0
