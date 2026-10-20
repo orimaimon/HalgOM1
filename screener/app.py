@@ -33,12 +33,6 @@ from screener import presets as P  # noqa: E402
 from screener import theme  # noqa: E402
 from screener.data import FETCH_LOCK, Store, load_universe  # noqa: E402
 from screener.data.store import DATA_DIR, session_date  # noqa: E402
-
-HEBREW_WEEKDAYS = {0: "ב'", 1: "ג'", 2: "ד'", 3: "ה'", 4: "ו'", 5: "ש'", 6: "א'"}
-
-
-def hebrew_day_str(d: dt.date) -> str:
-    return f"יום {HEBREW_WEEKDAYS[d.weekday()]} {d:%d/%m}"
 from screener.data.tradingview import fetch_market, fetch_universe  # noqa: E402
 from screener.derive import add_derived  # noqa: E402
 from screener.fields import COLUMNS, DEFAULT_SORT, GROUP_COLUMNS, VIEWS, provider_columns  # noqa: E402
@@ -241,6 +235,14 @@ def display_values(df: pd.DataFrame) -> pd.DataFrame:
     if "signals" in out.columns:
         out["signals"] = out["signals"].map(lambda v: I.signal_tags(v, L()) if isinstance(v, str) else v)
     return out
+
+
+HEBREW_WEEKDAYS = {0: "ב'", 1: "ג'", 2: "ד'", 3: "ה'", 4: "ו'", 5: "ש'", 6: "א'"}   # date.weekday(): Monday = 0
+
+
+def hebrew_day_str(d: dt.date) -> str:
+    """'יום ו' 16/10' — the compared trading day, for the NEW note."""
+    return f"יום {HEBREW_WEEKDAYS[d.weekday()]} {d:%d/%m}"
 
 
 def keep_widget_state() -> None:

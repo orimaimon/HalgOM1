@@ -2,7 +2,6 @@ import datetime as dt
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-import pytest
 
 from screener.data.store import Snapshot, Store, session_date
 from screener.history import load_previous
