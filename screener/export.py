@@ -14,6 +14,7 @@ from typing import Callable
 
 import pandas as pd
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -60,7 +61,7 @@ def to_excel(df: pd.DataFrame, columns: list[str], filters: list[tuple[str, str]
     ws.sheet_view.rightToLeft = rtl
     cols = [c for c in columns if c in df.columns]
 
-    headers = [(headers or {}).get(c, COLUMNS[c].label) for c in cols] + [t(j) for j in JOURNAL_COLUMNS]
+    headers = [_cell_value((headers or {}).get(c, COLUMNS[c].label)) for c in cols] + [_cell_value(t(j)) for j in JOURNAL_COLUMNS]
     ws.append(headers)
     for cell in ws[1]:
         cell.font = Font(bold=True, color="FFFFFF")
@@ -103,20 +104,20 @@ def to_excel(df: pd.DataFrame, columns: list[str], filters: list[tuple[str, str]
 
     meta = wb.create_sheet(t("Filters"))
     meta.sheet_view.rightToLeft = rtl
-    meta.append([t("HalgOM Screener export")])
+    meta.append([_cell_value(t("HalgOM Screener export"))])
     meta["A1"].font = Font(bold=True, size=14)
-    meta.append([t("Screen"), title or t("(custom)")])
-    meta.append([t("Data as of"), fetched_at.strftime("%Y-%m-%d %H:%M")])
-    meta.append([t("Exported"), dt.datetime.now().strftime("%Y-%m-%d %H:%M")])
-    meta.append([t("Results"), n])
+    meta.append([_cell_value(t("Screen")), _cell_value(title or t("(custom)"))])
+    meta.append([_cell_value(t("Data as of")), _cell_value(fetched_at.strftime("%Y-%m-%d %H:%M"))])
+    meta.append([_cell_value(t("Exported")), _cell_value(dt.datetime.now().strftime("%Y-%m-%d %H:%M"))])
+    meta.append([_cell_value(t("Results")), n])
     meta.append([])
-    meta.append([t("Filter"), t("Value")])
+    meta.append([_cell_value(t("Filter")), _cell_value(t("Value"))])
     for c in meta[7]:
         c.font = Font(bold=True)
     for label, value in filters or [(t("(none)"), "")]:
-        meta.append([label, value])
+        meta.append([_cell_value(label), _cell_value(value)])
     meta.append([])
-    meta.append([t("Source: TradingView scanner (delayed ~15 min). Not investment advice.")])
+    meta.append([_cell_value(t("Source: TradingView scanner (delayed ~15 min). Not investment advice."))])
     meta.column_dimensions["A"].width = 28
     meta.column_dimensions["B"].width = 36
 
@@ -131,13 +132,22 @@ def _cell_value(v):
     if isinstance(v, pd.Timestamp):
         return v.to_pydatetime()
     if hasattr(v, "item"):  # numpy scalar
-        return v.item()
+        v = v.item()
+    if isinstance(v, str):
+        v = ILLEGAL_CHARACTERS_RE.sub("", v)
+        if v and v[0] in ("=", "+", "-", "@"):
+            v = "'" + v
     return v
 
 
 def to_csv(df: pd.DataFrame, columns: list[str], headers: dict[str, str] | None = None) -> bytes:
     cols = [c for c in columns if c in df.columns]
-    out = df[cols].rename(columns={c: (headers or {}).get(c, COLUMNS[c].label) for c in cols})
+    out = df[cols].copy()
+    for c in cols:
+        if c in COLUMNS and COLUMNS[c].kind == "range":
+            out[c] = out[c] * 100
+        out[c] = out[c].map(_cell_value)
+    out = out.rename(columns={c: _cell_value((headers or {}).get(c, COLUMNS[c].label)) for c in cols})
     return out.to_csv(index=False).encode("utf-8-sig")  # BOM so Excel opens it correctly
 
 

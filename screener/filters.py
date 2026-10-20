@@ -106,6 +106,8 @@ def _sma(n: int) -> tuple[Option, ...]:
         *[Option(f"Price {v}% below SMA{n}", lambda d, v=v: d[pct] <= -v) for v in (10, 20, 30, 50)],
         Option(f"Price within 2% of SMA{n}", lambda d: d[pct].abs() <= 2),
     ]
+    if f"{sma}_prev" in COLUMNS:
+        opts.append(Option(f"SMA{n} rising", lambda d, sma=sma: d[sma] > d[f"{sma}_prev"]))
     slower = {20: "sma50", 50: "sma200", 150: "sma200"}.get(n)
     if slower:
         opts += _ma_vs(sma, slower)
@@ -238,12 +240,13 @@ FILTERS: list[Filter] = [
         + _earn.opt("Next 7 days", lambda s: s.between(0, 7))
         + _earn.opt("Next 14 days", lambda s: s.between(0, 14))
         + _earn.opt("Next 30 days", lambda s: s.between(0, 30))
-        + _earn.opt("Not in next 7 days", lambda s: ~s.between(0, 7))
-        + _earn.opt("Not in next 14 days", lambda s: ~s.between(0, 14))),
+        + _earn.opt("Not in next 7 days", lambda s: s.notna() & ~s.between(0, 7))
+        + _earn.opt("Not in next 14 days", lambda s: s.notna() & ~s.between(0, 14))),
         help="תאריך הדוח הבא. 'Not in next 7 days' מסנן מניות שעומד לצאת להן דוח — דוחות גורמים לקפיצות חדות"),
     Filter("recom", "Analyst Recom.", "Descriptive", "recom", tuple(
         _recom.opt("Strong Buy (1)", lambda s: s <= 1.5) + _recom.opt("Buy or better", lambda s: s <= 2.5)
-        + _recom.opt("Hold or better", lambda s: s <= 3.5) + _recom.opt("Hold", lambda s: s.between(2.5, 3.5))
+        + _recom.opt("Hold or better", lambda s: s <= 3.5)
+        + [Option("Hold", lambda d: (d["recom"] > 2.5) & (d["recom"] <= 3.5))]
         + _recom.opt("Sell or worse", lambda s: s > 3.5))),
     Filter("target_upside", "Target Price", "Descriptive", "target_upside", tuple(
         _tgt.opt("Above price", lambda s: s > 0) + _tgt.opt("Below price", lambda s: s < 0)
@@ -266,7 +269,12 @@ FILTERS: list[Filter] = [
     Filter("sales_growth", "Sales growth TTM", "Fundamental", "sales_growth", _growth("sales_growth")),
     Filter("sales_growth_q", "Sales growth Q/Q", "Fundamental", "sales_growth_q", _growth("sales_growth_q")),
     Filter("roa", "Return on Assets", "Fundamental", "roa", _returns("roa")),
-    Filter("roe", "Return on Equity", "Fundamental", "roe", _returns("roe")),
+    Filter("roe", "Return on Equity", "Fundamental", "roe", (
+        Option("Positive (>0%)", lambda d: (d["roe"] > 0) & (~(d["debt_eq"] < 0))),
+        Option("Negative (<0%)", lambda d: d["roe"] < 0),
+        *N("roe", "%").opt("Very positive (>30%)", lambda s: s > 30),
+        *N("roe", "%").over(5, 10, 15, 20, 25, 30, 40, 50),
+        *N("roe", "%").under(-10, -5, 5, 10))),
     Filter("roic", "Return on Invested Cap.", "Fundamental", "roic", _returns("roic")),
     Filter("curr_ratio", "Current Ratio", "Fundamental", "curr_ratio", tuple(
         N("curr_ratio").opt("High (>3)", lambda s: s > 3) + N("curr_ratio").opt("Low (<1)", lambda s: s < 1)
@@ -276,11 +284,13 @@ FILTERS: list[Filter] = [
         + _ratio("quick_ratio", (0.5, 1, 1.5, 2, 3)))),
     Filter("lt_debt_eq", "LT Debt/Equity", "Fundamental", "lt_debt_eq", tuple(
         N("lt_debt_eq").opt("High (>0.5)", lambda s: s > 0.5)
-        + N("lt_debt_eq").opt("Low (<0.1)", lambda s: s.between(0, 0.1))
-        + _ratio("lt_debt_eq", (0.1, 0.2, 0.3, 0.5, 1)))),
+        + [Option("Low (<0.1)", lambda d: d["lt_debt_eq"].between(0, 0.1, inclusive="left"))]
+        + [Option(f"Under {v:g}", lambda d, v=v: d["lt_debt_eq"].between(0, v, inclusive="left"))
+           for v in (0.1, 0.2, 0.3, 0.5, 1)]
+        + N("lt_debt_eq").over(0.1, 0.2, 0.3, 0.5, 1))),
     Filter("debt_eq", "Debt/Equity", "Fundamental", "debt_eq", tuple(
         N("debt_eq").opt("High (>0.5)", lambda s: s > 0.5)
-        + N("debt_eq").opt("Low (<0.1)", lambda s: s.between(0, 0.1))
+        + [Option("Low (<0.1)", lambda d: d["debt_eq"].between(0, 0.1, inclusive="left"))]
         + N("debt_eq").opt("Negative equity", lambda s: s < 0)
         + [Option(f"Under {v:g}", lambda d, v=v: d["debt_eq"].between(0, v, inclusive="left"))
            for v in (0.1, 0.2, 0.3, 0.5, 1, 2)]
@@ -291,7 +301,9 @@ FILTERS: list[Filter] = [
     Filter("payout", "Payout Ratio", "Fundamental", "payout", tuple(
         _payout.opt("None (0%)", lambda s: s.fillna(0) == 0) + _payout.opt("Positive (>0%)", lambda s: s > 0)
         + _payout.opt("Low (<20%)", lambda s: s.between(0, 20, inclusive="neither"))
-        + _payout.opt("High (>50%)", lambda s: s > 50) + _payout.under(40, 60, 80, 100)
+        + _payout.opt("High (>50%)", lambda s: s > 50)
+        + [Option(f"Under {v:g}%", lambda d, v=v: d["payout"].between(0, v, inclusive="left"))
+           for v in (40, 60, 80, 100)]
         + _payout.over(20, 40, 60, 80, 100))),
 
     # ── Technical ───────────────────────────────────────────────────────────

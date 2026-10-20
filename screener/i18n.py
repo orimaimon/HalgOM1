@@ -57,7 +57,7 @@ UI: dict[str, str] = {
     "Events & scores": "אירועים וציונים", "Open in TradingView": "פתיחה ב-TradingView",
     # groups / heatmap
     "Group by": "קיבוץ לפי", "Sector": "סקטור", "Industry": "תעשייה", "Averages": "ממוצעים",
-    "Equal": "שווה", "Market cap": "שווי שוק", "All sectors": "כל הסקטורים",
+    "Equal": "שווה", "Market cap": "שווי שוק", "Median": "חציון", "All sectors": "כל הסקטורים",
     "Only screener results": "רק תוצאות הסריקה", "sectors": "סקטורים", "industries": "תעשיות",
     "stocks": "מניות", "Stocks": "מניות", "Color by": "צבע לפי",
     "S&P 500": "S&P 500", "Nasdaq 100": "Nasdaq 100", "Screener results": "תוצאות הסריקה",
@@ -294,6 +294,7 @@ _RULES: list[tuple[re.Pattern, object]] = [(re.compile(p), r) for p, r in [
      lambda m: f"מחיר {m[1]}% מתחת ל-{m[2]}" + (" (שבועי)" if m[3] else "")),
     (r"^Price within (\d+)% of (SMA\d+)( \(weekly\))?$",
      lambda m: f"מחיר בטווח {m[1]}% מ-{m[2]}" + (" (שבועי)" if m[3] else "")),
+    (r"^(SMA\d+) rising$", lambda m: f"{m[1]} בעלייה"),
     (r"^(SMA\d+) above (SMA\d+)$", lambda m: f"{m[1]} מעל {m[2]}"),
     (r"^(SMA\d+) below (SMA\d+)$", lambda m: f"{m[1]} מתחת ל-{m[2]}"),
     (r"^(SMA\d+) crossed above (SMA\d+) today$", lambda m: f"{m[1]} חצה מעל {m[2]} היום"),
