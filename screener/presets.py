@@ -82,35 +82,23 @@ BUILTIN: dict[str, Preset] = {
 }
 
 
+from screener.userfiles import _write_user_file, load_user_file, save_user_file
+
+
 def load_user(path: Path | None = None) -> dict[str, Preset]:
     path = path or PRESETS_PATH
-    if not path.exists():
-        return {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        return {name: Preset(**p) for name, p in raw.items()}
-    except Exception as e:
-        log.warning("cannot read user presets: %s", e)
-        return {}
+    return load_user_file(path, Preset)
 
 
 def save_user(name: str, preset: Preset, path: Path | None = None) -> None:
     path = path or PRESETS_PATH
-    presets = load_user(path)
-    presets[name] = preset
-    _write(presets, path)
+    save_user_file(path, Preset, lambda presets: presets.update({name: preset}))
 
 
 def delete_user(name: str, path: Path | None = None) -> None:
     path = path or PRESETS_PATH
-    presets = load_user(path)
-    if presets.pop(name, None) is not None:
-        _write(presets, path)
+    save_user_file(path, Preset, lambda presets: presets.pop(name, None))
 
 
 def _write(presets: dict[str, Preset], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    text = json.dumps({n: asdict(p) for n, p in presets.items()}, ensure_ascii=False, indent=2)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)               # a crash mid-write never leaves a half-written file
+    _write_user_file(path, presets)

@@ -134,6 +134,10 @@ def test_damaged_file_and_template(tmp_path):
     bad = tmp_path / "portfolios.json"
     bad.write_text("{not json", encoding="utf-8")
     assert PF.load_all(bad) == {}
+    assert not bad.exists()
+    bad_files = list(tmp_path.glob("portfolios.json.bad-*"))
+    assert len(bad_files) == 1
+    assert bad_files[0].read_text(encoding="utf-8") == "{not json"
     imp = PF.parse(PF.read_table(PF.template_csv(), "template.csv"), KNOWN, TODAY)
     assert imp.ok and imp.kind == PF.PORTFOLIO and len(imp.rows) == 2
 

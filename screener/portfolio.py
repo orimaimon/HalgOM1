@@ -305,38 +305,26 @@ def _records(df: pd.DataFrame) -> list[dict]:
     return recs
 
 
+from screener.userfiles import _write_user_file, load_user_file, save_user_file
+
+
 def load_all(path: Path | None = None) -> dict[str, PList]:
     path = path or PORTFOLIOS_PATH
-    if not path.exists():
-        return {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        return {name: PList(**p) for name, p in raw.items()}
-    except Exception as e:                        # a damaged file must not break the screener
-        log.warning("cannot read lists: %s", e)
-        return {}
+    return load_user_file(path, PList)
 
 
 def save(plist: PList, path: Path | None = None) -> None:
     path = path or PORTFOLIOS_PATH
-    lists = load_all(path)
-    lists[plist.name] = plist
-    _write(lists, path)
+    save_user_file(path, PList, lambda lists: lists.update({plist.name: plist}))
 
 
 def delete(name: str, path: Path | None = None) -> None:
     path = path or PORTFOLIOS_PATH
-    lists = load_all(path)
-    if lists.pop(name, None) is not None:
-        _write(lists, path)
+    save_user_file(path, PList, lambda lists: lists.pop(name, None))
 
 
 def _write(lists: dict[str, PList], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({n: asdict(p) for n, p in lists.items()}, ensure_ascii=False, indent=2),
-                   encoding="utf-8")
-    os.replace(tmp, path)                       # a crash mid-write never leaves a half-written file
+    _write_user_file(path, lists)
 
 
 # ── files out ────────────────────────────────────────────────────────────────

@@ -263,8 +263,13 @@ def on_save():
     name = (ss.get("save_name") or "").strip()
     if not name:
         return
-    P.save_user(name, P.Preset(filters=active(selections()), view=ss.view,
-                               sort=ss.sort_col, ascending=ss.sort_asc))
+    try:
+        P.save_user(name, P.Preset(filters=active(selections()), view=ss.view,
+                                   sort=ss.sort_col, ascending=ss.sort_asc))
+    except Exception as e:
+        log.warning("cannot save screen %r: %s", name, e)
+        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        return
     ss.preset = USER_PREFIX + name
     ss.save_name = ""
     st.toast(f"{t('Saved screen')}: “{name}”", icon="💾")
@@ -277,7 +282,12 @@ def on_exit():
 def on_delete():
     name = ss.get("delete_name")
     if name:
-        P.delete_user(name)
+        try:
+            P.delete_user(name)
+        except Exception as e:
+            log.warning("cannot delete screen %r: %s", name, e)
+            st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+            return
         if ss.get("preset") == USER_PREFIX + name:
             ss.preset = CUSTOM
         st.toast(f"{t('Deleted')}: “{name}”", icon="🗑️")
@@ -822,7 +832,12 @@ def on_pf_import():
     imp, name = ss.get("pf_pending"), (ss.get("pf_new_name") or "").strip()
     if imp is None or not imp.ok or not name:
         return
-    PF.save(PF.from_imported(name, imp, _by_ticker(ss.df)))
+    try:
+        PF.save(PF.from_imported(name, imp, _by_ticker(ss.df)))
+    except Exception as e:
+        log.warning("cannot save portfolio %r: %s", name, e)
+        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        return
     ss.pf_name, ss.pf_new_name = name, ""
     ss.pf_upload = ss.get("pf_upload", 0) + 1          # a new uploader widget: the file is cleared
     st.toast(f"הרשימה נשמרה: “{name}”", icon="💾")
@@ -830,9 +845,20 @@ def on_pf_import():
 
 def on_pf_new_watchlist():
     name = (ss.get("pf_new_name") or "").strip()
-    if not name or name in PF.load_all():
+    try:
+        lists = PF.load_all()
+    except Exception as e:
+        log.warning("cannot load lists: %s", e)
+        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
         return
-    PF.save(PF.PList(name, PF.WATCHLIST))
+    if not name or name in lists:
+        return
+    try:
+        PF.save(PF.PList(name, PF.WATCHLIST))
+    except Exception as e:
+        log.warning("cannot save watchlist %r: %s", name, e)
+        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        return
     ss.pf_name, ss.pf_new_name = name, ""
 
 
@@ -849,7 +875,12 @@ def add_tickers(plist: PF.PList, text: str, prices: pd.Series) -> tuple[list[str
 
 def _add_and_report(plist: PF.PList, text: str) -> None:
     added, unknown = add_tickers(plist, text, _by_ticker(ss.df))
-    PF.save(plist)
+    try:
+        PF.save(plist)
+    except Exception as e:
+        log.warning("cannot save list %r: %s", plist.name, e)
+        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        return
     if added:
         st.toast(f"נוספו ל“{plist.name}”: {', '.join(added)}", icon="✅")
     if unknown:
@@ -857,7 +888,12 @@ def _add_and_report(plist: PF.PList, text: str) -> None:
 
 
 def on_pf_add_tickers():
-    plist = PF.load_all().get(ss.get("pf_name"))
+    try:
+        plist = PF.load_all().get(ss.get("pf_name"))
+    except Exception as e:
+        log.warning("cannot load list: %s", e)
+        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        return
     if plist is not None:
         _add_and_report(plist, ss.get("pf_add") or "")
     ss.pf_add = ""
@@ -870,7 +906,12 @@ def on_add_to_watchlist(ticker: str):
         name = (ss.get("add_wl_name") or "").strip()
         if not name:
             return
-    lists = PF.load_all()
+    try:
+        lists = PF.load_all()
+    except Exception as e:
+        log.warning("cannot load lists: %s", e)
+        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        return
     plist = lists.get(name) or PF.PList(name, PF.WATCHLIST)
     if plist.kind != PF.WATCHLIST:
         st.toast(f"“{name}” הוא תיק, לא רשימת מעקב", icon="⚠️")
@@ -880,14 +921,29 @@ def on_add_to_watchlist(ticker: str):
 
 
 def on_pf_remove():
-    plist = PF.load_all().get(ss.get("pf_name"))
+    try:
+        plist = PF.load_all().get(ss.get("pf_name"))
+    except Exception as e:
+        log.warning("cannot load list: %s", e)
+        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        return
     if plist is not None:
         plist.rows = [r for r in plist.rows if r["ticker"] != ss.get("pf_remove")]
-        PF.save(plist)
+        try:
+            PF.save(plist)
+        except Exception as e:
+            log.warning("cannot save list: %s", e)
+            st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+            return
 
 
 def on_pf_trade():
-    plist = PF.load_all().get(ss.get("pf_name"))
+    try:
+        plist = PF.load_all().get(ss.get("pf_name"))
+    except Exception as e:
+        log.warning("cannot load list: %s", e)
+        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        return
     if plist is None:
         return
     raw = pd.DataFrame([{"ticker": ss.get("pf_t_ticker") or "", "date": ss.get("pf_t_date"),
@@ -901,7 +957,12 @@ def on_pf_trade():
     if errors:
         ss.pf_trade_errors = errors
         return
-    PF.save(plist)
+    try:
+        PF.save(plist)
+    except Exception as e:
+        log.warning("cannot save trade: %s", e)
+        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        return
     ss.pf_trade_errors = []
     for k in ("pf_t_ticker", "pf_t_price", "pf_t_qty", "pf_t_fees", "pf_t_note"):
         ss.pop(k, None)
@@ -909,8 +970,15 @@ def on_pf_trade():
 
 
 def on_pf_delete():
-    PF.delete(ss.get("pf_name"))
-    ss.pop("pf_name", None)
+    name = ss.get("pf_name")
+    if name:
+        try:
+            PF.delete(name)
+        except Exception as e:
+            log.warning("cannot delete portfolio %r: %s", name, e)
+            st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+            return
+        ss.pop("pf_name", None)
 
 
 def on_show_in_screener(tickers: list[str]):
