@@ -37,6 +37,91 @@ def notes(at: AppTest) -> list[str]:
     return [e.proto.body for e in at.get("html")]
 
 
+def test_column_config():
+    from screener.app import column_config
+
+    assert column_config("ticker")["pinned"] is True
+    assert column_config("company")["pinned"] is False
+
+    widths = {
+        "ticker": "small", "exchange": "small", "country": "small", "sec_type": "small",
+        "company": "medium", "sector": "medium", "industry": "medium",
+        "signals": 300, "indexes": 240, "new": 60
+    }
+    for key, expected_width in widths.items():
+        assert column_config(key)["width"] == expected_width
+
+def test_range52_bar():
+    from screener.app import range52_bar
+    import math
+
+    # Valid range, exactly in the middle
+    html = range52_bar(150.0, 100.0, 200.0)
+    assert "left:50.0%" in html
+
+    # Missing data or no range: no bar at all (a bar in the middle would be made up)
+    assert range52_bar(float('nan'), 100.0, 200.0) == ""
+    assert range52_bar(150.0, float('nan'), 200.0) == ""
+    assert range52_bar(150.0, 150.0, 150.0) == ""
+
+    # Price above High
+    html_above = range52_bar(250.0, 100.0, 200.0)
+    assert "left:100.0%" in html_above
+
+    # Price below Low
+    html_below = range52_bar(50.0, 100.0, 200.0)
+    assert "left:0.0%" in html_below
+
+
+def test_find_removed_pill():
+    from screener.app import find_removed_pill
+
+    assert find_removed_pill(["pe", "market_cap"], ["pe"]) == "market_cap"
+    assert find_removed_pill(["pe", "market_cap"], ["market_cap"]) == "pe"
+    assert find_removed_pill(["pe"], []) == "pe"
+    assert find_removed_pill(["pe"], ["pe"]) is None
+
+
+def test_active_filters_pills(app):
+    app.run()
+    app.selectbox(key="f_pe").select("Low (<15)").run()
+    assert not app.exception, app.exception
+
+    def pills():
+        return next(p for p in app.get("button_group") if (p.key or "").startswith("active_pills_"))
+
+    app.selectbox(key="f_market_cap").select(app.selectbox(key="f_market_cap").options[2]).run()
+    # a filter added later is shown selected too (the old single-key widget kept only ['pe'])
+    assert len(pills().value) == 2 and pills().value == pills().options
+
+    # clicking the P/E pill removes only that filter; the market-cap pill stays selected
+    cap = next(o for o in pills().options if "P/E" not in o)
+    pills().set_value([cap]).run()
+    assert not app.exception, app.exception
+    assert app.session_state["f_pe"] == "Any" and app.session_state["f_market_cap"] != "Any"
+    assert pills().value == [cap]
+
+
+def test_large_text_toggle(app):
+    app.run()
+    assert not app.exception, app.exception
+
+    # Toggle off by default
+    assert not app.session_state["large_text"]
+    assert not any("115%" in h for h in notes(app))
+
+    # Enable Large Text
+    app.toggle(key="large_text").set_value(True).run()
+    assert app.session_state["large_text"]
+    assert any("115%" in h for h in notes(app))
+
+
+def test_data_time_header(app):
+    app.run()
+    assert not app.exception, app.exception
+    assert any("שעת הנתונים:" in c.value for c in app.caption)
+
+
 def test_empty_results_explain_and_clear_everything(app):
     app.run()
     app.selectbox(key="f_pe").select("Low (<15)").run()
