@@ -43,6 +43,7 @@ from screener.market import compute_regime, trend_strength  # noqa: E402
 VERSION = "0.2.0"
 MAX_AGE = dt.timedelta(minutes=15)       # TradingView data is ~15 min delayed anyway
 RETRY_AFTER = dt.timedelta(minutes=2)    # when offline, don't hammer the network on every click
+REFRESH_MIN = dt.timedelta(seconds=60)   # "Refresh data" clicked again sooner: no new request
 CUSTOM = "— Custom —"
 USER_PREFIX = "★ "
 GRID = 6
@@ -441,9 +442,12 @@ def _header(snap, n_universe: int) -> None:
                    help="מקור הנתונים ומצב העדכון כפי שהספק מדווח. delayed = בעיכוב, realtime = בזמן אמת")
         r1, r2 = st.columns([1.7, 1.2])
         if r1.button(t("Refresh data"), icon=":material/refresh:", use_container_width=True):
-            get_data(force=True)
-            _market.clear()
-            st.rerun()
+            if snap.source != "stale" and snap.age < REFRESH_MIN:      # every click is a TradingView request
+                st.toast(f"הנתונים עודכנו לפני {max(0, int(snap.age.total_seconds()))} שניות", icon="ℹ️")
+            else:
+                get_data(force=True)
+                _market.clear()
+                st.rerun()
         with r2.popover(t("Exit"), icon=":material/power_settings_new:", use_container_width=True,
                         help="סגירת הסקרינר"):
             hebrew_note("סוגר את הסקרינר ואת החלון השחור. בפעם הבאה פותחים שוב מהקיצור בשולחן העבודה.")

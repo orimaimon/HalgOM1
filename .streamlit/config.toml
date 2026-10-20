@@ -3,6 +3,9 @@
 # Streamlit reads this file from the folder it is started in (run_screener.bat starts it in the repo root).
 # Colors used in our own HTML/CSS/Plotly live in screener/theme.py; keep the two in sync.
 
+[client]
+toolbarMode = "minimal"
+
 [theme]
 base = "light"
 primaryColor = "#1F4E8C"

@@ -31,6 +31,7 @@ HEADERS = {
     "accept": "application/json",
 }
 US_EXCHANGES = ["NASDAQ", "NYSE", "AMEX"]
+MIN_UNIVERSE_ROWS = 500            # the real universe is ~5,000 stocks
 
 # Benchmarks for the market-regime header (same inputs as the HalgOM backtester).
 MARKET_SYMBOLS = {"SPY": "AMEX:SPY", "QQQ": "NASDAQ:QQQ", "HYG": "AMEX:HYG", "VIX": "CBOE:VIX"}
@@ -80,6 +81,16 @@ def universe_query(fields: list[str]) -> dict:
     }
 
 
+def validate_universe(df: pd.DataFrame, raw: pd.DataFrame) -> None:
+    """Refuse a response that would replace good data with bad: unknown fields come back as null, not as
+    an error, so a renamed field shows up as a collapsed fill rate (raw) or a near-empty universe (cleaned)."""
+    for col in ("price", "market_cap"):
+        if col in raw.columns and len(raw) and raw[col].notna().mean() < 0.5:
+            raise TradingViewError(f"{col} fill rate collapsed ({raw[col].notna().mean():.0%})")
+    if len(df) < MIN_UNIVERSE_ROWS:
+        raise TradingViewError(f"universe size ({len(df)}) below minimum floor ({MIN_UNIVERSE_ROWS})")
+
+
 def fetch_universe(timeout: float = 60) -> pd.DataFrame:
     """Fetch the full US stock universe as a DataFrame keyed by canonical column names."""
     mapping = tv_fields()
@@ -92,9 +103,10 @@ def fetch_universe(timeout: float = 60) -> pd.DataFrame:
     df = df.rename(columns=mapping)
     log.info("TradingView universe: %d rows", len(df))
     meta = source_meta(df.get("update_mode"))
-    df = clean(df)
-    df.attrs["source"] = meta
-    return df
+    cleaned = clean(df)
+    validate_universe(cleaned, df)
+    cleaned.attrs["source"] = meta
+    return cleaned
 
 
 def source_meta(update_mode: pd.Series | None) -> dict:

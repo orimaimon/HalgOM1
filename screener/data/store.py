@@ -18,6 +18,8 @@ import datetime as dt
 import json
 import logging
 import os
+import threading
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
@@ -118,32 +120,58 @@ def market_date(ts: dt.datetime) -> dt.date:
 
 
 def _atomic_parquet(df: pd.DataFrame, path: Path) -> None:
-    tmp = path.with_suffix(".tmp")
+    tmp = path.parent / f"{path.name}.{uuid.uuid4().hex}.tmp"
     df = df.copy()
     df.attrs = {}        # metadata lives in the JSON next to the file
-    df.to_parquet(tmp, index=False)
-    os.replace(tmp, path)
+    try:
+        df.to_parquet(tmp, index=False)
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def _atomic_write_text(text: str, path: Path) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    tmp = path.parent / f"{path.name}.{uuid.uuid4().hex}.tmp"
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+FETCH_LOCK = threading.Lock()   # one fetch at a time for the whole server (all browser tabs)
 
 
 def load_universe(store: Store, fetch: Callable[[], pd.DataFrame], max_age: dt.timedelta,
                   force: bool = False, required: Iterable[str] = ()) -> Snapshot:
+    def fresh(cached) -> bool:
+        complete = cached is not None and set(required) <= set(cached[0].columns)
+        return complete and not force and dt.datetime.now() - cached[1] < max_age
+
     cached = store.load_latest()
-    now = dt.datetime.now()
-    complete = cached is not None and set(required) <= set(cached[0].columns)
-    if cached is not None and complete and not force and now - cached[1] < max_age:
+    if fresh(cached):
         return Snapshot(cached[0], cached[1], "cache", meta=cached[2])
-    try:
-        df = fetch()
-    except Exception as e:
-        log.exception("fetch failed")
-        if cached is None:
-            raise
-        return Snapshot(cached[0], cached[1], "stale", str(e), meta=cached[2])
-    store.save(df, now)
-    return Snapshot(df, now, "live", meta=df.attrs.get("source") or {})
+    with FETCH_LOCK:
+        cached = store.load_latest()         # another tab may have fetched while this one waited
+        if fresh(cached):
+            return Snapshot(cached[0], cached[1], "cache", meta=cached[2])
+        now = dt.datetime.now()
+        try:
+            df = fetch()
+            if cached is not None and len(df) < 0.5 * len(cached[0]):
+                raise ValueError(f"universe shrank to {len(df)} rows from {len(cached[0])}")
+        except Exception as e:
+            log.exception("fetch failed")
+            if cached is None:
+                raise
+            return Snapshot(cached[0], cached[1], "stale", str(e), meta=cached[2])
+        store.save(df, now)
+        return Snapshot(df, now, "live", meta=df.attrs.get("source") or {})
