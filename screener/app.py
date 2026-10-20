@@ -21,7 +21,6 @@ if str(ROOT) not in sys.path:
 
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
-import streamlit.components.v1 as components  # noqa: E402
 
 from screener import export  # noqa: E402
 from screener import groups as G  # noqa: E402
@@ -217,6 +216,27 @@ def selections() -> dict[str, str]:
     return {f.key: ss.get(f"f_{f.key}", ANY) for f in FILTERS}
 
 
+JUNK_CONFLICT_OPTIONS = {
+    "market_cap": "Nano (under $50M)",
+    "avg_volume": "Under 50K",
+    "price": "Under $1",
+}
+
+
+def junk_conflict_hint() -> str | None:
+    if not ss.get("hide_junk", True):
+        return None
+    sel = selections()
+    conflicts = []
+    for k, v in JUNK_CONFLICT_OPTIONS.items():
+        if sel.get(k) == v:
+            conflicts.append(f"“{opt(v)}”")
+    if not conflicts:
+        return None
+    c_text = ", ".join(conflicts)                # explanations are Hebrew in both languages
+    return f"⚠️ האפשרות {c_text} מתנגשת עם “הסתר זבל” ולא תוחזר אף מניה. כדי לראות תוצאות, יש לכבות את “הסתר זבל”."
+
+
 def described() -> list[tuple[str, str]]:
     """(filter, option) of the active filters in the display language — for the chips and the exports."""
     return [(I.filter_label(k, FILTERS_BY_KEY[k].label, L()), opt(v)) for k, v in active(selections()).items()]
@@ -237,7 +257,11 @@ def pills_key(labels: list[str]) -> str:
 def on_remove_pill(key: str, filter_of: dict[str, str]):
     removed = find_removed_pill(list(filter_of), ss.get(key) or [])
     if removed:
-        ss[f"f_{filter_of[removed]}"] = ANY
+        target = filter_of[removed]
+        if target == "query":
+            ss.query = ""
+        else:
+            ss[f"f_{target}"] = ANY
 
 
 def display_values(df: pd.DataFrame) -> pd.DataFrame:
@@ -312,6 +336,11 @@ def on_save():
     name = (ss.get("save_name") or "").strip()
     if not name:
         return
+    user = P.load_user()
+    if name in user and ss.get("confirm_save_name") != name:
+        ss.confirm_save_name = name
+        return
+    ss.pop("confirm_save_name", None)
     try:
         P.save_user(name, P.Preset(filters=active(selections()), view=ss.view,
                                    sort=ss.sort_col, ascending=ss.sort_asc))
@@ -418,14 +447,15 @@ def fmt_value(key: str, v) -> str:
 
 
 def tradingview_chart(symbol: str, height: int = 560) -> None:
+    locale = "he_IL" if L() == I.HE else "en"
     config = {
         "autosize": False, "width": "100%", "height": height - 34, "symbol": symbol, "interval": "D", "timezone": "America/New_York",
-        "theme": "light", "style": "1", "locale": "en", "allow_symbol_change": True,
+        "theme": "light", "style": "1", "locale": locale, "allow_symbol_change": True,
         "hide_side_toolbar": False, "details": False, "calendar": False,
         "studies": ["MASimple@tv-basicstudies", "RSI@tv-basicstudies"],
         "support_host": "https://www.tradingview.com",
     }
-    components.html(f"""
+    st.iframe(f"""
 <style>html, body {{margin: 0; height: 100%;}}</style>
 <div class="tradingview-widget-container" style="height:{height - 10}px;width:100%">
   <div class="tradingview-widget-container__widget" style="height:{height - 34}px;width:100%"></div>
@@ -468,7 +498,7 @@ def _header(snap, n_universe: int) -> None:
             colors = {"bull": "green", "bear": "red", "sideways": "orange", "unknown": "gray"}
             with cols[0]:
                 st.badge(t(regime.label.upper()), color=colors[regime.label], icon=":material/monitoring:",
-                         help="מצב השוק לפי כללי HalgOM:\n\n" + "\n".join(f"- {r}" for r in regime.reasons))
+                         help="מצב השוק לפי כללי HalgOM:\n\n" + "\n".join(f"- {I.regime_reason(r, L())}" for r in regime.reasons))
                 spy = market.loc["SPY"]
                 trend = trend_strength(spy.get("adx", float("nan")), spy.get("di_plus", float("nan")),
                                        spy.get("di_minus", float("nan")))
@@ -564,9 +594,12 @@ def toolbar(presets: dict[str, P.Preset]) -> None:
     junk_toggle(c7)
     c5.button(t("Reset"), on_click=on_reset, use_container_width=True, help="ניקוי כל הפילטרים")
     with c6.popover(t("Save"), icon=":material/bookmark:", use_container_width=True, help="שמירת הסריקה הנוכחית / מחיקת סריקה שמורה"):
-        st.text_input(t("Save current screen as"), key="save_name")
-        st.button(t("Save"), on_click=on_save, type="primary")
+        save_val = (ss.get("save_name") or "").strip()
         user = P.load_user()
+        st.text_input(t("Save current screen as"), key="save_name")
+        if save_val and save_val in user and ss.get("confirm_save_name") == save_val:
+            st.warning(t("A screen with this name already exists. Click save again to overwrite."))
+        st.button(t("Save"), on_click=on_save, type="primary")
         if user:
             st.divider()
             st.selectbox(t("Delete saved screen"), list(user), key="delete_name")
@@ -587,6 +620,9 @@ def filter_panel(df: pd.DataFrame) -> None:
     n_active = len(active(sel))
     title = f"{t('Filters')} ({n_active} {t('active')})" if n_active else t("Filters")
     with st.expander(title, expanded=n_active > 0):
+        hint = junk_conflict_hint()
+        if hint:
+            hebrew_note(hint)
         counts = {g: sum(1 for f in FILTERS if f.group == g and sel[f.key] != ANY) for g in GROUPS}
         tabs = st.tabs([f"{t(g)} ({counts[g]})" if counts[g] else t(g) for g in GROUPS])
         for tab, group in zip(tabs, GROUPS):
@@ -624,8 +660,12 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
                              format_func=t)
     view_cols = VIEWS[ss.view]
     chips = described()
-    if chips:
-        filter_of = {f"{k}: {v}": f for (k, v), f in zip(chips, active(selections()))}   # pill label -> filter
+    items = [(f"{k}: {v}", f) for (k, v), f in zip(chips, active(selections()))]
+    query_val = (ss.get("query") or "").strip()
+    if query_val:
+        items.append((f"{t('Search')}: {query_val}", "query"))
+    if items:
+        filter_of = {label: target for label, target in items}
         labels = list(filter_of)
         key = pills_key(labels)
         st.pills(t("Active filters"), options=labels, default=labels, selection_mode="multi",
@@ -1316,8 +1356,22 @@ def main() -> None:
         filter_panel(df)
 
     sel = selections()
-    universe = hide_junk(df, ss.hide_junk)       # once per run, shared by every page
-    res = search(apply_filters(universe, sel), ss.get("query", ""))
+    prev = get_previous(snap)
+    pipeline_key = (snap.fetched_at, tuple(sorted(sel.items())), ss.get("query", ""),
+                    ss.get("hide_junk", True), ss.get("sort_col"), ss.get("sort_asc"),
+                    ss.get("only_new", False))
+    if ss.get("pipeline_key") == pipeline_key and "pipeline_res" in ss and "pipeline_universe" in ss:
+        universe = ss["pipeline_universe"]
+        res = ss["pipeline_res"]
+    else:
+        universe = hide_junk(df, ss.hide_junk)
+        res = search(apply_filters(universe, sel), ss.get("query", ""))
+        res = res.assign(new=new_column(res, prev, sel))
+        res = res.sort_values(ss.sort_col, ascending=ss.sort_asc, na_position="last")
+        ss.pipeline_key = pipeline_key
+        ss.pipeline_universe = universe
+        ss.pipeline_res = res
+
     if page == "Guide":
         st.html(GUIDE.read_text(encoding="utf-8"))      # Hebrew only, like all end-user explanations
     elif page == "Groups":
@@ -1327,9 +1381,6 @@ def main() -> None:
     elif page == "Portfolios":
         portfolios_page(df)
     else:
-        prev = get_previous(snap)                # "New since yesterday" is only shown here
-        res = res.assign(new=new_column(res, prev, sel))
-        res = res.sort_values(ss.sort_col, ascending=ss.sort_asc, na_position="last")
         results(df, universe, res, snap, prev)
     hebrew_note("נתונים: TradingView (בעיכוב של כ-15 דקות). הכלי לצורכי מחקר בלבד ואינו ייעוץ השקעות.")
 

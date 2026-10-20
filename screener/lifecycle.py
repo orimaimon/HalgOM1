@@ -84,3 +84,4 @@ def start_idle_watchdog(count: Callable[[], int | None] = active_sessions,
     t.start()
     log.info("idle watchdog started (%d x %gs)", idle_polls, poll)
     return t
+

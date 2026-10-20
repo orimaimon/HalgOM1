@@ -328,3 +328,99 @@ def test_goodbye_mentions_other_tabs(app, monkeypatch):
     app.run()
     app.button(key="exit").click().run()
     assert any("לשוניות אחרות" in h for h in notes(app))
+
+
+# ── round 3, part B2 ────────────────────────────────────────────────────────
+
+def test_regime_reasons_translation():
+    from screener import i18n as I
+    from screener import market as M
+
+    m = pd.DataFrame({"close": [500.0, 400, 80, 15], "sma20": [490.0, 390, 79, 16],
+                       "sma200": [450.0, 350, 78, 17]}, index=["SPY", "QQQ", "HYG", "VIX"])
+    regime = M.compute_regime(m)
+    # Internal reasons remain English
+    assert regime.reasons == ["VIX 15.0 (<18 calm)", "SPY above SMA200", "HYG above SMA20 (credit risk-on)"]
+    # Translated reasons for display
+    translated = [I.regime_reason(r, I.HE) for r in regime.reasons]
+    assert translated == ["VIX 15.0 (<18 רגוע)", "SPY מעל SMA200", "HYG מעל SMA20 (אשראי risk-on)"]
+
+
+def test_chart_locale(app, monkeypatch):
+    from screener.app import tradingview_chart
+    iframe_args = []
+    monkeypatch.setattr(st, "iframe", lambda src, height=None: iframe_args.append(src))
+
+    app.run()
+    tradingview_chart("AAPL")
+    assert len(iframe_args) == 1
+    assert '"locale": "he_IL"' in iframe_args[0]
+
+
+def test_save_screen_overwrite_warning(app):
+    app.run()
+    # Save a user preset for the first time
+    P.save_user("MySavedScreen", P.Preset(filters={}, view="Overview", sort="ticker", ascending=True))
+    app.run()
+
+    # Enter existing name and click save
+    app.text_input(key="save_name").input("MySavedScreen").run()
+    app.button[[b.label for b in app.button].index("שמירה")].click().run()
+    assert not app.exception, app.exception
+
+    # First click sets confirmation state and displays warning
+    assert app.session_state.get("confirm_save_name") == "MySavedScreen"
+    assert any("סריקה בשם זה כבר קיימת" in w.value for w in app.warning)
+
+    # Second click completes overwrite
+    app.button[[b.label for b in app.button].index("שמירה")].click().run()
+    assert not app.exception, app.exception
+    assert app.session_state.get("confirm_save_name") is None
+    assert app.session_state["preset"] == "★ MySavedScreen"
+
+
+def test_junk_conflict_hint(app):
+    app.run()
+    assert not any("מתנגשת עם “הסתר זבל”" in h for h in notes(app))
+
+    # Select Nano (under $50M) when Hide junk is on
+    app.selectbox(key="f_market_cap").select("Nano (under $50M)").run()
+    assert not app.exception, app.exception
+    assert any("מתנגשת עם “הסתר זבל”" in h for h in notes(app))
+
+    # Turn off Hide junk: conflict hint disappears
+    app.toggle(key="hide_junk").set_value(False).run()
+    assert not app.exception, app.exception
+    assert not any("מתנגשת עם “הסתר זבל”" in h for h in notes(app))
+
+
+def test_pipeline_cached_on_rerun(app):
+    app.run()
+    assert "pipeline_key" in app.session_state
+    assert "pipeline_res" in app.session_state
+    res_first = app.session_state["pipeline_res"]
+
+    # Rerun without changing filters
+    app.run()
+    assert app.session_state["pipeline_res"] is res_first
+
+
+def test_search_as_removable_pill(app):
+    app.run()
+    app.text_input(key="query").input("AAPL").run()
+    assert not app.exception, app.exception
+
+    pills = next(p for p in app.get("button_group") if (p.key or "").startswith("active_pills_"))
+    assert any("חיפוש: AAPL" in o for o in pills.options)
+
+    # Deselecting search pill clears search query
+    pills.set_value([]).run()
+    assert not app.exception, app.exception
+    assert app.session_state["query"] == ""
+
+
+def test_regime_reasons_translation_below():
+    from screener import i18n as I
+    assert I.regime_reason("SPY below SMA200", I.HE) == "SPY מתחת ל-SMA200"
+    assert I.regime_reason("HYG below SMA20 (credit risk-off)", I.HE) == "HYG מתחת ל-SMA20 (אשראי risk-off)"
+    assert I.regime_reason("SPY below SMA200", I.EN) == "SPY below SMA200"
