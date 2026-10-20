@@ -904,11 +904,16 @@ def _add_and_report(plist: PF.PList, text: str) -> None:
 
 def on_pf_add_tickers():
     try:
-        plist = PF.load_all().get(ss.get("pf_name"))
+        lists = PF.load_all()
     except Exception as e:
         log.warning("cannot load list: %s", e)
         st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
         return
+    name = ss.get("pf_name")
+    if not name or name not in lists:
+        st.toast("הרשימה נמחקה בחלון אחר", icon="⚠️")
+        return
+    plist = lists[name]
     if plist is not None:
         _add_and_report(plist, ss.get("pf_add") or "")
     ss.pf_add = ""
@@ -937,11 +942,16 @@ def on_add_to_watchlist(ticker: str):
 
 def on_pf_remove():
     try:
-        plist = PF.load_all().get(ss.get("pf_name"))
+        lists = PF.load_all()
     except Exception as e:
         log.warning("cannot load list: %s", e)
         st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
         return
+    name = ss.get("pf_name")
+    if not name or name not in lists:
+        st.toast("הרשימה נמחקה בחלון אחר", icon="⚠️")
+        return
+    plist = lists[name]
     if plist is not None:
         plist.rows = [r for r in plist.rows if r["ticker"] != ss.get("pf_remove")]
         try:
@@ -954,11 +964,16 @@ def on_pf_remove():
 
 def on_pf_trade():
     try:
-        plist = PF.load_all().get(ss.get("pf_name"))
+        lists = PF.load_all()
     except Exception as e:
         log.warning("cannot load list: %s", e)
         st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
         return
+    name = ss.get("pf_name")
+    if not name or name not in lists:
+        st.toast("הרשימה נמחקה בחלון אחר", icon="⚠️")
+        return
+    plist = lists[name]
     if plist is None:
         return
     raw = pd.DataFrame([{"ticker": ss.get("pf_t_ticker") or "", "date": ss.get("pf_t_date"),
@@ -1027,10 +1042,24 @@ def import_panel(lists: dict[str, PF.PList], df: pd.DataFrame) -> None:
             elif imp is not None:
                 ss.pf_pending = imp
                 n_tk = imp.rows["ticker"].nunique()
-                what = (f"{t('Portfolio')}: {len(imp.rows)} {t('Trades')} ב-{n_tk} מניות"
-                        if imp.kind == PF.PORTFOLIO else f"{t('Watchlist')}: {n_tk} מניות")
+                kind_str = t("Portfolio") if imp.kind == PF.PORTFOLIO else t("Watchlist")
+                details = [f"סוג: **{kind_str}**"]
+                if imp.kind == PF.PORTFOLIO:
+                    details.append(f"פורמט תאריך: **{imp.date_format}**")
+                    dates = imp.rows["date"].dropna()
+                    if not dates.empty:
+                        d_min, d_max = dates.min(), dates.max()
+                        details.append(f"טווח תאריכים: **{d_min:%d/%m/%Y} עד {d_max:%d/%m/%Y}**")
+                    details.append(f"עסקאות: **{len(imp.rows)}** ב-**{n_tk}** מניות")
+                else:
+                    details.append(f"מניות: **{n_tk}**")
+
+                st.success(" · ".join(details))
+                st.caption("תצוגה מקדימה (5 שורות ראשונות):")
+                preview_cols = [c for c in PF.COLUMNS if c in imp.rows.columns and not imp.rows[c].isna().all()]
+                st.dataframe(imp.rows[preview_cols].head(5), hide_index=True)
+
                 unknown = sorted(set(imp.rows["ticker"]) - set(df["ticker"]))
-                st.success(what)
                 if unknown:
                     hebrew_note(f"אין בסקרינר מחיר ל: {', '.join(unknown)} (למשל קרנות סל). "
                                 "הן יישמרו, אבל בלי שווי נוכחי.")
