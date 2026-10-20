@@ -49,15 +49,20 @@ BUY, SELL = "buy", "sell"
 # header (lower case, stripped) -> canonical column
 HEADERS = {
     **{c: c for c in COLUMNS},
-    "symbol": "ticker", "סימול": "ticker", "טיקר": "ticker", "נייר": "ticker", "מניה": "ticker",
-    "תאריך": "date", "תאריך קנייה": "date", "תאריך קניה": "date", "trade date": "date",
+    "symbol": "ticker", "סימול": "ticker", "סימול נייר": "ticker", "טיקר": "ticker", "נייר": "ticker",
+    "מניה": "ticker",
+    "תאריך": "date", "תאריך קנייה": "date", "תאריך קניה": "date", "trade date": "date", "date/time": "date",
     "שער": "price", "מחיר": "price", "שער קנייה": "price", "שער קניה": "price", "מחיר קנייה": "price",
+    "שער ביצוע": "price", "t. price": "price", "t.price": "price",
     "qty": "quantity", "shares": "quantity", "כמות": "quantity",
-    "action": "side", "type": "side", "פעולה": "side", "סוג": "side",
-    "fee": "fees", "commission": "fees", "עמלה": "fees", "עמלות": "fees",
+    "action": "side", "type": "side", "פעולה": "side", "סוג": "side", "סוג פעולה": "side",
+    "fee": "fees", "commission": "fees", "comm/fee": "fees", "comm / fee": "fees", "עמלה": "fees", "עמלות": "fees",
     "notes": "note", "הערה": "note", "הערות": "note",
 }
-SIDES = {"buy": BUY, "b": BUY, "קנייה": BUY, "קניה": BUY, "sell": SELL, "s": SELL, "מכירה": SELL}
+SIDES = {
+    "buy": BUY, "b": BUY, "קנייה": BUY, "קניה": BUY, "קניה חול": BUY, 'קנייה חו"ל': BUY, 'קניה חו"ל': BUY,
+    "sell": SELL, "s": SELL, "מכירה": SELL, "מכירה חול": SELL, 'מכירה חו"ל': SELL,
+}
 _TICKER = re.compile(r"^[A-Z][A-Z0-9]{0,5}(\.[A-Z]{1,2})?$")
 
 
@@ -67,12 +72,26 @@ def read_table(data: bytes, filename: str) -> pd.DataFrame:
     """The raw table of an uploaded CSV / Excel file, every cell as text or as Excel gave it."""
     if filename.lower().endswith((".xlsx", ".xlsm", ".xls")):
         return pd.read_excel(io.BytesIO(data), sheet_name=0, dtype=object)
+    df = None
     for encoding in ("utf-8-sig", "cp1255"):          # cp1255: Hebrew CSV saved by older Excel
         try:
-            return pd.read_csv(io.BytesIO(data), dtype=str, encoding=encoding, skipinitialspace=True)
+            df = pd.read_csv(io.BytesIO(data), dtype=str, encoding=encoding, skipinitialspace=True,
+                             header=None, skip_blank_lines=False)
+            break
         except UnicodeDecodeError:
             continue
-    return pd.read_csv(io.BytesIO(data), dtype=str, encoding="latin-1")
+    if df is None:
+        df = pd.read_csv(io.BytesIO(data), dtype=str, encoding="latin-1", header=None, skip_blank_lines=False)
+
+    if df.empty:
+        return pd.DataFrame(columns=["ticker"])
+
+    first_row = [str(c).strip().lower() for c in df.iloc[0].dropna().tolist()]
+    cells = [p for val in df.values.flatten() if pd.notna(val) for p in re.split(r"[,;\s]+", str(val)) if p]
+    if not any(c in HEADERS for c in first_row) and cells and all(_TICKER.match(normalize_ticker(c)) for c in cells):
+        return pd.DataFrame({"ticker": cells})       # a bare list, e.g. our TradingView export "NASDAQ:AAPL,..."
+    df.columns = [str(c).strip() if pd.notna(c) else "" for c in df.iloc[0].tolist()]
+    return df.iloc[1:].reset_index(drop=True)          # unknown headers: parse() reports no_ticker_column
 
 
 @dataclass(frozen=True)
@@ -88,6 +107,7 @@ class Imported:
     kind: str                  # WATCHLIST | PORTFOLIO
     rows: pd.DataFrame         # canonical COLUMNS, valid rows only
     problems: list[Problem]
+    date_format: str = "יום/חודש"    # "יום/חודש" or "חודש/יום"
 
     @property
     def ok(self) -> bool:
@@ -95,17 +115,48 @@ class Imported:
 
 
 def normalize_ticker(v) -> str:
-    """'brk-b ' / 'BRK/B' -> 'BRK.B' (TradingView's class-share form)."""
-    return re.sub(r"[-/]", ".", str(v).strip().upper())
+    """'brk-b ' / 'BRK/B' / 'NASDAQ:AAPL' -> 'AAPL', 'BRK.B' (TradingView's class-share form)."""
+    s = str(v).strip().upper()
+    if ":" in s:
+        s = s.split(":", 1)[1].strip()
+    return re.sub(r"[-/]", ".", s)
 
 
-def parse_date(v, today: dt.date) -> dt.date | None:
+def detect_file_date_format(series: pd.Series) -> tuple[bool, str]:
+    """Scans date values in a column to resolve ambiguity (day-first vs month-first).
+    Returns (day_first, display_text) where display_text is 'יום/חודש' or 'חודש/יום'."""
+    p1_gt_12 = False
+    p2_gt_12 = False
+    for v in series:
+        if _blank(v) or isinstance(v, (dt.date, dt.datetime, pd.Timestamp)):
+            continue
+        s = re.split(r"[\s,T]+", str(v).strip())[0].strip()
+        m = re.match(r"^(\d{1,2})[/\.-](\d{1,2})[/\.-](\d{2,4})$", s)
+        if m:
+            p1, p2 = int(m.group(1)), int(m.group(2))
+            if p1 > 12:
+                p1_gt_12 = True
+            if p2 > 12:
+                p2_gt_12 = True
+    if p1_gt_12:
+        return True, "יום/חודש"
+    if p2_gt_12:
+        return False, "חודש/יום"
+    return True, "יום/חודש"
+
+
+def parse_date(v, today: dt.date, day_first: bool = True) -> dt.date | None:
     if isinstance(v, (dt.datetime, pd.Timestamp)):
         return v.date()
     if isinstance(v, dt.date):
         return v
-    s = str(v).strip()
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d.%m.%Y", "%d-%m-%Y", "%d/%m/%y", "%Y/%m/%d"):
+    s = re.split(r"[\s,T]+", str(v).strip())[0].strip()
+    fmts = (
+        ("%Y-%m-%d", "%d/%m/%Y", "%d.%m.%Y", "%d-%m-%Y", "%d/%m/%y", "%Y/%m/%d", "%m/%d/%Y", "%m/%d/%y")
+        if day_first else
+        ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%Y/%m/%d", "%d/%m/%Y", "%d.%m.%Y", "%d-%m-%Y", "%d/%m/%y")
+    )
+    for fmt in fmts:
         try:
             return dt.datetime.strptime(s, fmt).date()
         except ValueError:
@@ -116,11 +167,25 @@ def parse_date(v, today: dt.date) -> dt.date | None:
 def parse_number(v) -> float | None:
     if isinstance(v, (int, float, np.number)) and not isinstance(v, bool):
         return None if pd.isna(v) else float(v)
-    s = str(v).strip().replace("$", "").replace(",", "").replace("‏", "").replace("‎", "")
-    try:
-        return float(s)
-    except ValueError:
+    s = str(v).strip().replace("$", "").replace("‏", "").replace("‎", "").strip()
+    if not s:
         return None
+    if re.match(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$", s):
+        try:
+            return float(s.replace(",", ""))
+        except ValueError:
+            return None
+    if re.match(r"^[+-]?\d+,\d{1,2}$", s):
+        try:
+            return float(s.replace(",", "."))
+        except ValueError:
+            return None
+    if re.match(r"^[+-]?\d+(\.\d+)?$", s):
+        try:
+            return float(s)
+        except ValueError:
+            return None
+    return None
 
 
 def _blank(v) -> bool:
@@ -136,8 +201,9 @@ def parse(raw: pd.DataFrame, known: set[str] | None = None, today: dt.date | Non
     if "ticker" not in df.columns:
         return Imported(WATCHLIST, pd.DataFrame(columns=COLUMNS), [Problem(1, "no_ticker_column")])
     df = df[~df.apply(lambda r: all(_blank(v) for v in r), axis=1)]          # skip empty rows
-    kind = PORTFOLIO if any(c in df.columns and not df[c].map(_blank).all() for c in TRADE_COLUMNS) \
-        else WATCHLIST
+    kind = PORTFOLIO if ("quantity" in df.columns and not df["quantity"].map(_blank).all()) else WATCHLIST
+
+    day_first, date_format_str = detect_file_date_format(df["date"]) if "date" in df.columns else (True, "יום/חודש")
 
     problems: list[Problem] = []
     out = []
@@ -152,28 +218,55 @@ def parse(raw: pd.DataFrame, known: set[str] | None = None, today: dt.date | Non
         elif known is not None and ticker not in known:
             problems.append(Problem(n, "unknown_ticker", ticker))
         rec = {"ticker": ticker, "note": "" if _blank(r.get("note")) else str(r.get("note")).strip()}
+        if "date" in df.columns and not _blank(r["date"]):
+            d = parse_date(r["date"], today, day_first=day_first)
+            if d is None:
+                problems.append(Problem(n, "bad_date", str(r["date"])))
+            elif d > today:
+                problems.append(Problem(n, "future_date", d.isoformat()))
+            rec["date"] = d
+
+        if "price" in df.columns and not _blank(r["price"]):
+            x = parse_number(r["price"])
+            if x is None or x <= 0:
+                problems.append(Problem(n, "bad_number", f"price: {r['price']}"))
+            rec["price"] = x
+
         if kind == PORTFOLIO:
             for c in TRADE_COLUMNS:
                 if c not in df.columns or _blank(r[c]):
                     problems.append(Problem(n, "missing_value", c))
-            if "date" in df.columns and not _blank(r["date"]):
-                d = parse_date(r["date"], today)
-                if d is None:
-                    problems.append(Problem(n, "bad_date", str(r["date"])))
-                elif d > today:
-                    problems.append(Problem(n, "future_date", d.isoformat()))
-                rec["date"] = d
-            for c in ("price", "quantity", "fees"):
-                if c in df.columns and not _blank(r[c]):
-                    x = parse_number(r[c])
-                    if x is None or x < 0 or (x == 0 and c != "fees"):
-                        problems.append(Problem(n, "bad_number", f"{c}: {r[c]}"))
-                    rec[c] = x
-            side = "buy" if "side" not in df.columns or _blank(r["side"]) else str(r["side"]).strip().lower()
-            if side not in SIDES:
-                problems.append(Problem(n, "bad_side", side))
-            rec["side"] = SIDES.get(side, BUY)
-            rec.setdefault("fees", 0.0)
+
+            raw_qty = parse_number(r["quantity"]) if "quantity" in df.columns and not _blank(r["quantity"]) else None
+            side_str = str(r["side"]).strip().lower() if "side" in df.columns and not _blank(r["side"]) else ""
+
+            if raw_qty is not None:
+                if raw_qty == 0:
+                    problems.append(Problem(n, "bad_number", f"quantity: {r['quantity']}"))
+                else:
+                    qty = abs(raw_qty)
+                    rec["quantity"] = qty
+                    if not side_str:
+                        rec["side"] = SELL if raw_qty < 0 else BUY
+                    elif side_str in SIDES:
+                        rec["side"] = SIDES[side_str]
+                    else:
+                        problems.append(Problem(n, "bad_side", side_str))
+            else:
+                if side_str:
+                    if side_str in SIDES:
+                        rec["side"] = SIDES[side_str]
+                    else:
+                        problems.append(Problem(n, "bad_side", side_str))
+
+            if "fees" in df.columns and not _blank(r["fees"]):
+                f = parse_number(r["fees"])
+                if f is None:
+                    problems.append(Problem(n, "bad_number", f"fees: {r['fees']}"))
+                else:
+                    rec["fees"] = abs(f)
+            else:
+                rec.setdefault("fees", 0.0)
         if len(problems) == row_problems:
             out.append(rec)
     rows = pd.DataFrame(out, columns=COLUMNS)
@@ -181,15 +274,30 @@ def parse(raw: pd.DataFrame, known: set[str] | None = None, today: dt.date | Non
         rows = rows.drop_duplicates("ticker")
     elif not rows.empty:
         problems += [Problem(0, "oversold", t) for t in oversold(rows)]
-    return Imported(kind, rows.reset_index(drop=True), problems)
+    return Imported(kind, rows.reset_index(drop=True), problems, date_format=date_format_str)
 
 
 # ── positions ────────────────────────────────────────────────────────────────
 
+def sort_trades(trades: pd.DataFrame) -> pd.DataFrame:
+    """Sort trades chronologically. If the file was exported newest first, reverse it first.
+    Within the same date, buys come before sells."""
+    if trades.empty or "date" not in trades.columns:
+        return trades
+    df = trades.copy()
+    dates = df["date"].tolist()
+    if len(dates) > 1 and all(dates[i] >= dates[i + 1] for i in range(len(dates) - 1)) and dates[0] > dates[-1]:
+        df = df.iloc[::-1].reset_index(drop=True)
+    side_rank = df["side"].map(lambda s: 0 if s == BUY else 1 if s == SELL else 2)
+    df["_side_rank"] = side_rank
+    return df.sort_values(["date", "_side_rank"], kind="stable").drop(columns=["_side_rank"]).reset_index(drop=True)
+
+
 def oversold(trades: pd.DataFrame) -> list[str]:
     """Tickers where, in date order, more shares were sold than held."""
     bad = []
-    for t, g in trades.sort_values("date", kind="stable").groupby("ticker", sort=False):
+    sorted_df = sort_trades(trades)
+    for t, g in sorted_df.groupby("ticker", sort=False):
         held = (g["quantity"] * np.where(g["side"] == SELL, -1, 1)).cumsum()
         if (held < -1e-9).any():
             bad.append(t)
@@ -201,8 +309,8 @@ def positions(trades: pd.DataFrame) -> pd.DataFrame:
     first_buy and avg_date (cost-weighted buy date, for the annual return). Closed positions stay,
     with quantity 0, so their realized P&L is not lost."""
     rows = []
-    trades = trades.assign(fees=trades["fees"].fillna(0.0))
-    for t, g in trades.sort_values("date", kind="stable").groupby("ticker", sort=False):
+    sorted_df = sort_trades(trades).assign(fees=lambda d: d["fees"].fillna(0.0))
+    for t, g in sorted_df.groupby("ticker", sort=False):
         qty = cost = realized = 0.0
         weighted_days = 0.0
         for _, tr in g.iterrows():
@@ -216,6 +324,9 @@ def positions(trades: pd.DataFrame) -> pd.DataFrame:
                 realized += tr["price"] * part - tr["fees"] - avg * part
                 weighted_days *= (qty - part) / qty if qty else 0.0
                 qty, cost = qty - part, cost - avg * part
+            if abs(qty) < 1e-9:
+                qty = cost = 0.0
+                weighted_days = 0.0
         rows.append({
             "ticker": t, "quantity": qty, "avg_cost": cost / qty if qty else np.nan, "cost": cost,
             "realized": realized, "first_buy": g.loc[g["side"] == BUY, "date"].min(),
@@ -270,11 +381,18 @@ class PList:
 
 
 def from_imported(name: str, imp: Imported, prices: pd.Series, today: dt.date | None = None) -> PList:
-    """A new list from a clean import. Watchlist tickers get today's date and current price."""
+    """A new list from a clean import. Watchlist tickers get today's date and current price if missing."""
     today = today or dt.date.today()
     rows = imp.rows.copy()
     if imp.kind == WATCHLIST:
-        rows["date"], rows["price"] = today, rows["ticker"].map(prices).astype(float)
+        if "date" not in rows.columns or rows["date"].isna().all():
+            rows["date"] = today
+        else:
+            rows["date"] = rows["date"].fillna(today)
+        if "price" not in rows.columns or rows["price"].isna().all():
+            rows["price"] = rows["ticker"].map(prices).astype(float)
+        else:
+            rows["price"] = rows["price"].fillna(rows["ticker"].map(prices).astype(float))
     return PList(name, imp.kind, _records(rows))
 
 
@@ -331,9 +449,9 @@ def _write(lists: dict[str, PList], path: Path) -> None:
 # ── files out ────────────────────────────────────────────────────────────────
 
 def to_csv(plist: PList) -> bytes:
-    """The list in the import format (round trip). Watchlists keep only ticker and note."""
+    """The list in the import format (round trip)."""
     df = plist.frame()
-    cols = ["ticker", "note"] if plist.kind == WATCHLIST else COLUMNS
+    cols = ["ticker", "date", "price", "note"] if plist.kind == WATCHLIST else COLUMNS
     return df[cols].to_csv(index=False).encode("utf-8-sig")         # BOM: Excel opens Hebrew right
 
 

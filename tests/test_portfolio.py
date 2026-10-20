@@ -142,6 +142,118 @@ def test_damaged_file_and_template(tmp_path):
     assert imp.ok and imp.kind == PF.PORTFOLIO and len(imp.rows) == 2
 
 
+def test_us_and_il_date_formats():
+    # US file: month-first detected because 14 is in 2nd position (03/14/2025 -> March 14)
+    us_csv = "ticker,date,price,quantity\nAAPL,03/04/2025,213,10\nMSFT,03/14/2025,400,5\n"
+    imp_us = parse(us_csv)
+    assert imp_us.ok
+    assert imp_us.date_format == "חודש/יום"
+    assert imp_us.rows.loc[0, "date"] == dt.date(2025, 3, 4)
+    assert imp_us.rows.loc[1, "date"] == dt.date(2025, 3, 14)
+
+    # Israel file: day-first detected because 14 is in 1st position (14/03/2025 -> March 14)
+    il_csv = "ticker,date,price,quantity\nAAPL,04/03/2025,213,10\nMSFT,14/03/2025,400,5\n"
+    imp_il = parse(il_csv)
+    assert imp_il.ok
+    assert imp_il.date_format == "יום/חודש"
+    assert imp_il.rows.loc[0, "date"] == dt.date(2025, 3, 4)
+    assert imp_il.rows.loc[1, "date"] == dt.date(2025, 3, 14)
+
+    # Ambiguous file: defaults to day-first ("יום/חודש")
+    amb_csv = "ticker,date,price,quantity\nAAPL,03/04/2025,213,10\nMSFT,01/02/2025,400,5\n"
+    imp_amb = parse(amb_csv)
+    assert imp_amb.ok
+    assert imp_amb.date_format == "יום/חודש"
+    assert imp_amb.rows.loc[0, "date"] == dt.date(2025, 4, 3)
+
+    # Date/Time string (e.g., IBKR) with time stripped
+    time_csv = "ticker,date,price,quantity\nAAPL,03/14/2025 10:30:00,213,10\n"
+    imp_time = parse(time_csv)
+    assert imp_time.ok
+    assert imp_time.rows.loc[0, "date"] == dt.date(2025, 3, 14)
+
+
+def test_headerless_ticker_file_and_tradingview_export():
+    tv_data = b"NASDAQ:AAPL,NYSE:BRK.B"
+    imp = parse(tv_data.decode("utf-8"))
+    assert imp.ok and imp.kind == PF.WATCHLIST
+    assert imp.rows["ticker"].tolist() == ["AAPL", "BRK.B"]
+
+    multiline = "NASDAQ:AAPL\nNYSE:MSFT\nNVDA"
+    imp_m = parse(multiline)
+    assert imp_m.ok and imp_m.kind == PF.WATCHLIST
+    assert imp_m.rows["ticker"].tolist() == ["AAPL", "MSFT", "NVDA"]
+
+
+def test_finviz_export_and_watchlist_round_trip():
+    finviz_csv = "Ticker,Price,Company\nAAPL,213.49,Apple Inc\nMSFT,461.97,Microsoft Corp\n"
+    imp = parse(finviz_csv)
+    assert imp.ok and imp.kind == PF.WATCHLIST
+    assert imp.rows["ticker"].tolist() == ["AAPL", "MSFT"]
+    assert imp.rows["price"].tolist() == [213.49, 461.97]
+
+    plist = PF.from_imported("Finviz WL", imp, PRICES, TODAY)
+    assert plist.rows[0]["price"] == 213.49
+    assert plist.rows[0]["date"] == TODAY.isoformat()
+
+    csv_data = PF.to_csv(plist)
+    imp_re = parse(csv_data.decode("utf-8-sig"))
+    assert imp_re.ok and imp_re.kind == PF.WATCHLIST
+    assert imp_re.rows["price"].tolist() == [213.49, 461.97]
+    assert imp_re.rows["date"].tolist() == [TODAY, TODAY]
+
+
+def test_parse_number_decimal_comma_and_thousands():
+    assert PF.parse_number("213,49") == 213.49
+    assert PF.parse_number("1,234.56") == 1234.56
+    assert PF.parse_number("1,234,567.89") == 1234567.89
+    assert PF.parse_number("1.234,56") is None
+    assert PF.parse_number("12,34,56") is None
+    assert PF.parse_number("1,2345") is None
+    assert PF.parse_number("213,490") == 213490.0
+    assert PF.parse_number("$213.49") == 213.49
+    assert PF.parse_number("-213,49") == -213.49
+
+
+def test_ibkr_and_israeli_broker_imports():
+    ibkr_csv = ("Symbol,Date/Time,T. Price,Quantity,Comm/Fee\n"
+                "AAPL,03/14/2025 10:30:00,213.49,10,-1.25\n"
+                "AAPL,03/15/2025 14:15:00,220.00,-10,-1.25\n")
+    imp_ibkr = parse(ibkr_csv)
+    assert imp_ibkr.ok and imp_ibkr.kind == PF.PORTFOLIO
+    r_ibkr = imp_ibkr.rows
+    assert r_ibkr.loc[0, "side"] == "buy" and r_ibkr.loc[0, "quantity"] == 10 and r_ibkr.loc[0, "fees"] == 1.25
+    assert r_ibkr.loc[1, "side"] == "sell" and r_ibkr.loc[1, "quantity"] == 10 and r_ibkr.loc[1, "fees"] == 1.25
+
+    il_csv = ("שם נייר,סימול נייר,תאריך,סוג פעולה,כמות,שער ביצוע,עמלה\n"
+              "אפל,AAPL,14/03/2025,קניה חול,10,213.49,2.5\n"
+              "אפל,AAPL,15/03/2025,מכירה חול,10,220.00,2.5\n")
+    imp_il = parse(il_csv)
+    assert imp_il.ok and imp_il.kind == PF.PORTFOLIO
+    r_il = imp_il.rows
+    assert r_il.loc[0, "ticker"] == "AAPL" and r_il.loc[0, "side"] == "buy" and r_il.loc[0, "quantity"] == 10
+    assert r_il.loc[1, "ticker"] == "AAPL" and r_il.loc[1, "side"] == "sell" and r_il.loc[1, "quantity"] == 10
+
+
+def test_same_day_trade_sorting_and_fractional_precision():
+    # Same day sell before buy in input (e.g. descending date file)
+    t = trades([("AAPL", "2025-03-14", 200, 10, "sell", 0),
+                ("AAPL", "2025-03-14", 100, 10, "buy", 0)])
+    assert PF.oversold(t) == []
+    p = PF.positions(t).set_index("ticker")
+    assert p.loc["AAPL", "quantity"] == 0
+    assert p.loc["AAPL", "realized"] == 1000.0
+
+    # Fractional shares summing to ~0
+    t_frac = trades([("NVDA", "2025-01-01", 100, 0.1, "buy", 0),
+                     ("NVDA", "2025-01-02", 100, 0.2, "buy", 0),
+                     ("NVDA", "2025-01-03", 150, 0.3, "sell", 0)])
+    p_frac = PF.positions(t_frac).set_index("ticker")
+    assert p_frac.loc["NVDA", "quantity"] == 0.0
+    assert p_frac.loc["NVDA", "cost"] == 0.0
+    assert np.isnan(p_frac.loc["NVDA", "avg_cost"])
+
+
 def test_add_trades_refuses_an_oversell():
     plist = PF.PList("p", PF.PORTFOLIO)
     buy = parse("ticker,date,price,quantity\nAAPL,2025-01-02,10,5\n").rows
@@ -150,3 +262,11 @@ def test_add_trades_refuses_an_oversell():
     assert PF.add_trades(plist, sell) == ["AAPL"] and len(plist.rows) == 1      # nothing added
     sell = parse("ticker,date,price,quantity,side\nAAPL,2025-02-02,12,5,sell\n").rows
     assert PF.add_trades(plist, sell) == [] and len(plist.rows) == 2
+
+
+def test_unknown_headers_are_not_read_as_tickers():
+    raw = PF.read_table("Stock,Qty\nAAPL,10\n".encode(), "x.csv")
+    imp = PF.parse(raw)
+    assert [p.code for p in imp.problems] == ["no_ticker_column"]
+    bare = PF.read_table(b"NASDAQ:AAPL,NYSE:BRK.B\n", "tv.txt")       # our TradingView export
+    assert list(PF.parse(bare).rows["ticker"]) == ["AAPL", "BRK.B"]
