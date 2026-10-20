@@ -59,7 +59,7 @@ CSS = f"""
              text-align: start;}}
   .hs-count small {{font-size: 0.95rem; font-weight: 400; color: var(--hs-muted); margin-inline-start: 0.35rem;}}
 
-  .hs-note {{font-size: 0.85rem; color: var(--hs-muted);}}
+  .hs-note {{font-size: 0.95rem; color: var(--hs-muted);}}
   [data-testid="stDataFrame"] {{border: 1px solid var(--hs-rule); border-radius: 0.4rem; background: var(--hs-card);}}
   hr {{border-color: var(--hs-hairline) !important;}}
 </style>
@@ -67,12 +67,8 @@ CSS = f"""
 
 LARGE_TEXT_CSS = f"""
 <style>
-  :root {{
-    font-size: 115%;
-  }}
-  /* increase specific elements that might have fixed sizes */
-  [data-testid="stDataFrame"], [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {{
-    font-size: 110%;
+  .block-container {{
+    zoom: 1.15;
   }}
 </style>
 """
