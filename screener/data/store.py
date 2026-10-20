@@ -18,6 +18,8 @@ import datetime as dt
 import json
 import logging
 import os
+import threading
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
@@ -118,32 +120,67 @@ def market_date(ts: dt.datetime) -> dt.date:
 
 
 def _atomic_parquet(df: pd.DataFrame, path: Path) -> None:
-    tmp = path.with_suffix(".tmp")
+    tmp = path.parent / f"{path.name}.{uuid.uuid4().hex}.tmp"
     df = df.copy()
     df.attrs = {}        # metadata lives in the JSON next to the file
-    df.to_parquet(tmp, index=False)
-    os.replace(tmp, path)
+    try:
+        df.to_parquet(tmp, index=False)
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def _atomic_write_text(text: str, path: Path) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    tmp = path.parent / f"{path.name}.{uuid.uuid4().hex}.tmp"
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
-def load_universe(store: Store, fetch: Callable[[], pd.DataFrame], max_age: dt.timedelta,
+FETCH_LOCK = threading.Lock()
+
+
+def load_universe(store: Store, fetch: Callable[..., pd.DataFrame], max_age: dt.timedelta,
                   force: bool = False, required: Iterable[str] = ()) -> Snapshot:
     cached = store.load_latest()
     now = dt.datetime.now()
     complete = cached is not None and set(required) <= set(cached[0].columns)
     if cached is not None and complete and not force and now - cached[1] < max_age:
         return Snapshot(cached[0], cached[1], "cache", meta=cached[2])
-    try:
-        df = fetch()
-    except Exception as e:
-        log.exception("fetch failed")
-        if cached is None:
-            raise
-        return Snapshot(cached[0], cached[1], "stale", str(e), meta=cached[2])
-    store.save(df, now)
-    return Snapshot(df, now, "live", meta=df.attrs.get("source") or {})
+
+    with FETCH_LOCK:
+        cached = store.load_latest()
+        now = dt.datetime.now()
+        complete = cached is not None and set(required) <= set(cached[0].columns)
+        if cached is not None and complete and not force and now - cached[1] < max_age:
+            return Snapshot(cached[0], cached[1], "cache", meta=cached[2])
+
+        cached_rows = len(cached[0]) if cached is not None else 0
+        try:
+            try:
+                df = fetch(cached_rows=cached_rows)
+            except TypeError:
+                df = fetch()
+            if len(df) == 0:
+                from screener.data.tradingview import TradingViewError
+                raise TradingViewError("empty universe returned")
+            if cached_rows > 0 and len(df) < 0.5 * cached_rows:
+                from screener.data.tradingview import TradingViewError
+                raise TradingViewError(f"universe size ({len(df)}) dropped below 50% of cached ({cached_rows})")
+        except Exception as e:
+            log.exception("fetch failed")
+            if cached is None:
+                raise
+            return Snapshot(cached[0], cached[1], "stale", str(e), meta=cached[2])
+        store.save(df, now)
+        return Snapshot(df, now, "live", meta=df.attrs.get("source") or {})

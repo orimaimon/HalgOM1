@@ -120,6 +120,11 @@ def _market():
 def get_data(force: bool = False):
     now = dt.datetime.now()
     snap = ss.get("snap")
+    if force and snap is not None and snap.age < dt.timedelta(seconds=60):
+        secs = max(0, int(snap.age.total_seconds()))
+        st.toast(f"הנתונים עודכנו לפני {secs} שניות", icon="ℹ️")
+        return ss.snap, ss.df
+
     due = (force or snap is None
            or (snap.source == "stale" and now - ss.get("last_attempt", now) > RETRY_AFTER)
            or (snap.source != "stale" and snap.age > MAX_AGE))

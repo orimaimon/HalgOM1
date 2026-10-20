@@ -19,6 +19,7 @@ from tests.test_screener import ROOT, make_raw
 def app(tmp_path, monkeypatch):
     import screener.data.store as store_mod
     import screener.data.tradingview as tv
+    monkeypatch.setattr(tv, "MIN_UNIVERSE_ROWS", 100)
     raw = clean(make_raw(300).assign(is_primary=True, currency="USD"))
     raw.attrs["source"] = {"provider": "tradingview", "update_mode": "delayed", "delay_min": 15}
     market = pd.DataFrame({"close": [500.0, 400, 80, 15], "change": 0.5, "sma20": [490.0, 390, 79, 16],
