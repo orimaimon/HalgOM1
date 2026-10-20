@@ -88,7 +88,7 @@ class Store:
                            "source": df.attrs.get("source") or {}})
         _atomic_parquet(df, self.latest_path)
         _atomic_write_text(meta, self.meta_path)
-        day = market_date(fetched_at).isoformat()
+        day = session_date(fetched_at).isoformat()
         _atomic_parquet(df, self.snap_dir / f"{day}.parquet")
         _atomic_write_text(meta, self.snap_dir / f"{day}.json")
 
@@ -133,6 +133,38 @@ def market_date(ts: dt.datetime) -> dt.date:
         return ts.astimezone(ZoneInfo(MARKET_TZ)).date()
     except Exception:            # no time-zone database: the local date
         return ts.date()
+
+
+def session_date(ts: dt.datetime | dt.date) -> dt.date:
+    """Trading session date of a fetch timestamp or date.
+    On a weekday from the 09:30 NY open onwards, the session is that NY date.
+    Before 09:30 NY open, or on a weekend, the session is the previous weekday.
+    US market holidays are ignored."""
+    if isinstance(ts, dt.date) and not isinstance(ts, dt.datetime):
+        ts = dt.datetime(ts.year, ts.month, ts.day, 12, 0, tzinfo=ZoneInfo(MARKET_TZ))
+    try:
+        if ts.tzinfo is None:
+            ts = ts.astimezone().astimezone(ZoneInfo(MARKET_TZ))
+        else:
+            ts = ts.astimezone(ZoneInfo(MARKET_TZ))
+    except Exception:
+        pass
+
+    d = ts.date()
+    open_time = dt.time(9, 30)
+
+    # weekday: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
+    if ts.weekday() in (5, 6):
+        days_back = 1 if ts.weekday() == 5 else 2
+        return d - dt.timedelta(days=days_back)
+    else:
+        if ts.time() >= open_time:
+            return d
+        else:
+            if ts.weekday() == 0:
+                return d - dt.timedelta(days=3)
+            else:
+                return d - dt.timedelta(days=1)
 
 
 def _atomic_parquet(df: pd.DataFrame, path: Path) -> None:

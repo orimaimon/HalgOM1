@@ -32,7 +32,7 @@ from screener import portfolio as PF  # noqa: E402
 from screener import presets as P  # noqa: E402
 from screener import theme  # noqa: E402
 from screener.data import FETCH_LOCK, Store, load_universe  # noqa: E402
-from screener.data.store import DATA_DIR  # noqa: E402
+from screener.data.store import DATA_DIR, session_date  # noqa: E402
 from screener.data.tradingview import fetch_market, fetch_universe  # noqa: E402
 from screener.derive import add_derived  # noqa: E402
 from screener.fields import COLUMNS, DEFAULT_SORT, GROUP_COLUMNS, VIEWS, provider_columns  # noqa: E402
@@ -155,7 +155,7 @@ def get_data(force: bool = False):
 
 def get_previous(snap) -> history.Previous | None:
     """Previous day's snapshot (derived), loaded once per snapshot day."""
-    day = snap.fetched_at.date()
+    day = session_date(snap.fetched_at)
     if ss.get("prev_for") != day:
         ss.prev = history.load_previous(_store(), day)
         ss.prev_for = day
@@ -235,6 +235,14 @@ def display_values(df: pd.DataFrame) -> pd.DataFrame:
     if "signals" in out.columns:
         out["signals"] = out["signals"].map(lambda v: I.signal_tags(v, L()) if isinstance(v, str) else v)
     return out
+
+
+HEBREW_WEEKDAYS = {0: "ב'", 1: "ג'", 2: "ד'", 3: "ה'", 4: "ו'", 5: "ש'", 6: "א'"}   # date.weekday(): Monday = 0
+
+
+def hebrew_day_str(d: dt.date) -> str:
+    """'יום ו' 16/10' — the compared trading day, for the NEW note."""
+    return f"יום {HEBREW_WEEKDAYS[d.weekday()]} {d:%d/%m}"
 
 
 def keep_widget_state() -> None:
@@ -571,16 +579,18 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
         notes.append(f"{len(df) - len(universe):,} מניות זבל מוסתרות ({t('Hide junk')})")
     if prev is not None:
         n_new = int((res["new"] == history.NEW).sum())
+        day_str = hebrew_day_str(prev.day)
         top[2].toggle(f"{t('Only new')} ({n_new:,})", key="only_new",
-                      help=f"רק מניות שנכנסו לתוצאות מאז ה-snapshot של {prev.day:%d/%m/%Y}")
+                      help=f"רק מניות שנכנסו לתוצאות מאז ה-snapshot של {day_str}")
         view_cols = [view_cols[0], "new", *view_cols[1:]]
-        notes.append(f"NEW = המניה לא הייתה בתוצאות האלה ב-{prev.day:%d/%m/%Y}")
+        notes.append(f"חדש = לא היה בתוצאות ב{day_str}")
         if ss.get("only_new"):
             res = res[res["new"] == history.NEW]
     if notes:
         hebrew_note(" · ".join(notes))
     if prev is not None and prev.missing:
-        hebrew_note(f"ההשוואה ל-{prev.day:%d/%m/%Y} חלקית: ה-snapshot נשמר בגרסה קודמת בלי {len(prev.missing)} "
+        day_str = hebrew_day_str(prev.day)
+        hebrew_note(f"ההשוואה ל-{day_str} חלקית: ה-snapshot נשמר בגרסה קודמת בלי {len(prev.missing)} "
                     "שדות חדשים, ולכן פילטרים על השדות האלה מסמנים יותר מניות כ-NEW. יסתדר מעצמו ממחר.")
 
     if res.empty:
