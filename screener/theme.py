@@ -65,11 +65,15 @@ CSS = f"""
 </style>
 """
 
+# "Large text": zoom the whole page, so the layout and the results grid (a canvas) grow together.
 LARGE_TEXT_CSS = f"""
 <style>
-  .block-container {{
-    zoom: 1.15;
-  }}
+  html {{zoom: 1.15;}}
+  /* the results grid (a canvas) sized itself from the unzoomed width and overflowed, hiding the ticker */
+  [data-testid="stDataFrame"], [data-testid="stDataFrameResizable"] {{max-width: 100% !important;}}
+  /* header quotes fit their columns at 1366px */
+  [data-testid="stMetricValue"] {{font-size: 1.2rem;}}
+  [data-testid="stMetricDelta"] {{font-size: 0.75rem;}}
 </style>
 """
 
