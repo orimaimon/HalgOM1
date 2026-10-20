@@ -29,6 +29,7 @@ HTTPS_URL = "https://github.com/orimaimon/HalgOM1.git"
 SSH_HOST, SSH_USER, SSH_PATH = "github.com", "git", "orimaimon/HalgOM1.git"
 KEY_NAME = "deploy_key"
 TIMEOUT = 30
+FETCH_DEADLINE = 45
 UPDATED, NOTHING = 3, 0
 
 # GitHub's published SSH host keys (fingerprints checked against docs.github.com, 2026-10-19).
@@ -55,7 +56,9 @@ def install_key(root: Path, dest: Path) -> None:
     """Move a deploy key dropped next to run_screener.bat into the user's profile."""
     src = root / KEY_NAME
     if not src.is_file():
-        return
+        src = root / f"{KEY_NAME}.txt"
+        if not src.is_file():
+            return
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dest))
     if os.name != "nt":
@@ -111,7 +114,9 @@ def ssh_vendor(key_file: Path):
                         ssh_command=None, protocol_version=None):
             client = paramiko.SSHClient()
             for kind, b64 in GITHUB_HOST_KEYS.items():
-                client.get_host_keys().add(SSH_HOST, kind, paramiko.PKey.from_type_string(kind, _b64(b64)))
+                key_obj = paramiko.PKey.from_type_string(kind, _b64(b64))
+                client.get_host_keys().add(host, kind, key_obj)
+                client.get_host_keys().add(SSH_HOST, kind, key_obj)
             client.set_missing_host_key_policy(paramiko.RejectPolicy())
             client.connect(host, port=port or 22, username=username, key_filename=str(key_file),
                            look_for_keys=False, allow_agent=False, timeout=TIMEOUT, banner_timeout=TIMEOUT,
@@ -138,12 +143,51 @@ def remote(url: str | None, key_file: Path | None):
         return get_transport_and_path(url)
     if key_file is not None and key_file.is_file():
         return SSHGitClient(SSH_HOST, username=SSH_USER, vendor=ssh_vendor(key_file)), SSH_PATH
-    return get_transport_and_path(HTTPS_URL, pool_manager=default_urllib3_manager(None, timeout=TIMEOUT))
+    mgr = default_urllib3_manager(None, timeout=TIMEOUT)
+    mgr.connection_pool_kw["retries"] = False
+    return get_transport_and_path(HTTPS_URL, pool_manager=mgr)
 
 
 def fetch_main(repo, url: str | None, key_file: Path | None) -> bytes:
-    client, path = remote(url, key_file)
+    import concurrent.futures
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(_fetch_main_worker, repo, url, key_file)
+    try:
+        return future.result(timeout=FETCH_DEADLINE)
+    except concurrent.futures.TimeoutError:
+        log.warning("fetch timed out after %s seconds", FETCH_DEADLINE)
+        raise TimeoutError(f"fetch timed out after {FETCH_DEADLINE}s")
+    finally:
+        executor.shutdown(wait=False)
 
+
+def _fetch_main_worker(repo, url: str | None, key_file: Path | None) -> bytes:
+    from dulwich.client import default_urllib3_manager, get_transport_and_path
+    if url:
+        client, path = get_transport_and_path(url)
+        return _fetch_with_client(client, path, repo, "custom URL")
+
+    if key_file is not None and key_file.is_file():
+        from dulwich.client import SSHGitClient
+        try:
+            client = SSHGitClient("github.com", username=SSH_USER, port=22, vendor=ssh_vendor(key_file))
+            return _fetch_with_client(client, SSH_PATH, repo, "SSH github.com:22")
+        except Exception as e:
+            log.warning("SSH github.com:22 failed (%s), trying ssh.github.com:443", e)
+
+        try:
+            client = SSHGitClient("ssh.github.com", username=SSH_USER, port=443, vendor=ssh_vendor(key_file))
+            return _fetch_with_client(client, SSH_PATH, repo, "SSH ssh.github.com:443")
+        except Exception as e:
+            log.warning("SSH ssh.github.com:443 failed (%s), falling back to anonymous HTTPS", e)
+
+    mgr = default_urllib3_manager(None, timeout=TIMEOUT)
+    mgr.connection_pool_kw["retries"] = False
+    client, path = get_transport_and_path(HTTPS_URL, pool_manager=mgr)
+    return _fetch_with_client(client, path, repo, "anonymous HTTPS")
+
+
+def _fetch_with_client(client, path, repo, desc: str) -> bytes:
     def wants(refs, depth=None):
         sha = refs.get(MAIN)
         return [sha] if sha and sha not in repo.object_store else []
@@ -153,6 +197,7 @@ def fetch_main(repo, url: str | None, key_file: Path | None) -> bytes:
     if not sha:
         raise RuntimeError("remote has no main branch")
     repo.refs[ORIGIN_MAIN] = sha
+    log.info("fetched main from %s", desc)
     return sha
 
 
@@ -165,6 +210,62 @@ def _is_ancestor(repo, old: bytes, new: bytes) -> bool:
 def _tracked(repo, commit: bytes):
     from dulwich.object_store import iter_tree_contents
     return iter_tree_contents(repo.object_store, repo[commit].tree)
+
+
+def _staged_changes(repo) -> list[str]:
+    """Index entries that differ from HEAD (staged additions, modifications, or deletions)."""
+    try:
+        index = repo.open_index()
+    except Exception:
+        return []
+    head_entries = {entry.path: (entry.mode, entry.sha) for entry in _tracked(repo, repo.refs[MAIN])}
+    staged = []
+    index_paths = set(index)
+    head_paths = set(head_entries.keys())
+
+    for p in index_paths - head_paths:
+        staged.append(os.fsdecode(p))
+
+    for p in head_paths - index_paths:
+        staged.append(os.fsdecode(p))
+
+    for p in index_paths & head_paths:
+        idx_sha = index[p].sha
+        head_sha = head_entries[p][1]
+        if idx_sha != head_sha and idx_sha in repo.object_store:
+            idx_data = repo[idx_sha].data
+            head_data = repo[head_sha].data
+            if idx_data != head_data and idx_data.replace(b"\r\n", b"\n") != head_data.replace(b"\r\n", b"\n"):
+                staged.append(os.fsdecode(p))
+
+    return staged
+
+
+def _untracked_conflicts(repo, incoming_sha: bytes) -> list[str]:
+    """Untracked files on disk at paths added by incoming_sha with different content."""
+    root = Path(repo.path)
+    current_paths = {entry.path for entry in _tracked(repo, repo.refs[MAIN])}
+    conflicts = []
+    for entry in _tracked(repo, incoming_sha):
+        if entry.path not in current_paths:
+            p = root / os.fsdecode(entry.path)
+            if p.is_file():
+                data = p.read_bytes()
+                blob = repo[entry.sha].data
+                if data != blob and data.replace(b"\r\n", b"\n") != blob.replace(b"\r\n", b"\n"):
+                    conflicts.append(os.fsdecode(entry.path))
+    return conflicts
+
+
+def _missing_tracked(repo) -> list[str]:
+    """Tracked files in HEAD that do not exist on disk."""
+    root = Path(repo.path)
+    missing = []
+    for entry in _tracked(repo, repo.refs[MAIN]):
+        path = root / os.fsdecode(entry.path)
+        if not path.is_file():
+            missing.append(os.fsdecode(entry.path))
+    return missing
 
 
 def _local_changes(repo) -> list[str]:
@@ -185,24 +286,46 @@ def _local_changes(repo) -> list[str]:
     return changed
 
 
+from dulwich import porcelain
+
+
 def _checkout(repo, sha: bytes) -> None:
-    from dulwich import porcelain
     from dulwich.index import index_entry_from_stat
+    root = Path(repo.path)
+    marker = root / ".git" / "HALGOM_CHECKOUT"
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_bytes(sha)
+    except OSError:
+        pass
     repo.refs[MAIN] = sha
     repo.refs.set_symbolic_ref(b"HEAD", MAIN)
     porcelain.reset(repo, "hard", sha)
     # Index = the commit's blobs + the files' stat, as `git checkout` writes it, so git (Ori's
     # machine) and later updates see a clean checkout whatever dulwich hashed on Windows.
-    root, index = Path(repo.path), repo.open_index()
+    index = repo.open_index()
     for entry in _tracked(repo, sha):
         path = root / os.fsdecode(entry.path)
         if path.is_file():
             index[entry.path] = index_entry_from_stat(os.lstat(path), entry.sha, mode=entry.mode)
     index.write()
+    marker.unlink(missing_ok=True)
 
 
 def update(root: Path = ROOT, url: str | None = None, key_file: Path | None = None) -> int:
     from dulwich.repo import Repo
+
+    git_dir = root / ".git"
+    marker = git_dir / "HALGOM_CHECKOUT"
+    if marker.is_file():
+        target_sha = marker.read_bytes().strip()
+        log.info("resuming interrupted checkout to %s", target_sha.decode()[:7])
+        if git_dir.exists():
+            with Repo(str(root)) as repo:
+                if target_sha in repo.object_store:
+                    _checkout(repo, target_sha)
+                    print("        updated to the latest version")
+                    return UPDATED
 
     if not (root / ".git").exists():
         with Repo.init(str(root)) as repo:
@@ -212,7 +335,11 @@ def update(root: Path = ROOT, url: str | None = None, key_file: Path | None = No
             config.set((b"branch", b"main"), b"remote", b"origin")
             config.set((b"branch", b"main"), b"merge", MAIN)
             config.write_to_path()
-            sha = fetch_main(repo, url, key_file)
+            try:
+                sha = fetch_main(repo, url, key_file)
+            except TimeoutError:
+                print("        update skipped - connection timed out")
+                return NOTHING
             _checkout(repo, sha)
         print("        updated - this folder now updates itself")
         log.info("converted %s to a checkout of main at %s", root, sha.decode()[:7])
@@ -220,7 +347,15 @@ def update(root: Path = ROOT, url: str | None = None, key_file: Path | None = No
 
     with Repo(str(root)) as repo:
         if MAIN not in repo.refs:                    # an earlier conversion stopped half-way
-            sha = fetch_main(repo, url, key_file)
+            branch_refs = [r for r in repo.refs.keys() if r.startswith(b"refs/heads/")]
+            if branch_refs and not marker.is_file():
+                log.info("skipped: main branch missing and other branches exist")
+                return NOTHING
+            try:
+                sha = fetch_main(repo, url, key_file)
+            except TimeoutError:
+                print("        update skipped - connection timed out")
+                return NOTHING
             _checkout(repo, sha)
             log.info("finished converting %s at %s", root, sha.decode()[:7])
             return UPDATED
@@ -228,14 +363,35 @@ def update(root: Path = ROOT, url: str | None = None, key_file: Path | None = No
         if head != MAIN:
             log.info("skipped: HEAD is %s, not main", head or b"detached")
             return NOTHING
+        staged = _staged_changes(repo)
+        if staged:
+            log.info("skipped: staged changes in %s", ", ".join(staged[:5]))
+            print("        update skipped - files in this folder were changed")
+            return NOTHING
         changed = _local_changes(repo)
         if changed:
             log.info("skipped: local changes in %s", ", ".join(changed[:5]))
             print("        update skipped - files in this folder were changed")
             return NOTHING
+        missing = _missing_tracked(repo)
+        if missing:
+            log.info("restoring missing tracked files: %s", ", ".join(missing[:5]))
+            _checkout(repo, repo.refs[MAIN])
+            print("        restored missing files")
+            return UPDATED
         local = repo.refs[MAIN]
-        sha = fetch_main(repo, url, key_file)
+        try:
+            sha = fetch_main(repo, url, key_file)
+        except TimeoutError as e:
+            log.warning("update skipped due to timeout: %s", e)
+            print("        update skipped - connection timed out")
+            return NOTHING
         if sha == local:
+            return NOTHING
+        untracked = _untracked_conflicts(repo, sha)
+        if untracked:
+            log.info("skipped: untracked file collision in %s", ", ".join(untracked[:5]))
+            print("        update skipped - files in this folder were changed")
             return NOTHING
         if not _is_ancestor(repo, local, sha):
             log.info("skipped: local main %s is not behind origin/main %s", local.decode()[:7], sha.decode()[:7])
@@ -268,12 +424,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         key = key_path()
         install_key(root, key)
-        if "google drive" in str(root).lower() or "my drive" in str(root).lower():
-            print("        note: this folder is inside Google Drive - copy it to a local folder, e.g. C:\\HalgOM")
+        root_str = str(root).lower()
+        onedrive_env = os.environ.get("OneDrive") or os.environ.get("ONEDRIVE")
+        in_onedrive = "onedrive" in root_str or (onedrive_env is not None and (Path(onedrive_env) == root or Path(onedrive_env) in root.parents))
+        if "google drive" in root_str or "my drive" in root_str or in_onedrive:
+            print("        note: this folder is inside a cloud folder - copy it to a local folder, e.g. C:\\HalgOM")
         return update(root, args.url, key)
     except Exception as e:                            # never stop the screener from starting
         log.exception("update failed")
         print(f"        update skipped - {type(e).__name__}")
+        if (root / ".git" / "HALGOM_CHECKOUT").is_file():
+            return UPDATED
         return NOTHING
 
 

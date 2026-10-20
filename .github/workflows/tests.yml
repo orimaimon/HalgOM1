@@ -98,7 +98,7 @@ jobs:
           SCREENER_NO_BROWSER: "1"
         run: |
           Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue   # see the launcher-smoke job
-          $copy = Join-Path $env:RUNNER_TEMP "HalgOM zip (1)"
+          $copy = Join-Path $env:RUNNER_TEMP "HalgOM & Co (1)"
           Expand-Archive "$env:RUNNER_TEMP\src.zip" -DestinationPath $copy
           $log = Join-Path $env:RUNNER_TEMP "zip_run.log"
           $p = Start-Process -FilePath cmd.exe -ArgumentList '/c', "run_screener.bat < NUL > `"$log`" 2>&1" `

@@ -37,7 +37,7 @@ rem --- 3. Python environment (first run takes 1-2 minutes) ---
 set "PY=screener\.venv\Scripts\python.exe"
 rem A venv copied from another PC (Drive, ZIP) points at a Python that is not here: rebuild it
 if exist "%PY%" (
-    "%PY%" -c "import sys" >nul 2>nul
+    "%PY%" -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>nul
     if errorlevel 1 rmdir /s /q "screener\.venv"
 )
 if not exist "%PY%" (
@@ -46,10 +46,16 @@ if not exist "%PY%" (
 )
 if not exist "%PY%" goto :fail
 if defined UV (uv pip install --python screener\.venv -r screener\requirements.lock --quiet) else ("%PY%" -m pip install --quiet --disable-pip-version-check -r screener\requirements.lock)
-if errorlevel 1 goto :fail
+if errorlevel 1 (
+    "%PY%" -c "import dulwich" >nul 2>nul
+    if not errorlevel 1 (
+        if not defined SCREENER_NO_UPDATE if not defined SCREENER_UPDATED "%PY%" -m screener.update & if errorlevel 3 set "SCREENER_UPDATED=1" & cmd /c call "%~f0" & exit /b
+    )
+    goto :fail
+)
 
 rem --- 4. updates - ONE line, no parentheses (a folder name may contain them); see NOTE ---
-if not defined SCREENER_NO_UPDATE if not defined SCREENER_UPDATED echo [3/3] Checking for updates... & "%PY%" -m screener.update & if errorlevel 3 set "SCREENER_UPDATED=1" & cmd /c ""%~f0"" & exit /b
+if not defined SCREENER_NO_UPDATE if not defined SCREENER_UPDATED echo [3/3] Checking for updates... & "%PY%" -m screener.update & if errorlevel 3 set "SCREENER_UPDATED=1" & cmd /c call "%~f0" & exit /b
 
 rem Skip Streamlit's one-time "enter your email" prompt
 if not exist "%USERPROFILE%\.streamlit\credentials.toml" (
@@ -79,7 +85,15 @@ goto :eof
 
 :running
 rem errorlevel 0 when a screener already answers on port 8501 - then just open the browser
-powershell -NoProfile -Command "try { if ((Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 http://localhost:8501/_stcore/health).Content -eq 'ok') { exit 0 } } catch {}; exit 1" >nul 2>nul
+powershell -NoProfile -Command "try { if ((Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 http://localhost:8501/_stcore/health).Content -eq 'ok') { exit 0 } } catch {}; if (Get-NetTCPConnection -LocalPort 8501 -State Listen -ErrorAction SilentlyContinue) { exit 2 }; exit 1" >nul 2>nul
+if errorlevel 2 (
+    echo.
+    echo  Port 8501 is already in use by another program.
+    powershell -NoProfile -Command "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Write-Host ([Text.Encoding]::UTF8.GetString([byte[]](0xD7,0x99,0xD7,0xA6,0xD7,0x99,0xD7,0x90,0xD7,0x94,0x20,0x38,0x35,0x30,0x31,0x20,0xD7,0xAA,0xD7,0xA4,0xD7,0x95,0xD7,0xA1,0xD7,0x94,0x20,0xD7,0xA2,0xD7,0x9C,0x20,0xD7,0x99,0xD7,0x93,0xD7,0x99,0x20,0xD7,0xAA,0xD7,0x95,0xD7,0x9B,0xD7,0xA0,0xD7,0x94,0x20,0xD7,0x90,0xD7,0x97,0xD7,0xA8,0xD7,0xAA,0x2E)))"
+    echo.
+    pause
+    exit 1
+)
 exit /b %errorlevel%
 
 :open

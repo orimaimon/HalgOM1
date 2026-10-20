@@ -811,20 +811,20 @@ def test_launcher_git_pull_is_switched_off_and_restored():
 
 
 def test_launcher_update_step_is_one_line_that_restarts():
-    lines = [ln for ln in BAT.decode("ascii").split("\r\n") if "screener.update" in ln and not ln.startswith("rem")]
+    lines = [ln for ln in BAT.decode("ascii").split("\r\n") if "echo [3/3]" in ln and not ln.startswith("rem")]
     assert len(lines) == 1                         # update.py may rewrite this file: cmd has read the line
     line = lines[0]
     assert line.startswith("if not defined SCREENER_NO_UPDATE if not defined SCREENER_UPDATED ")
     assert "(" not in line and ")" not in line     # %~f0 may contain ")" (a folder "HalgOM (1)")
-    assert line.endswith('& if errorlevel 3 set "SCREENER_UPDATED=1" & cmd /c ""%~f0"" & exit /b')
+    assert line.endswith('& if errorlevel 3 set "SCREENER_UPDATED=1" & cmd /c call "%~f0" & exit /b')
     from screener import update
     assert update.UPDATED == 3
 
 
 def test_launcher_rebuilds_a_copied_venv():
     text = BAT.decode("ascii")
-    assert '"%PY%" -c "import sys"' in text and 'rmdir /s /q "screener\\.venv"' in text
-    assert text.index('"%PY%" -c "import sys"') < text.index("uv venv --python 3.12")
+    assert 'sys.version_info >= (3, 11)' in text and 'rmdir /s /q "screener\\.venv"' in text
+    assert text.index('sys.version_info >= (3, 11)') < text.index("uv venv --python 3.12")
 
 
 def test_launcher_labels_and_port():
