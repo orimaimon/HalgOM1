@@ -32,7 +32,7 @@ from screener import portfolio as PF  # noqa: E402
 from screener import presets as P  # noqa: E402
 from screener import theme  # noqa: E402
 from screener.data import FETCH_LOCK, Store, load_universe  # noqa: E402
-from screener.data.store import DATA_DIR, market_date  # noqa: E402
+from screener.data.store import DATA_DIR, market_date, session_date  # noqa: E402
 from screener.data.tradingview import fetch_market, fetch_universe  # noqa: E402
 from screener.derive import add_derived  # noqa: E402
 from screener.fields import COLUMNS, DEFAULT_SORT, GROUP_COLUMNS, VIEWS, provider_columns  # noqa: E402
@@ -155,7 +155,7 @@ def get_data(force: bool = False):
 
 def get_previous(snap) -> history.Previous | None:
     """Previous day's snapshot (derived), loaded once per snapshot day."""
-    day = snap.fetched_at.date()
+    day = session_date(snap.fetched_at)
     if ss.get("prev_for") != day:
         ss.prev = history.load_previous(_store(), day)
         ss.prev_for = day
@@ -235,6 +235,14 @@ def display_values(df: pd.DataFrame) -> pd.DataFrame:
     if "signals" in out.columns:
         out["signals"] = out["signals"].map(lambda v: I.signal_tags(v, L()) if isinstance(v, str) else v)
     return out
+
+
+HEBREW_WEEKDAYS = {0: "ב'", 1: "ג'", 2: "ד'", 3: "ה'", 4: "ו'", 5: "ש'", 6: "א'"}   # date.weekday(): Monday = 0
+
+
+def hebrew_day_str(d: dt.date) -> str:
+    """'יום ו' 16/10' — the compared trading day, for the NEW note."""
+    return f"יום {HEBREW_WEEKDAYS[d.weekday()]} {d:%d/%m}"
 
 
 def keep_widget_state() -> None:
@@ -571,16 +579,18 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
         notes.append(f"{len(df) - len(universe):,} מניות זבל מוסתרות ({t('Hide junk')})")
     if prev is not None:
         n_new = int((res["new"] == history.NEW).sum())
+        day_str = hebrew_day_str(prev.day)
         top[2].toggle(f"{t('Only new')} ({n_new:,})", key="only_new",
-                      help=f"רק מניות שנכנסו לתוצאות מאז ה-snapshot של {prev.day:%d/%m/%Y}")
+                      help=f"רק מניות שנכנסו לתוצאות מאז ה-snapshot של {day_str}")
         view_cols = [view_cols[0], "new", *view_cols[1:]]
-        notes.append(f"NEW = המניה לא הייתה בתוצאות האלה ב-{prev.day:%d/%m/%Y}")
+        notes.append(f"חדש = לא היה בתוצאות ב{day_str}")
         if ss.get("only_new"):
             res = res[res["new"] == history.NEW]
     if notes:
         hebrew_note(" · ".join(notes))
     if prev is not None and prev.missing:
-        hebrew_note(f"ההשוואה ל-{prev.day:%d/%m/%Y} חלקית: ה-snapshot נשמר בגרסה קודמת בלי {len(prev.missing)} "
+        day_str = hebrew_day_str(prev.day)
+        hebrew_note(f"ההשוואה ל-{day_str} חלקית: ה-snapshot נשמר בגרסה קודמת בלי {len(prev.missing)} "
                     "שדות חדשים, ולכן פילטרים על השדות האלה מסמנים יותר מניות כ-NEW. יסתדר מעצמו ממחר.")
 
     if res.empty:
@@ -905,11 +915,16 @@ def _add_and_report(plist: PF.PList, text: str) -> None:
 
 def on_pf_add_tickers():
     try:
-        plist = PF.load_all().get(ss.get("pf_name"))
+        lists = PF.load_all()
     except Exception as e:
         log.warning("cannot load list: %s", e)
         st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
         return
+    name = ss.get("pf_name")
+    if not name or name not in lists:
+        st.toast("הרשימה נמחקה בחלון אחר", icon="⚠️")
+        return
+    plist = lists[name]
     if plist is not None:
         _add_and_report(plist, ss.get("pf_add") or "")
     ss.pf_add = ""
@@ -938,11 +953,16 @@ def on_add_to_watchlist(ticker: str):
 
 def on_pf_remove():
     try:
-        plist = PF.load_all().get(ss.get("pf_name"))
+        lists = PF.load_all()
     except Exception as e:
         log.warning("cannot load list: %s", e)
         st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
         return
+    name = ss.get("pf_name")
+    if not name or name not in lists:
+        st.toast("הרשימה נמחקה בחלון אחר", icon="⚠️")
+        return
+    plist = lists[name]
     if plist is not None:
         plist.rows = [r for r in plist.rows if r["ticker"] != ss.get("pf_remove")]
         try:
@@ -955,11 +975,16 @@ def on_pf_remove():
 
 def on_pf_trade():
     try:
-        plist = PF.load_all().get(ss.get("pf_name"))
+        lists = PF.load_all()
     except Exception as e:
         log.warning("cannot load list: %s", e)
         st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
         return
+    name = ss.get("pf_name")
+    if not name or name not in lists:
+        st.toast("הרשימה נמחקה בחלון אחר", icon="⚠️")
+        return
+    plist = lists[name]
     if plist is None:
         return
     raw = pd.DataFrame([{"ticker": ss.get("pf_t_ticker") or "", "date": ss.get("pf_t_date"),
@@ -1028,10 +1053,24 @@ def import_panel(lists: dict[str, PF.PList], df: pd.DataFrame) -> None:
             elif imp is not None:
                 ss.pf_pending = imp
                 n_tk = imp.rows["ticker"].nunique()
-                what = (f"{t('Portfolio')}: {len(imp.rows)} {t('Trades')} ב-{n_tk} מניות"
-                        if imp.kind == PF.PORTFOLIO else f"{t('Watchlist')}: {n_tk} מניות")
+                kind_str = t("Portfolio") if imp.kind == PF.PORTFOLIO else t("Watchlist")
+                details = [f"סוג: **{kind_str}**"]
+                if imp.kind == PF.PORTFOLIO:
+                    details.append(f"פורמט תאריך: **{imp.date_format}**")
+                    dates = imp.rows["date"].dropna()
+                    if not dates.empty:
+                        d_min, d_max = dates.min(), dates.max()
+                        details.append(f"טווח תאריכים: **{d_min:%d/%m/%Y} עד {d_max:%d/%m/%Y}**")
+                    details.append(f"עסקאות: **{len(imp.rows)}** ב-**{n_tk}** מניות")
+                else:
+                    details.append(f"מניות: **{n_tk}**")
+
+                st.success(" · ".join(details))
+                st.caption("תצוגה מקדימה (5 שורות ראשונות):")
+                preview_cols = [c for c in PF.COLUMNS if c in imp.rows.columns and not imp.rows[c].isna().all()]
+                st.dataframe(imp.rows[preview_cols].head(5), hide_index=True)
+
                 unknown = sorted(set(imp.rows["ticker"]) - set(df["ticker"]))
-                st.success(what)
                 if unknown:
                     hebrew_note(f"אין בסקרינר מחיר ל: {', '.join(unknown)} (למשל קרנות סל). "
                                 "הן יישמרו, אבל בלי שווי נוכחי.")

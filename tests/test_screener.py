@@ -520,7 +520,8 @@ def test_new_since_yesterday(tmp_path):
     yesterday = yesterday[yesterday["ticker"] != "T039"]     # T039 is a new listing
     yesterday.to_parquet(store.snap_dir / "2026-10-16.parquet")
 
-    prev = history.load_previous(store, TODAY)
+    mon = dt.date(2026, 10, 19)
+    prev = history.load_previous(store, mon)
     assert prev.day == dt.date(2026, 10, 16) and prev.missing == []
     today = add_derived(raw, today=TODAY)
     sel = {"price": "Over $5"}
@@ -535,7 +536,8 @@ def test_new_since_yesterday_flags_old_snapshot(tmp_path):
     store = Store(tmp_path)
     store.snap_dir.mkdir(parents=True)
     make_raw(5).drop(columns=list(CANDLES)).to_parquet(store.snap_dir / "2026-10-16.parquet")
-    prev = history.load_previous(store, TODAY)
+    mon = dt.date(2026, 10, 19)
+    prev = history.load_previous(store, mon)
     assert set(prev.missing) == set(CANDLES)
 
 
@@ -645,7 +647,8 @@ def test_app_smoke(tmp_path, monkeypatch):
     monkeypatch.setattr(lifecycle, "stop_server", lambda reason: stops.append(reason))
     snaps = tmp_path / "snapshots"
     snaps.mkdir()
-    raw.head(250).to_parquet(snaps / f"{dt.date.today() - dt.timedelta(days=1)}.parquet")
+    prev_session = store_mod.session_date(dt.datetime.now() - dt.timedelta(days=4))
+    raw.head(250).to_parquet(snaps / f"{prev_session}.parquet")
     st.cache_data.clear()
     st.cache_resource.clear()
 
