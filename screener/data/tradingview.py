@@ -90,6 +90,16 @@ def validate_universe(df: pd.DataFrame, raw: pd.DataFrame) -> None:
     if len(df) < MIN_UNIVERSE_ROWS:
         raise TradingViewError(f"universe size ({len(df)}) below minimum floor ({MIN_UNIVERSE_ROWS})")
 
+    # A renamed field comes back as null: say which columns are empty or thin (logged only, never blocks).
+    from screener.fields import provider_columns
+    fill = df.notna().mean()
+    for col in provider_columns():
+        if col not in df.columns or fill[col] == 0:
+            log.warning("provider column %s is completely empty", col)
+    thin = fill[(fill > 0) & (fill < 0.5)].sort_values()
+    if len(thin):
+        log.info("columns under 50%% filled: %s", ", ".join(f"{c} {v:.0%}" for c, v in thin.items()))
+
 
 def fetch_universe(timeout: float = 60) -> pd.DataFrame:
     """Fetch the full US stock universe as a DataFrame keyed by canonical column names."""

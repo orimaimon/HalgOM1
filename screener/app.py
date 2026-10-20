@@ -31,7 +31,7 @@ from screener import lifecycle  # noqa: E402
 from screener import portfolio as PF  # noqa: E402
 from screener import presets as P  # noqa: E402
 from screener import theme  # noqa: E402
-from screener.data import Store, load_universe  # noqa: E402
+from screener.data import FETCH_LOCK, Store, load_universe  # noqa: E402
 from screener.data.store import DATA_DIR  # noqa: E402
 from screener.data.tradingview import fetch_market, fetch_universe  # noqa: E402
 from screener.derive import add_derived  # noqa: E402
@@ -43,6 +43,7 @@ from screener.market import compute_regime, trend_strength  # noqa: E402
 VERSION = "0.2.0"
 MAX_AGE = dt.timedelta(minutes=15)       # TradingView data is ~15 min delayed anyway
 RETRY_AFTER = dt.timedelta(minutes=2)    # when offline, don't hammer the network on every click
+RETRY_TIMEOUT = 20                         # seconds, for those retries (a normal fetch takes ~15 s)
 REFRESH_MIN = dt.timedelta(seconds=60)   # "Refresh data" clicked again sooner: no new request
 CUSTOM = "— Custom —"
 USER_PREFIX = "★ "
@@ -109,13 +110,21 @@ def _store() -> Store:
 
 
 @st.cache_data(ttl=MAX_AGE, show_spinner=False)
+def _fetch_market():
+    with FETCH_LOCK:
+        return fetch_market()
+
+
 def _market():
     try:
-        m = fetch_market()
+        m = _fetch_market()
         return m, compute_regime(m)
     except Exception:
         log.exception("market fetch failed")
         return None, None
+
+
+_market.clear = _fetch_market.clear
 
 
 def get_data(force: bool = False):
@@ -123,12 +132,14 @@ def get_data(force: bool = False):
     snap = ss.get("snap")
     due = (force or snap is None
            or (snap.source == "stale" and now - ss.get("last_attempt", now) > RETRY_AFTER)
-           or (snap.source != "stale" and snap.age > MAX_AGE))
+           or (snap.source != "stale" and not dt.timedelta(0) <= snap.age <= MAX_AGE))   # < 0: clock went back
     if due:
         ss.last_attempt = now
         with st.spinner(t("Loading market data from TradingView… (≈15 sec)")):
             try:
-                snap = load_universe(_store(), fetch_universe, MAX_AGE, force=force, required=REQUIRED)
+                retry = snap is not None and snap.source == "stale"     # offline: don't block a click for 60 s
+                snap = load_universe(_store(), fetch_universe, MAX_AGE, force=force, required=REQUIRED,
+                                     timeout=RETRY_TIMEOUT if retry else None)
             except Exception as e:
                 log.exception("no data available")
                 st.error("לא ניתן להוריד נתונים, ואין נתונים שמורים מהפעם הקודמת. "

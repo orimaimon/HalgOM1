@@ -7,7 +7,7 @@ import tomllib
 import pytest
 
 import screener.data.tradingview as tv
-from screener.data.store import Store, load_universe
+from screener.data.store import Snapshot, Store, load_universe
 from screener.data.tradingview import TradingViewError, clean, validate_universe
 from tests.test_frontend import app  # noqa: F401  (fixture)
 from tests.test_screener import ROOT, make_raw
@@ -121,6 +121,132 @@ def test_unique_temp_file_names(tmp_path):
     # Confirm no stray .tmp files remain in cache or snapshots dir
     assert list(store.cache_dir.glob("*.tmp")) == []
     assert list(store.snap_dir.glob("*.tmp")) == []
+
+
+def test_market_fetch_failure_not_cached(monkeypatch):
+    from screener import app as app_module
+    from screener.data.tradingview import TradingViewError
+
+    calls = 0
+
+    def mock_fetch_market():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise TradingViewError("network down")
+        # Return valid market DataFrame
+        import pandas as pd
+        return pd.DataFrame({"close": [100.0], "change": [1.0], "sma20": [95.0], "sma50": [90.0],
+                            "sma200": [85.0], "adx": [25.0], "di_plus": [20.0], "di_minus": [15.0]},
+                           index=["SPY"])
+
+    monkeypatch.setattr(app_module, "fetch_market", mock_fetch_market)
+
+    # Clear market cache before testing
+    app_module._market.clear()
+
+    # First attempt fails -> returns (None, None)
+    m1, r1 = app_module._market()
+    assert m1 is None and r1 is None
+    assert calls == 1
+
+    # Second attempt succeeds -> must retry fetch instead of serving cached (None, None)
+    m2, r2 = app_module._market()
+    assert m2 is not None
+    assert calls == 2
+
+
+def test_unreadable_latest_falls_back_to_snapshot(tmp_path):
+    store = Store(tmp_path)
+    good = make_raw(100)
+    save_time = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+    store.save(good, save_time)
+
+    # Corrupt latest.parquet
+    store.latest_path.write_bytes(b"corrupted parquet file")
+
+    def failing_fetch():
+        raise TradingViewError("network error")
+
+    # Offline load_universe should fall back to snapshot and return flagged stale
+    snap = load_universe(store, failing_fetch, dt.timedelta(minutes=15))
+    assert snap.source == "stale"
+    assert len(snap.df) == 100
+    assert "network error" in snap.error
+
+
+def test_timeout_is_passed_only_when_asked(tmp_path):
+    store = Store(tmp_path)
+    good = make_raw(100)
+    timeouts = []
+
+    def fetch(timeout=60):
+        timeouts.append(timeout)
+        return good
+
+    load_universe(store, fetch, dt.timedelta(minutes=15))                        # normal: the provider's own
+    load_universe(store, fetch, dt.timedelta(minutes=15), force=True, timeout=20)  # the app's offline retry
+    assert timeouts == [60, 20]
+
+
+def test_fetch_time_is_shown_in_local_time(tmp_path):
+    """Stored tz-aware, so the header ("שעת הנתונים") must still show the PC's clock, not UTC."""
+    store = Store(tmp_path)
+    snap = load_universe(store, lambda: make_raw(100), dt.timedelta(minutes=15))
+    local_now = dt.datetime.now()
+    for ts in (snap.fetched_at, store.load_latest()[1]):
+        assert ts.tzinfo is not None
+        assert abs(ts.replace(tzinfo=None) - local_now) < dt.timedelta(minutes=1)
+
+
+def test_validate_universe_logs_empty_provider_columns(caplog, monkeypatch):
+    monkeypatch.setattr(tv, "MIN_UNIVERSE_ROWS", 100)
+    ok = make_raw(100)
+    # Set one provider column ('pe') to all NaNs
+    bad_pe = ok.assign(pe=float("nan"))
+
+    with caplog.at_level("INFO"):
+        validate_universe(bad_pe, bad_pe)
+
+    # Should log warning for empty provider column 'pe'
+    warnings = [rec.message for rec in caplog.records if rec.levelname == "WARNING"]
+    assert any("provider column pe is completely empty" in msg for msg in warnings)
+
+
+def test_clock_skew_and_negative_age(tmp_path):
+    from screener.data.store import market_date
+    store = Store(tmp_path)
+    good = make_raw(100)
+
+    # 1. Test future timestamp (negative age) is treated as stale and re-fetches
+    future_time = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=2)
+    store.save(good, future_time)
+
+    # Future cache has negative age
+    snap_future = Snapshot(good, future_time, "cache")
+    assert snap_future.age < dt.timedelta(0)
+
+    # load_universe should treat negative age as stale and run fetch
+    fetched = False
+    def mock_fetch():
+        nonlocal fetched
+        fetched = True
+        return good
+
+    snap = load_universe(store, mock_fetch, dt.timedelta(minutes=15))
+    assert fetched is True
+    assert snap.source == "live"
+
+    # 2. Test reading old naive timestamp vs new tz-aware timestamp
+    naive_time = dt.datetime.now() - dt.timedelta(minutes=5)
+    snap_naive = Snapshot(good, naive_time, "cache")
+    assert dt.timedelta(0) < snap_naive.age < dt.timedelta(minutes=10)
+
+    # 3. Test market_date works for both naive and aware datetimes
+    d1 = market_date(dt.datetime(2026, 10, 25, 14, 0, 0))
+    d2 = market_date(dt.datetime(2026, 10, 25, 14, 0, 0, tzinfo=dt.timezone.utc))
+    assert isinstance(d1, dt.date)
+    assert isinstance(d2, dt.date)
 
 
 def test_config_toolbar_mode():

@@ -43,7 +43,9 @@ class Snapshot:
 
     @property
     def age(self) -> dt.timedelta:
-        return dt.datetime.now() - self.fetched_at
+        """Negative when the PC clock went back since the fetch: callers treat that as stale."""
+        now = dt.datetime.now().astimezone() if self.fetched_at.tzinfo is not None else dt.datetime.now()
+        return now - self.fetched_at
 
 
 class Store:
@@ -55,15 +57,29 @@ class Store:
         self.meta_path = self.cache_dir / "latest_meta.json"
 
     def load_latest(self) -> tuple[pd.DataFrame, dt.datetime, dict] | None:
-        if not (self.latest_path.exists() and self.meta_path.exists()):
-            return None
-        try:
-            meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
-            return (pd.read_parquet(self.latest_path), dt.datetime.fromisoformat(meta["fetched_at"]),
-                    meta.get("source") or {})
-        except Exception as e:  # corrupted cache must never stop the app
-            log.warning("cannot read cache: %s", e)
-            return None
+        if self.latest_path.exists() and self.meta_path.exists():
+            try:
+                meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
+                return (pd.read_parquet(self.latest_path), _local(meta["fetched_at"]), meta.get("source") or {})
+            except Exception as e:  # corrupted cache must never stop the app
+                log.warning("cannot read cache: %s", e)
+
+        # Fall back to the newest readable snapshot in _data/snapshots/
+        for day in reversed(self.snapshot_dates()):
+            try:
+                df = self.load_snapshot(day)
+                meta = self.snapshot_meta(day)
+                if "fetched_at" in meta:
+                    fetched_at = _local(meta["fetched_at"])
+                else:
+                    fetched_at = dt.datetime(day.year, day.month, day.day)
+                source = meta.get("source") or {}
+                log.info("falling back to snapshot from %s", day)
+                return (df, fetched_at, source)
+            except Exception as e:
+                log.warning("cannot read snapshot %s: %s", day, e)
+
+        return None
 
     def save(self, df: pd.DataFrame, fetched_at: dt.datetime) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -150,11 +166,22 @@ def _atomic_write_text(text: str, path: Path) -> None:
 FETCH_LOCK = threading.Lock()   # one fetch at a time for the whole server (all browser tabs)
 
 
-def load_universe(store: Store, fetch: Callable[[], pd.DataFrame], max_age: dt.timedelta,
-                  force: bool = False, required: Iterable[str] = ()) -> Snapshot:
+def _local(iso: str) -> dt.datetime:
+    """A stored fetch time: tz-aware in the PC's time zone (the header shows local time), or naive as
+    written by versions before 2026-10-20."""
+    ts = dt.datetime.fromisoformat(iso)
+    return ts.astimezone() if ts.tzinfo is not None else ts
+
+
+def load_universe(store: Store, fetch: Callable[..., pd.DataFrame], max_age: dt.timedelta,
+                  force: bool = False, required: Iterable[str] = (), timeout: float | None = None) -> Snapshot:
+    """`timeout` (seconds) is passed to fetch() when given: the app shortens it for retries while offline."""
     def fresh(cached) -> bool:
         complete = cached is not None and set(required) <= set(cached[0].columns)
-        return complete and not force and dt.datetime.now() - cached[1] < max_age
+        if not complete or force:
+            return False
+        age = Snapshot(cached[0], cached[1], "cache").age
+        return dt.timedelta(0) <= age < max_age
 
     cached = store.load_latest()
     if fresh(cached):
@@ -163,9 +190,9 @@ def load_universe(store: Store, fetch: Callable[[], pd.DataFrame], max_age: dt.t
         cached = store.load_latest()         # another tab may have fetched while this one waited
         if fresh(cached):
             return Snapshot(cached[0], cached[1], "cache", meta=cached[2])
-        now = dt.datetime.now()
+        now = dt.datetime.now().astimezone()     # tz-aware: a clock change (DST) cannot make it "fresh"
         try:
-            df = fetch()
+            df = fetch() if timeout is None else fetch(timeout=timeout)
             if cached is not None and len(df) < 0.5 * len(cached[0]):
                 raise ValueError(f"universe shrank to {len(df)} rows from {len(cached[0])}")
         except Exception as e:
