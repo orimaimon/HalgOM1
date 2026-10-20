@@ -50,7 +50,7 @@ def test_column_config():
     widths = {
         "ticker": "small", "exchange": "small", "country": "small", "sec_type": "small",
         "company": "medium", "sector": "medium", "industry": "medium",
-        "signals": 300, "indexes": 240, "new": 60
+        "signals": 300, "indexes": 140, "new": 60
     }
     for key, expected_width in widths.items():
         assert column_config(key)["width"] == expected_width
@@ -112,18 +112,59 @@ def test_large_text_toggle(app):
 
     # Toggle off by default
     assert not app.session_state["large_text"]
-    assert not any("115%" in h for h in notes(app))
+    assert not any("zoom: 1.15" in h for h in notes(app))
 
     # Enable Large Text
     app.toggle(key="large_text").set_value(True).run()
     assert app.session_state["large_text"]
-    assert any("115%" in h for h in notes(app))
+    assert any("zoom: 1.15" in h for h in notes(app))
 
 
 def test_data_time_header(app):
     app.run()
     assert not app.exception, app.exception
     assert any("שעת הנתונים:" in c.value for c in app.caption)
+
+
+def test_views_price_change_order():
+    from screener.fields import VIEWS
+
+    for view, cols in VIEWS.items():
+        start = ["ticker", "company"] if "company" in cols else ["ticker"]
+        expected_prefix = start + ["price", "change"]
+        assert cols[:len(expected_prefix)] == expected_prefix, f"View {view} order is {cols[:4]}"
+
+
+def test_escape_markdown_and_clean_str():
+    from screener.app import _clean_str, escape_markdown
+
+    assert escape_markdown("Apple $Inc.* _Co_") == "Apple \\$Inc.\\* \\_Co\\_"
+    assert escape_markdown(None) == "—"
+    assert escape_markdown("nan") == "—"
+
+    assert _clean_str(float("nan")) == "—"
+    assert _clean_str(None) == "—"
+    assert _clean_str("nan") == "—"
+    assert _clean_str("Technology") == "Technology"
+
+
+def test_filter_panel_collapsed_by_default(app):
+    app.run()
+    assert not app.exception, app.exception
+    # Expander for filters should be collapsed when 0 filters are active
+    exp = app.expander[0]
+    assert exp.proto.expanded is False
+
+    # Activating a filter expands it
+    app.selectbox(key="f_pe").select("Low (<15)").run()
+    assert app.expander[0].proto.expanded is True
+
+
+def test_save_bookmark_button_label(app):
+    app.run()
+    assert not app.exception, app.exception
+    # Popover button for saving screen should have label "שמירה"
+    assert any("שמירה" in b.label for b in app.button)
 
 
 def test_empty_results_explain_and_clear_everything(app):

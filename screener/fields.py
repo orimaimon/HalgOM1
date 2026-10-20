@@ -239,22 +239,22 @@ GROUP_COLUMNS: dict[str, Col] = {
 
 
 # Finviz-style table views. "ticker" is always first and pinned by the UI.
-_TAIL = ["price", "change", "volume"]
+_TAIL = ["volume"]
 VIEWS: dict[str, list[str]] = {
-    "Overview":    ["ticker", "company", "sector", "industry", "country", "indexes", "market_cap", "pe", "adj_price",
+    "Overview":    ["ticker", "company", "price", "change", "sector", "industry", "country", "indexes", "market_cap", "pe", "adj_price",
                     *_TAIL],
-    "Valuation":   ["ticker", "market_cap", "pe", "fwd_pe", "peg", "ps", "pb", "pocf", "pfcf", "ev_ebitda",
+    "Valuation":   ["ticker", "price", "change", "market_cap", "pe", "fwd_pe", "peg", "ps", "pb", "pocf", "pfcf", "ev_ebitda",
                     "eps_growth", "sales_growth", *_TAIL],
-    "Financial":   ["ticker", "market_cap", "div_yield", "payout", "roa", "roe", "roic", "curr_ratio",
+    "Financial":   ["ticker", "price", "change", "market_cap", "div_yield", "payout", "roa", "roe", "roic", "curr_ratio",
                     "quick_ratio", "lt_debt_eq", "debt_eq", "gross_margin", "oper_margin", "net_margin",
                     "earnings_date", *_TAIL],
-    "Performance": ["ticker", "perf_w", "perf_m", "perf_q", "perf_h", "perf_ytd", "perf_y", "vol_w", "vol_m",
+    "Performance": ["ticker", "price", "change", "perf_w", "perf_m", "perf_q", "perf_h", "perf_ytd", "perf_y", "vol_w", "vol_m",
                     "rel_volume", "avg_volume", *_TAIL],
-    "Technical":   ["ticker", "beta", "atr_pct", "sma20_pct", "sma50_pct", "sma150_pct", "sma200_pct", "high52_pct",
+    "Technical":   ["ticker", "price", "change", "beta", "atr_pct", "sma20_pct", "sma50_pct", "sma150_pct", "sma200_pct", "high52_pct",
                     "low52_pct", "range52", "rsi", "rsi_w", "sma50w_pct", "gap", "rel_volume", *_TAIL],
-    "Signals":     ["ticker", "company", "n_signals", "signals", "rel_volume", "range_1m_pct", "high52_pct",
+    "Signals":     ["ticker", "company", "price", "change", "n_signals", "signals", "rel_volume", "range_1m_pct", "high52_pct",
                     "sma50_pct", "sma200_pct", "rsi", *_TAIL],
-    "Scores":      ["ticker", "company", "sector", "score", "score_value", "score_quality", "score_momentum",
+    "Scores":      ["ticker", "company", "price", "change", "sector", "score", "score_value", "score_quality", "score_momentum",
                     "market_cap", "days_to_earnings", *_TAIL],
 }
 

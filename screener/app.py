@@ -78,6 +78,24 @@ def col_label(key: str) -> str:
     return I.column(key, COLUMNS[key].label, L())
 
 
+def escape_markdown(text: str) -> str:
+    """Escape markdown special characters so company names containing $, *, _, etc. render literally."""
+    if text is None or pd.isna(text):
+        return "—"
+    text = str(text)
+    if text == "—" or text.lower() in ("nan", "none"):
+        return "—"
+    for ch in ("\\", "*", "_", "`", "~", "$", "[", "]"):
+        text = text.replace(ch, "\\" + ch)
+    return text
+
+
+def _clean_str(v) -> str:
+    if v is None or pd.isna(v) or v == "" or str(v).lower() in ("nan", "none"):
+        return "—"
+    return str(v)
+
+
 # ─────────────────────────── setup ─────────────────────────────────────────
 
 @st.cache_resource
@@ -322,7 +340,7 @@ def column_config(key: str):
     match c.kind:
         case "text":
             width_map = {
-                "signals": 300, "indexes": 240, "new": 60,
+                "signals": 300, "indexes": 140, "new": 60,
                 "ticker": "small", "exchange": "small", "country": "small", "sec_type": "small",
                 "company": "medium", "sector": "medium", "industry": "medium"
             }
@@ -422,11 +440,11 @@ def header(snap, n_universe: int) -> None:
 
 
 def _header(snap, n_universe: int) -> None:
-    left, mid, right = st.columns([2.2, 5, 2.3], vertical_alignment="center")
+    left, mid, right = st.columns([2.5, 4.8, 2.7], vertical_alignment="center")
     with left:
         st.html('<div class="hs-brand"><i></i><b>HalgOM</b><span>Screener</span></div>')
         st.caption(f"v{VERSION} · {t('US stocks')} · {n_universe:,} {t('in universe')}")
-        c1, c2 = st.columns([1, 1], vertical_alignment="center")
+        c1, c2 = st.columns([1.3, 1.0], vertical_alignment="center")
         c1.segmented_control("Language", list(I.LANGS), key="lang", format_func=I.LANGS.get, required=True,
                              label_visibility="collapsed")
         c2.toggle(t("Large text"), key="large_text")
@@ -435,7 +453,7 @@ def _header(snap, n_universe: int) -> None:
         if market is None:
             st.caption(t("Market data unavailable"))
         else:
-            cols = st.container(key="tape").columns([1.3, 1, 1, 1, 1])
+            cols = st.container(key="tape").columns([1.2, 1, 1, 1, 1])
             colors = {"bull": "green", "bear": "red", "sideways": "orange", "unknown": "gray"}
             with cols[0]:
                 st.badge(t(regime.label.upper()), color=colors[regime.label], icon=":material/monitoring:",
@@ -446,12 +464,20 @@ def _header(snap, n_universe: int) -> None:
                 st.badge(trend_text(trend.label), color=trend.color, icon=":material/trending_up:", help=trend.help)
                 st.caption(t("Market regime · SPY ADX"))
             for c, name in zip(cols[1:], ["SPY", "QQQ", "VIX", "HYG"]):
+                if name not in market.index:
+                    c.metric(name, "—", None)
+                    continue
                 row = market.loc[name]
-                vs200 = "" if pd.isna(row.sma200) or name == "VIX" else (
+                close_val = "—" if pd.isna(row.get("close")) else f"{row.close:,.2f}"
+                change_val = None if pd.isna(row.get("change")) else f"{row.change:+.2f}%"
+                sma20_str = "—" if pd.isna(row.get("sma20")) else f"{row.sma20:,.2f}"
+                sma50_str = "—" if pd.isna(row.get("sma50")) else f"{row.sma50:,.2f}"
+                sma200_str = "—" if pd.isna(row.get("sma200")) else f"{row.sma200:,.2f}"
+                vs200 = "" if pd.isna(row.get("sma200")) or pd.isna(row.get("close")) or name == "VIX" else (
                     " · \u200e▲SMA200" if row.close > row.sma200 else " · \u200e▼SMA200")   # LRM: arrow stays left in RTL
-                c.metric(name, f"{row.close:,.2f}", f"{row.change:+.2f}%",
+                c.metric(name, close_val, change_val,
                          delta_color="inverse" if name == "VIX" else "normal",
-                         help=f"{name} vs SMA20/50/200: {row.sma20:,.2f} / {row.sma50:,.2f} / {row.sma200:,.2f}")
+                         help=f"{name} vs SMA20/50/200: {sma20_str} / {sma50_str} / {sma200_str}")
                 if vs200:
                     c.caption(vs200.removeprefix(" · "))
     with right:
@@ -459,7 +485,7 @@ def _header(snap, n_universe: int) -> None:
         st.caption(f"{t('Data time')}: **{snap.fetched_at:%H:%M}** · {snap.fetched_at:%d/%m/%Y} ({src}) · "
                    f"{source_text(snap.meta)}",
                    help="מקור הנתונים ומצב העדכון כפי שהספק מדווח. delayed = בעיכוב, realtime = בזמן אמת")
-        r1, r2 = st.columns([1.7, 1.2])
+        r1, r2 = st.columns([1.4, 1.3])
         if r1.button(t("Refresh data"), icon=":material/refresh:", use_container_width=True):
             if snap.source != "stale" and snap.age < REFRESH_MIN:      # every click is a TradingView request
                 st.toast(f"הנתונים עודכנו לפני {max(0, int(snap.age.total_seconds()))} שניות", icon="ℹ️")
@@ -509,7 +535,7 @@ def toolbar(presets: dict[str, P.Preset]) -> None:
     names = [CUSTOM] + list(presets)
     if ss.get("preset") not in names:
         ss.preset = CUSTOM
-    c1, c2, c3, c4, c7, c5, c6 = st.columns([2.5, 2.3, 1.7, 1.3, 1.4, 1.1, 1.1], vertical_alignment="bottom")
+    c1, c2, c3, c4, c7, c5, c6 = st.columns([2.2, 2.0, 1.5, 1.1, 1.6, 1.0, 1.3], vertical_alignment="bottom")
     def preset_name(n: str) -> str:
         return t(n) if n == CUSTOM else n if n.startswith(USER_PREFIX) else I.preset(n, L())
 
@@ -522,7 +548,7 @@ def toolbar(presets: dict[str, P.Preset]) -> None:
     c4.toggle(t("Ascending"), key="sort_asc")
     junk_toggle(c7)
     c5.button(t("Reset"), on_click=on_reset, use_container_width=True, help="ניקוי כל הפילטרים")
-    with c6.popover("", icon=":material/bookmark:", use_container_width=True, help="שמירת הסריקה הנוכחית / מחיקת סריקה שמורה"):
+    with c6.popover(t("Save"), icon=":material/bookmark:", use_container_width=True, help="שמירת הסריקה הנוכחית / מחיקת סריקה שמורה"):
         st.text_input(t("Save current screen as"), key="save_name")
         st.button(t("Save"), on_click=on_save, type="primary")
         user = P.load_user()
@@ -539,7 +565,7 @@ def filter_panel(df: pd.DataFrame) -> None:
     sel = selections()
     n_active = len(active(sel))
     title = f"{t('Filters')} ({n_active} {t('active')})" if n_active else t("Filters")
-    with st.expander(title, expanded=True):
+    with st.expander(title, expanded=n_active > 0):
         counts = {g: sum(1 for f in FILTERS if f.group == g and sel[f.key] != ANY) for g in GROUPS}
         tabs = st.tabs([f"{t(g)} ({counts[g]})" if counts[g] else t(g) for g in GROUPS])
         for tab, group in zip(tabs, GROUPS):
@@ -640,7 +666,7 @@ DETAIL_FIELDS = [
 def snapshot_table(row: pd.Series) -> str:
     """Compact Finviz-style key/value table (HTML, no scripts)."""
     end = "left" if L() == I.HE else "right"                 # values sit at the far end of the row
-    out = ['<table class="hs-snapshot" style="width:100%;border-collapse:collapse;font-size:13px">']
+    out = ['<table class="hs-snapshot" style="width:100%;border-collapse:collapse;font-size:14px">']
     for title, keys in DETAIL_FIELDS:
         out.append(f'<tr><td colspan="2" style="padding:12px 4px 3px;font-weight:600;color:{theme.ACCENT};'
                    f'border-bottom:1px solid {theme.RULE}">{html.escape(t(title))}</td></tr>')
@@ -664,7 +690,7 @@ def range52_bar(price: float, low: float, high: float) -> str:
         return ""
     pct = max(0.0, min(100.0, (price - low) / (high - low) * 100))
 
-    return (f'<div dir="ltr" style="display:flex;align-items:center;gap:6px;font-size:12px;color:{theme.MUTED};'
+    return (f'<div dir="ltr" style="display:flex;align-items:center;gap:6px;font-size:14px;color:{theme.MUTED};'
             f'margin-bottom:8px">'
             f'<span>{low:.2f}</span>'
             f'<div style="flex:1;height:4px;background:{theme.HAIRLINE};border-radius:2px;position:relative">'
@@ -680,20 +706,26 @@ def detail(row: pd.Series) -> None:
         tradingview_chart(row["tv_symbol"])
     with info.container(key="detail"):
         st.markdown(f"### {row['ticker']}")
-        sector, country = I.value("sector", row["sector"], L()), I.value("country", row["country"], L())
+        sector = _clean_str(I.value("sector", row.get("sector"), L()))
+        industry = _clean_str(row.get("industry"))
+        country = _clean_str(I.value("country", row.get("country"), L()))
+        company = escape_markdown(row.get("company"))
         lrm = "\u200e"     # keeps a trailing "." of English names ("Apple Inc.") in place in RTL
-        st.caption(f"{row['company']}{lrm}  \n{sector} · {row['industry']}{lrm} · {country}"
-                   + (f"  \n{row['indexes']}" if row.get("indexes") else ""))
-        st.metric(t("Price"), fmt_value("price", row["price"]), f"{row['change']:+.2f}%")
+        st.caption(f"{company}{lrm}  \n{sector} · {industry}{lrm} · {country}"
+                   + (f"  \n{row['indexes']}" if row.get("indexes") and not pd.isna(row.get("indexes")) else ""))
+        p_val = row.get("price")
+        p_delta = None if pd.isna(row.get("change")) else f"{row['change']:+.2f}%"
+        st.metric(t("Price"), fmt_value("price", p_val), p_delta)
         bar = range52_bar(row.get("price"), row.get("low52"), row.get("high52"))
         if bar:
             st.caption(f"**{t('52-Week Range')}**")
             st.html(bar)
-        if row.get("signals"):
+        if row.get("signals") and not pd.isna(row.get("signals")):
             st.caption(f"**{t('Signals')}:** {I.signal_tags(row['signals'], L())}")
         st.html(snapshot_table(row))
-        st.markdown(f"[{t('Open in TradingView')} ↗]({export.tradingview_url(row['tv_symbol'])}) · "
-                    f"[Finviz ↗](https://finviz.com/quote.ashx?t={row['ticker']})")
+        l1, l2 = st.columns(2)
+        l1.link_button("TradingView ↗", export.tradingview_url(row["tv_symbol"]), use_container_width=True)
+        l2.link_button("Finviz ↗", f"https://finviz.com/quote.ashx?t={row['ticker']}", use_container_width=True)
         add_to_watchlist_button(row["ticker"])
 
 

@@ -59,21 +59,21 @@ CSS = f"""
              text-align: start;}}
   .hs-count small {{font-size: 0.95rem; font-weight: 400; color: var(--hs-muted); margin-inline-start: 0.35rem;}}
 
-  .hs-note {{font-size: 0.85rem; color: var(--hs-muted);}}
+  .hs-note {{font-size: 0.95rem; color: var(--hs-muted);}}
   [data-testid="stDataFrame"] {{border: 1px solid var(--hs-rule); border-radius: 0.4rem; background: var(--hs-card);}}
   hr {{border-color: var(--hs-hairline) !important;}}
 </style>
 """
 
+# "Large text": zoom the whole page, so the layout and the results grid (a canvas) grow together.
 LARGE_TEXT_CSS = f"""
 <style>
-  :root {{
-    font-size: 115%;
-  }}
-  /* increase specific elements that might have fixed sizes */
-  [data-testid="stDataFrame"], [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {{
-    font-size: 110%;
-  }}
+  html {{zoom: 1.15;}}
+  /* the results grid (a canvas) sized itself from the unzoomed width and overflowed, hiding the ticker */
+  [data-testid="stDataFrame"], [data-testid="stDataFrameResizable"] {{max-width: 100% !important;}}
+  /* header quotes fit their columns at 1366px */
+  [data-testid="stMetricValue"] {{font-size: 1.2rem;}}
+  [data-testid="stMetricDelta"] {{font-size: 0.75rem;}}
 </style>
 """
 
