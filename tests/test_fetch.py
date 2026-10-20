@@ -2,97 +2,73 @@
 import datetime as dt
 import threading
 import time
-from pathlib import Path
 import tomllib
 
-import pandas as pd
 import pytest
 
-from screener.data.store import Snapshot, Store, load_universe
-from screener.data.tradingview import MIN_UNIVERSE_ROWS, TradingViewError, fetch_universe, validate_universe
+import screener.data.tradingview as tv
+from screener.data.store import Store, load_universe
+from screener.data.tradingview import TradingViewError, clean, validate_universe
+from tests.test_frontend import app  # noqa: F401  (fixture)
 from tests.test_screener import ROOT, make_raw
 
 
-def test_validate_universe_checks_fill_rates_and_floors():
-    # 1. Price fill rate collapse (< 50%)
-    df_null_price = make_raw(600).assign(price=float("nan"))
-    with pytest.raises(TradingViewError, match="price fill rate collapsed"):
-        validate_universe(df_null_price.iloc[:0], raw_df=df_null_price)
-
-    # 2. Market cap fill rate collapse (< 50%)
-    df_null_mcap = make_raw(600).assign(market_cap=float("nan"))
+def test_validate_universe_checks_fill_rates_and_floor(monkeypatch):
+    monkeypatch.setattr(tv, "MIN_UNIVERSE_ROWS", 500)
+    with pytest.raises(TradingViewError, match="price fill rate collapsed"):     # e.g. `close` renamed
+        bad = make_raw(600).assign(price=float("nan"))
+        validate_universe(clean(bad), bad)
     with pytest.raises(TradingViewError, match="market_cap fill rate collapsed"):
-        validate_universe(df_null_mcap, raw_df=df_null_mcap)
-
-    # 3. Cleaned row count below absolute floor (MIN_UNIVERSE_ROWS = 500)
-    df_small = make_raw(MIN_UNIVERSE_ROWS - 1)
+        bad = make_raw(600).assign(market_cap=float("nan"))
+        validate_universe(bad, bad)
     with pytest.raises(TradingViewError, match="below minimum floor"):
-        validate_universe(df_small, raw_df=df_small)
-
-    # 4. Cleaned row count below 50% of cached universe
-    df_cached_drop = make_raw(600)
-    with pytest.raises(TradingViewError, match="dropped below 50% of cached"):
-        validate_universe(df_cached_drop, raw_df=df_cached_drop, cached_rows=1500)
-
-    # Valid universe passes
-    df_valid = make_raw(600)
-    validate_universe(df_valid, raw_df=df_valid, cached_rows=1000)
+        small = make_raw(499)
+        validate_universe(small, small)
+    ok = make_raw(600)
+    validate_universe(ok, ok)
 
 
-def test_bad_fetch_retains_stale_cache(tmp_path, monkeypatch):
-    monkeypatch.setattr("screener.data.tradingview.MIN_UNIVERSE_ROWS", 100)
+def test_bad_response_keeps_the_good_cache(tmp_path):
     store = Store(tmp_path)
-    good_raw = make_raw(300)
+    good = make_raw(300)
+    assert load_universe(store, lambda: good, dt.timedelta(minutes=15)).source == "live"
 
-    # First fetch succeeds and populates cache
-    snap1 = load_universe(store, lambda: good_raw, dt.timedelta(minutes=15))
-    assert snap1.source == "live" and len(snap1.df) == 300
-
-    # Bad fetch returns null prices -> validation fails -> returns stale cache
-    bad_raw = good_raw.copy().assign(price=float("nan"))
-
-    def bad_fetch():
-        from screener.data.tradingview import clean
-        cleaned = clean(bad_raw)
-        validate_universe(cleaned, raw_df=bad_raw, cached_rows=len(snap1.df))
+    def bad_fetch():                               # what fetch_universe does with a broken response
+        bad = good.assign(price=float("nan"))
+        cleaned = clean(bad)
+        validate_universe(cleaned, bad)
         return cleaned
 
-    snap2 = load_universe(store, bad_fetch, dt.timedelta(minutes=15), force=True)
-    assert snap2.source == "stale"
-    assert len(snap2.df) == 300
-    assert "price fill rate collapsed" in snap2.error
+    snap = load_universe(store, bad_fetch, dt.timedelta(minutes=15), force=True)
+    assert snap.source == "stale" and len(snap.df) == 300 and "price fill rate collapsed" in snap.error
+    assert len(store.load_latest()[0]) == 300                                   # nothing overwritten
+    assert len(store.load_snapshot(store.snapshot_dates()[-1])) == 300
 
 
-def test_refresh_throttling_in_get_data(monkeypatch):
-    import streamlit as st
-    import screener.app as app_mod
-
-    toasts = []
-    monkeypatch.setattr(st, "toast", lambda msg, **kw: toasts.append(msg))
-
-    df = make_raw(200)
-    fetched_at = dt.datetime.now() - dt.timedelta(seconds=15)  # 15s ago
-    mock_snap = Snapshot(df=df, fetched_at=fetched_at, source="live")
-
-    # Put mock_snap in session_state
-    app_mod.ss["snap"] = mock_snap
-    app_mod.ss["df"] = df
-
-    fetch_called = []
-    monkeypatch.setattr(app_mod, "load_universe", lambda *a, **kw: fetch_called.append(True))
-
-    # Force call get_data(force=True) when age < 60s
-    snap_out, df_out = app_mod.get_data(force=True)
-
-    assert not fetch_called, "load_universe should not be called within 60s throttle window"
-    assert snap_out is mock_snap
-    assert len(toasts) == 1
-    assert "הנתונים עודכנו לפני" in toasts[0]
-    assert "15" in toasts[0] or "14" in toasts[0] or "16" in toasts[0]
+def test_shrunken_universe_keeps_the_good_cache(tmp_path):
+    store = Store(tmp_path)
+    load_universe(store, lambda: make_raw(300), dt.timedelta(minutes=15))
+    snap = load_universe(store, lambda: make_raw(100), dt.timedelta(minutes=15), force=True)
+    assert snap.source == "stale" and len(snap.df) == 300 and "shrank" in snap.error
 
 
-def test_concurrent_load_universe(tmp_path, monkeypatch):
-    monkeypatch.setattr("screener.data.tradingview.MIN_UNIVERSE_ROWS", 100)
+def test_refresh_button_is_throttled(app, monkeypatch):  # noqa: F811
+    calls = []
+    real = tv.fetch_universe
+    monkeypatch.setattr(tv, "fetch_universe", lambda: calls.append(1) or real())
+    app.run()
+    assert calls == [1]
+    refresh = next(b for b in app.button if b.label == "רענון נתונים")
+    refresh.click().run()                                        # seconds after the fetch: no request
+    assert not app.exception, app.exception
+    assert calls == [1] and any("הנתונים עודכנו לפני" in t.value for t in app.toast)
+    app.session_state["snap"].fetched_at -= dt.timedelta(minutes=2)
+    next(b for b in app.button if b.label == "רענון נתונים").click().run()
+    assert not app.exception, app.exception
+    assert calls == [1, 1]
+
+
+def test_concurrent_load_universe(tmp_path):
     store = Store(tmp_path)
     good_raw = make_raw(200)
 

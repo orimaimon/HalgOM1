@@ -31,7 +31,7 @@ HEADERS = {
     "accept": "application/json",
 }
 US_EXCHANGES = ["NASDAQ", "NYSE", "AMEX"]
-MIN_UNIVERSE_ROWS = 500
+MIN_UNIVERSE_ROWS = 500            # the real universe is ~5,000 stocks
 
 # Benchmarks for the market-regime header (same inputs as the HalgOM backtester).
 MARKET_SYMBOLS = {"SPY": "AMEX:SPY", "QQQ": "NASDAQ:QQQ", "HYG": "AMEX:HYG", "VIX": "CBOE:VIX"}
@@ -81,29 +81,17 @@ def universe_query(fields: list[str]) -> dict:
     }
 
 
-def validate_universe(df: pd.DataFrame, raw_df: pd.DataFrame | None = None, cached_rows: int = 0) -> None:
-    """Check that the cleaned universe is trustworthy before saving.
-    Raises TradingViewError if row count is below floor / cached size, or fill rates collapse."""
-    check_df = raw_df if raw_df is not None else df
-    if not check_df.empty:
-        if "price" in check_df.columns:
-            price_fill = check_df["price"].notna().mean()
-            if price_fill < 0.5:
-                raise TradingViewError(f"price fill rate collapsed ({price_fill:.1%})")
-        if "market_cap" in check_df.columns:
-            mcap_fill = check_df["market_cap"].notna().mean()
-            if mcap_fill < 0.5:
-                raise TradingViewError(f"market_cap fill rate collapsed ({mcap_fill:.1%})")
-
-    is_mapping_test = (raw_df is not None and len(raw_df) == 1
-                       and "ticker" in raw_df.columns and raw_df["ticker"].iloc[0] == 1.0)
-    if not is_mapping_test and len(df) < MIN_UNIVERSE_ROWS:
+def validate_universe(df: pd.DataFrame, raw: pd.DataFrame) -> None:
+    """Refuse a response that would replace good data with bad: unknown fields come back as null, not as
+    an error, so a renamed field shows up as a collapsed fill rate (raw) or a near-empty universe (cleaned)."""
+    for col in ("price", "market_cap"):
+        if col in raw.columns and len(raw) and raw[col].notna().mean() < 0.5:
+            raise TradingViewError(f"{col} fill rate collapsed ({raw[col].notna().mean():.0%})")
+    if len(df) < MIN_UNIVERSE_ROWS:
         raise TradingViewError(f"universe size ({len(df)}) below minimum floor ({MIN_UNIVERSE_ROWS})")
-    if cached_rows > 0 and len(df) < 0.5 * cached_rows:
-        raise TradingViewError(f"universe size ({len(df)}) dropped below 50% of cached ({cached_rows})")
 
 
-def fetch_universe(timeout: float = 60, cached_rows: int = 0) -> pd.DataFrame:
+def fetch_universe(timeout: float = 60) -> pd.DataFrame:
     """Fetch the full US stock universe as a DataFrame keyed by canonical column names."""
     mapping = tv_fields()
     fields = list(mapping) + list(EXTRA_TV_FIELDS)
@@ -116,7 +104,7 @@ def fetch_universe(timeout: float = 60, cached_rows: int = 0) -> pd.DataFrame:
     log.info("TradingView universe: %d rows", len(df))
     meta = source_meta(df.get("update_mode"))
     cleaned = clean(df)
-    validate_universe(cleaned, raw_df=df, cached_rows=cached_rows)
+    validate_universe(cleaned, df)
     cleaned.attrs["source"] = meta
     return cleaned
 
@@ -172,7 +160,7 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     if "is_primary" in df.columns:
         df = df[df["is_primary"].fillna(False).astype(bool)]
     if "currency" in df.columns:
-        df = df[df["currency"].isna() | (df["currency"] == "USD") | (df["currency"] == 1.0)]
+        df = df[df["currency"].isna() | (df["currency"] == "USD")]
     df = df[df["price"].notna() & (df["price"] > 0)]
     # Same ticker twice (share classes listed oddly) — keep the larger one.
     df = df.sort_values("market_cap", ascending=False, na_position="last")

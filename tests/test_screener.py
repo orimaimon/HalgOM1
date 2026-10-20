@@ -231,9 +231,7 @@ def test_clean_drops_junk():
 
 # ── store / offline fallback ────────────────────────────────────────────────
 
-def test_store_cache_then_stale_fallback(tmp_path, monkeypatch):
-    import screener.data.tradingview as tv
-    monkeypatch.setattr(tv, "MIN_UNIVERSE_ROWS", 10)
+def test_store_cache_then_stale_fallback(tmp_path):
     store = Store(tmp_path)
     raw = make_raw(20)
     snap = load_universe(store, lambda: raw, dt.timedelta(minutes=15))
@@ -638,7 +636,6 @@ def test_app_smoke(tmp_path, monkeypatch):
     monkeypatch.setattr(P, "PRESETS_PATH", tmp_path / "presets.json")
     monkeypatch.setattr(PF, "PORTFOLIOS_PATH", tmp_path / "portfolios.json")
     monkeypatch.setattr(export, "EXPORT_DIR", tmp_path / "exports")
-    monkeypatch.setattr(tv, "MIN_UNIVERSE_ROWS", 100)
     monkeypatch.setattr(tv, "fetch_universe", lambda: raw)
     monkeypatch.setattr(tv, "fetch_market", lambda: market)
     stops = []

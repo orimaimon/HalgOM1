@@ -47,9 +47,10 @@ def test_fetch_universe_request_and_columns_unchanged(monkeypatch):
 
     def fake_scan(market, query, timeout):
         sent.update(query)
-        return [{"s": "NASDAQ:AAPL", "d": [1.0] * len(query["columns"])}]
+        return [{"s": "NASDAQ:AAPL", "d": ["USD" if c == "currency" else 1.0 for c in query["columns"]]}]
 
     monkeypatch.setattr(tv, "_scan", fake_scan)
+    monkeypatch.setattr(tv, "MIN_UNIVERSE_ROWS", 1)                # one fake row
     df = tv.fetch_universe()
     assert sent["columns"] == FIELDS_SNAPSHOT                     # same fields, same order as before
     assert set(df.columns) == {"tv_symbol", *provider_columns()}  # clean() drops the extra TV fields

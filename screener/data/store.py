@@ -147,36 +147,27 @@ def _atomic_write_text(text: str, path: Path) -> None:
                 pass
 
 
-FETCH_LOCK = threading.Lock()
+FETCH_LOCK = threading.Lock()   # one fetch at a time for the whole server (all browser tabs)
 
 
-def load_universe(store: Store, fetch: Callable[..., pd.DataFrame], max_age: dt.timedelta,
+def load_universe(store: Store, fetch: Callable[[], pd.DataFrame], max_age: dt.timedelta,
                   force: bool = False, required: Iterable[str] = ()) -> Snapshot:
-    cached = store.load_latest()
-    now = dt.datetime.now()
-    complete = cached is not None and set(required) <= set(cached[0].columns)
-    if cached is not None and complete and not force and now - cached[1] < max_age:
-        return Snapshot(cached[0], cached[1], "cache", meta=cached[2])
-
-    with FETCH_LOCK:
-        cached = store.load_latest()
-        now = dt.datetime.now()
+    def fresh(cached) -> bool:
         complete = cached is not None and set(required) <= set(cached[0].columns)
-        if cached is not None and complete and not force and now - cached[1] < max_age:
-            return Snapshot(cached[0], cached[1], "cache", meta=cached[2])
+        return complete and not force and dt.datetime.now() - cached[1] < max_age
 
-        cached_rows = len(cached[0]) if cached is not None else 0
+    cached = store.load_latest()
+    if fresh(cached):
+        return Snapshot(cached[0], cached[1], "cache", meta=cached[2])
+    with FETCH_LOCK:
+        cached = store.load_latest()         # another tab may have fetched while this one waited
+        if fresh(cached):
+            return Snapshot(cached[0], cached[1], "cache", meta=cached[2])
+        now = dt.datetime.now()
         try:
-            try:
-                df = fetch(cached_rows=cached_rows)
-            except TypeError:
-                df = fetch()
-            if len(df) == 0:
-                from screener.data.tradingview import TradingViewError
-                raise TradingViewError("empty universe returned")
-            if cached_rows > 0 and len(df) < 0.5 * cached_rows:
-                from screener.data.tradingview import TradingViewError
-                raise TradingViewError(f"universe size ({len(df)}) dropped below 50% of cached ({cached_rows})")
+            df = fetch()
+            if cached is not None and len(df) < 0.5 * len(cached[0]):
+                raise ValueError(f"universe shrank to {len(df)} rows from {len(cached[0])}")
         except Exception as e:
             log.exception("fetch failed")
             if cached is None:
