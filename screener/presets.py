@@ -6,13 +6,12 @@ Option labels must match filters.py exactly — tests/test_screener.py checks th
 """
 from __future__ import annotations
 
-import json
 import logging
-import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from screener.data.store import DATA_DIR
+from screener.userfiles import _write_user_file, load_user_file, save_user_file
 
 log = logging.getLogger(__name__)
 
@@ -82,12 +81,14 @@ BUILTIN: dict[str, Preset] = {
 }
 
 
-from screener.userfiles import _write_user_file, load_user_file, save_user_file
-
 
 def load_user(path: Path | None = None) -> dict[str, Preset]:
     path = path or PRESETS_PATH
-    return load_user_file(path, Preset)
+    try:
+        return load_user_file(path, Preset)
+    except OSError as e:          # for display only: saving re-reads under the lock and refuses to write
+        log.warning("cannot read user presets: %s", e)
+        return {}
 
 
 def save_user(name: str, preset: Preset, path: Path | None = None) -> None:

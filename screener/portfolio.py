@@ -26,17 +26,16 @@ from __future__ import annotations
 
 import datetime as dt
 import io
-import json
 import logging
-import os
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from screener.data.store import DATA_DIR
+from screener.userfiles import _write_user_file, load_user_file, save_user_file
 
 log = logging.getLogger(__name__)
 
@@ -305,12 +304,14 @@ def _records(df: pd.DataFrame) -> list[dict]:
     return recs
 
 
-from screener.userfiles import _write_user_file, load_user_file, save_user_file
-
 
 def load_all(path: Path | None = None) -> dict[str, PList]:
     path = path or PORTFOLIOS_PATH
-    return load_user_file(path, PList)
+    try:
+        return load_user_file(path, PList)
+    except OSError as e:          # for display only: saving re-reads under the lock and refuses to write
+        log.warning("cannot read lists: %s", e)
+        return {}
 
 
 def save(plist: PList, path: Path | None = None) -> None:

@@ -9,7 +9,6 @@ import threading
 from pathlib import Path
 import pytest
 import streamlit as st
-from streamlit.testing.v1 import AppTest
 
 from screener import presets as P
 from screener import portfolio as PF
@@ -102,6 +101,9 @@ def test_oserror_on_read_prevents_overwrite(tmp_path, monkeypatch):
     with pytest.raises(PermissionError):
         P.save_user("מסך 2", P.Preset(filters={}), path=preset_file)
 
+    assert P.load_user(preset_file) == {}          # the page still renders: nothing listed, no crash
+    assert PF.load_all(tmp_path / "presets.json") == {}
+
     monkeypatch.undo()
     reloaded = P.load_user(preset_file)
     assert set(reloaded.keys()) == {"מסך 1"}
@@ -149,8 +151,6 @@ def test_concurrent_writes(tmp_path):
 
 
 def test_app_ui_toast_on_save_error(tmp_path, monkeypatch):
-    preset_file = tmp_path / "presets.json"
-
     def mock_save(*args, **kwargs):
         raise PermissionError("Write locked")
 
