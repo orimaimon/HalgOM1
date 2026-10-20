@@ -816,15 +816,33 @@ def test_launcher_update_step_is_one_line_that_restarts():
     line = lines[0]
     assert line.startswith("if not defined SCREENER_NO_UPDATE if not defined SCREENER_UPDATED ")
     assert "(" not in line and ")" not in line     # %~f0 may contain ")" (a folder "HalgOM (1)")
-    assert line.endswith('& if errorlevel 3 set "SCREENER_UPDATED=1" & cmd /c ""%~f0"" & exit /b')
+    # `call "%~f0"` keeps the path quoted in this cmd and in the new one: a folder "Stocks & Co" works
+    # (`cmd /c ""%~f0""` left it unquoted here, so "&" split the line)
+    assert line.endswith('& if errorlevel 3 set "SCREENER_UPDATED=1" & cmd /c call "%~f0" & exit /b')
     from screener import update
     assert update.UPDATED == 3
 
 
 def test_launcher_rebuilds_a_copied_venv():
     text = BAT.decode("ascii")
-    assert '"%PY%" -c "import sys"' in text and 'rmdir /s /q "screener\\.venv"' in text
-    assert text.index('"%PY%" -c "import sys"') < text.index("uv venv --python 3.12")
+    probe = '"%PY%" -c "import sys; assert sys.version_info.minor >= 11"'   # starts, and is new enough
+    assert probe in text and 'rmdir /s /q "screener\\.venv"' in text
+    assert text.index(probe) < text.index("uv venv --python 3.12")
+
+
+def test_launcher_failed_install_still_updates():
+    """A broken install must not block the update that may fix it."""
+    text = BAT.decode("ascii")
+    update = text.index("-m screener.update")
+    assert 'if errorlevel 1 set "INSTALL_FAILED=1"' in text
+    assert text.index('set "INSTALL_FAILED="') < text.index("pip install") < update
+    assert update < text.index("if defined INSTALL_FAILED goto :fail")
+
+
+def test_launcher_explains_a_busy_port():
+    text = BAT.decode("ascii")
+    assert "if errorlevel 1 goto :portbusy" in text and "Get-NetTCPConnection -LocalPort 8501" in text
+    assert "using port 8501" in text
 
 
 def test_launcher_labels_and_port():
