@@ -483,13 +483,13 @@ def describe(selections: dict[str, str]) -> list[tuple[str, str]]:
 
 
 def search(df: pd.DataFrame, text: str) -> pd.DataFrame:
-    """Ticker list ("AAPL, MSFT" or "AAPL MSFT") → exact tickers; otherwise substring of ticker or company."""
+    """Ticker list ("AAPL, MSFT", "AAPL MSFT", or one ticker with a comma: "F,") → exact tickers;
+    otherwise substring of ticker or company."""
     text = (text or "").strip()
     if not text:
         return df
     parts = [p.upper() for p in text.replace(";", ",").replace(",", " ").split()]
-    is_list = "," in text or ";" in text or text.isupper()
-    if len(parts) > 1 and is_list:
+    if "," in text or ";" in text or (len(parts) > 1 and text.isupper()):
         return df[df["ticker"].str.upper().isin(parts)]
     t = text.upper()
     return df[df["ticker"].str.upper().str.contains(t, regex=False)
