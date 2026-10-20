@@ -43,6 +43,7 @@ from screener.market import compute_regime, trend_strength  # noqa: E402
 VERSION = "0.2.0"
 MAX_AGE = dt.timedelta(minutes=15)       # TradingView data is ~15 min delayed anyway
 RETRY_AFTER = dt.timedelta(minutes=2)    # when offline, don't hammer the network on every click
+RETRY_TIMEOUT = 20                         # seconds, for those retries (a normal fetch takes ~15 s)
 REFRESH_MIN = dt.timedelta(seconds=60)   # "Refresh data" clicked again sooner: no new request
 CUSTOM = "— Custom —"
 USER_PREFIX = "★ "
@@ -127,20 +128,18 @@ _market.clear = _fetch_market.clear
 
 
 def get_data(force: bool = False):
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now()
     snap = ss.get("snap")
-    last_attempt = ss.get("last_attempt")
-    if last_attempt is not None and last_attempt.tzinfo is None:
-        last_attempt = last_attempt.replace(tzinfo=dt.timezone.utc)
-    attempt_due = (snap is not None and snap.source == "stale" and
-                   (last_attempt is None or now - last_attempt > RETRY_AFTER))
-    due = (force or snap is None or attempt_due
-           or (snap.source != "stale" and (snap.age > MAX_AGE or snap.age < dt.timedelta(0))))
+    due = (force or snap is None
+           or (snap.source == "stale" and now - ss.get("last_attempt", now) > RETRY_AFTER)
+           or (snap.source != "stale" and not dt.timedelta(0) <= snap.age <= MAX_AGE))   # < 0: clock went back
     if due:
         ss.last_attempt = now
         with st.spinner(t("Loading market data from TradingView… (≈15 sec)")):
             try:
-                snap = load_universe(_store(), fetch_universe, MAX_AGE, force=force, required=REQUIRED)
+                retry = snap is not None and snap.source == "stale"     # offline: don't block a click for 60 s
+                snap = load_universe(_store(), fetch_universe, MAX_AGE, force=force, required=REQUIRED,
+                                     timeout=RETRY_TIMEOUT if retry else None)
             except Exception as e:
                 log.exception("no data available")
                 st.error("לא ניתן להוריד נתונים, ואין נתונים שמורים מהפעם הקודמת. "

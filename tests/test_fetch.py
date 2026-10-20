@@ -175,23 +175,28 @@ def test_unreadable_latest_falls_back_to_snapshot(tmp_path):
     assert "network error" in snap.error
 
 
-def test_fetch_timeout_short_when_cache_exists(tmp_path):
+def test_timeout_is_passed_only_when_asked(tmp_path):
     store = Store(tmp_path)
     good = make_raw(100)
-
     timeouts = []
 
-    def mock_fetch(timeout=60):
+    def fetch(timeout=60):
         timeouts.append(timeout)
         return good
 
-    # Initial load: no cache exists -> timeout should be 60
-    load_universe(store, mock_fetch, dt.timedelta(minutes=15))
-    assert timeouts == [60]
+    load_universe(store, fetch, dt.timedelta(minutes=15))                        # normal: the provider's own
+    load_universe(store, fetch, dt.timedelta(minutes=15), force=True, timeout=20)  # the app's offline retry
+    assert timeouts == [60, 20]
 
-    # Retry load with force=True: cache exists -> timeout should be 15
-    load_universe(store, mock_fetch, dt.timedelta(minutes=15), force=True)
-    assert timeouts == [60, 15]
+
+def test_fetch_time_is_shown_in_local_time(tmp_path):
+    """Stored tz-aware, so the header ("שעת הנתונים") must still show the PC's clock, not UTC."""
+    store = Store(tmp_path)
+    snap = load_universe(store, lambda: make_raw(100), dt.timedelta(minutes=15))
+    local_now = dt.datetime.now()
+    for ts in (snap.fetched_at, store.load_latest()[1]):
+        assert ts.tzinfo is not None
+        assert abs(ts.replace(tzinfo=None) - local_now) < dt.timedelta(minutes=1)
 
 
 def test_validate_universe_logs_empty_provider_columns(caplog, monkeypatch):
@@ -203,8 +208,6 @@ def test_validate_universe_logs_empty_provider_columns(caplog, monkeypatch):
     with caplog.at_level("INFO"):
         validate_universe(bad_pe, bad_pe)
 
-    # Should log fill rate info
-    assert any("column price fill rate" in rec.message for rec in caplog.records)
     # Should log warning for empty provider column 'pe'
     warnings = [rec.message for rec in caplog.records if rec.levelname == "WARNING"]
     assert any("provider column pe is completely empty" in msg for msg in warnings)

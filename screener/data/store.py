@@ -15,7 +15,6 @@ A cache saved by an older version that lacks required columns is refetched (stil
 from __future__ import annotations
 
 import datetime as dt
-import inspect
 import json
 import logging
 import os
@@ -44,7 +43,8 @@ class Snapshot:
 
     @property
     def age(self) -> dt.timedelta:
-        now = dt.datetime.now(dt.timezone.utc) if self.fetched_at.tzinfo is not None else dt.datetime.now()
+        """Negative when the PC clock went back since the fetch: callers treat that as stale."""
+        now = dt.datetime.now().astimezone() if self.fetched_at.tzinfo is not None else dt.datetime.now()
         return now - self.fetched_at
 
 
@@ -60,8 +60,7 @@ class Store:
         if self.latest_path.exists() and self.meta_path.exists():
             try:
                 meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
-                fetched_at = dt.datetime.fromisoformat(meta["fetched_at"])
-                return (pd.read_parquet(self.latest_path), fetched_at, meta.get("source") or {})
+                return (pd.read_parquet(self.latest_path), _local(meta["fetched_at"]), meta.get("source") or {})
             except Exception as e:  # corrupted cache must never stop the app
                 log.warning("cannot read cache: %s", e)
 
@@ -71,7 +70,7 @@ class Store:
                 df = self.load_snapshot(day)
                 meta = self.snapshot_meta(day)
                 if "fetched_at" in meta:
-                    fetched_at = dt.datetime.fromisoformat(meta["fetched_at"])
+                    fetched_at = _local(meta["fetched_at"])
                 else:
                     fetched_at = dt.datetime(day.year, day.month, day.day)
                 source = meta.get("source") or {}
@@ -167,18 +166,16 @@ def _atomic_write_text(text: str, path: Path) -> None:
 FETCH_LOCK = threading.Lock()   # one fetch at a time for the whole server (all browser tabs)
 
 
-def _call_fetch(fetch: Callable[..., pd.DataFrame], timeout: float) -> pd.DataFrame:
-    try:
-        sig = inspect.signature(fetch)
-        if "timeout" in sig.parameters:
-            return fetch(timeout=timeout)
-    except (ValueError, TypeError):
-        pass
-    return fetch()
+def _local(iso: str) -> dt.datetime:
+    """A stored fetch time: tz-aware in the PC's time zone (the header shows local time), or naive as
+    written by versions before 2026-10-20."""
+    ts = dt.datetime.fromisoformat(iso)
+    return ts.astimezone() if ts.tzinfo is not None else ts
 
 
-def load_universe(store: Store, fetch: Callable[[], pd.DataFrame], max_age: dt.timedelta,
-                  force: bool = False, required: Iterable[str] = ()) -> Snapshot:
+def load_universe(store: Store, fetch: Callable[..., pd.DataFrame], max_age: dt.timedelta,
+                  force: bool = False, required: Iterable[str] = (), timeout: float | None = None) -> Snapshot:
+    """`timeout` (seconds) is passed to fetch() when given: the app shortens it for retries while offline."""
     def fresh(cached) -> bool:
         complete = cached is not None and set(required) <= set(cached[0].columns)
         if not complete or force:
@@ -193,10 +190,9 @@ def load_universe(store: Store, fetch: Callable[[], pd.DataFrame], max_age: dt.t
         cached = store.load_latest()         # another tab may have fetched while this one waited
         if fresh(cached):
             return Snapshot(cached[0], cached[1], "cache", meta=cached[2])
-        now = dt.datetime.now(dt.timezone.utc)
-        timeout = 15 if cached is not None else 60
+        now = dt.datetime.now().astimezone()     # tz-aware: a clock change (DST) cannot make it "fresh"
         try:
-            df = _call_fetch(fetch, timeout)
+            df = fetch() if timeout is None else fetch(timeout=timeout)
             if cached is not None and len(df) < 0.5 * len(cached[0]):
                 raise ValueError(f"universe shrank to {len(df)} rows from {len(cached[0])}")
         except Exception as e:
