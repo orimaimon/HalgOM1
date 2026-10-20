@@ -87,19 +87,11 @@ def read_table(data: bytes, filename: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["ticker"])
 
     first_row = [str(c).strip().lower() for c in df.iloc[0].dropna().tolist()]
-    if any(c in HEADERS for c in first_row):
-        df.columns = [str(c).strip() if pd.notna(c) else "" for c in df.iloc[0].tolist()]
-        df = df.iloc[1:].reset_index(drop=True)
-    else:
-        tickers = []
-        for val in df.values.flatten():
-            if pd.notna(val):
-                for part in re.split(r"[,;\s]+", str(val)):
-                    p = part.strip()
-                    if p:
-                        tickers.append(p)
-        df = pd.DataFrame({"ticker": tickers})
-    return df
+    cells = [p for val in df.values.flatten() if pd.notna(val) for p in re.split(r"[,;\s]+", str(val)) if p]
+    if not any(c in HEADERS for c in first_row) and cells and all(_TICKER.match(normalize_ticker(c)) for c in cells):
+        return pd.DataFrame({"ticker": cells})       # a bare list, e.g. our TradingView export "NASDAQ:AAPL,..."
+    df.columns = [str(c).strip() if pd.notna(c) else "" for c in df.iloc[0].tolist()]
+    return df.iloc[1:].reset_index(drop=True)          # unknown headers: parse() reports no_ticker_column
 
 
 @dataclass(frozen=True)

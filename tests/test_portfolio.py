@@ -262,3 +262,11 @@ def test_add_trades_refuses_an_oversell():
     assert PF.add_trades(plist, sell) == ["AAPL"] and len(plist.rows) == 1      # nothing added
     sell = parse("ticker,date,price,quantity,side\nAAPL,2025-02-02,12,5,sell\n").rows
     assert PF.add_trades(plist, sell) == [] and len(plist.rows) == 2
+
+
+def test_unknown_headers_are_not_read_as_tickers():
+    raw = PF.read_table("Stock,Qty\nAAPL,10\n".encode(), "x.csv")
+    imp = PF.parse(raw)
+    assert [p.code for p in imp.problems] == ["no_ticker_column"]
+    bare = PF.read_table(b"NASDAQ:AAPL,NYSE:BRK.B\n", "tv.txt")       # our TradingView export
+    assert list(PF.parse(bare).rows["ticker"]) == ["AAPL", "BRK.B"]
