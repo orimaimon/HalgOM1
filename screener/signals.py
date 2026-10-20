@@ -45,8 +45,14 @@ def cross_down(a: str, b: str) -> Mask:
     return lambda d: (d[a] < d[b]) & (d[_prev(a)] >= d[_prev(b)])
 
 
+def _candle_fn(k: str) -> Mask:
+    if k == "cdl_doji":
+        return lambda d: (d[k] == 1) & (d["cdl_doji_dragonfly"] != 1) & (d["cdl_doji_gravestone"] != 1)
+    return lambda d, k=k: d[k] == 1
+
+
 CANDLE_SIGNALS: list[Signal] = [
-    Signal(label, tag + bias, lambda d, k=k: d[k] == 1) for k, (label, bias, tag, _) in CANDLES.items()
+    Signal(label, tag + bias, _candle_fn(k)) for k, (label, bias, tag, _) in CANDLES.items()
 ]
 
 

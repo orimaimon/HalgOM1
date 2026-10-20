@@ -70,10 +70,10 @@ BUILTIN: dict[str, Preset] = {
         note="מחזור פי 3 ויותר מהרגיל — משהו קורה במניה"),
     "Stage 2 (Minervini)": Preset(
         {"ma_stack": "Price > SMA50 > SMA150 > SMA200 (Stage 2)", "low52": "30% or more above Low",
-         "high52": "0-25% below High"},
+         "high52": "0-25% below High", "sma200": "SMA200 rising", "score_momentum": "Over 70"},
         view="Technical", sort="perf_h",
-        note="שלב 2 לפי Minervini: מחיר מעל SMA50 שמעל SMA150 שמעל SMA200, לפחות 30% מעל השפל השנתי "
-             "ובטווח של 25% מהשיא. לא כולל את תנאי ה-RS ואת שיפוע ה-SMA200 מהשיטה המלאה"),
+        note="שלב 2 לפי Minervini: מחיר מעל SMA50 שמעל SMA150 שמעל SMA200, ממוצע 200 בעלייה, לפחות 30% מעל השפל השנתי, "
+             "בטווח של 25% מהשיא וציון מומנטום מעל 70"),
     "HalgOM top score": Preset(
         {"score": "Over 70", "earnings": "Not in next 7 days", **_LIQUID},
         view="Scores", sort="score",

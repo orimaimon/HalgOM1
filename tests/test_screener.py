@@ -395,7 +395,9 @@ def test_signal_filters():
 def test_ma_stack_and_stage2_preset():
     #            pass   SMA150<SMA200  too close to low  too far from high
     d = frame(price=[100.0, 100.0, 100.0, 100.0], sma50=[90.0] * 4, sma150=[80.0, 70.0, 80.0, 80.0],
-              sma200=[70.0, 75.0, 70.0, 70.0], low52=[60.0, 60.0, 80.0, 60.0], high52=[110.0, 110.0, 110.0, 140.0])
+              sma200=[70.0, 75.0, 70.0, 70.0], sma200_prev=[65.0] * 4,
+              perf_q=[30.0, 10.0, 10.0, 10.0], perf_h=[40.0, 10.0, 10.0, 10.0], perf_y=[50.0, 10.0, 10.0, 10.0],
+              low52=[60.0, 60.0, 80.0, 60.0], high52=[110.0, 110.0, 110.0, 140.0])
     stage2 = P.BUILTIN["Stage 2 (Minervini)"]
     assert screen(d, stage2.filters, junk=False)["ticker"].tolist() == ["X0"]
     assert apply_filters(d, {"ma_stack": "Price > SMA50 > SMA150 > SMA200 (Stage 2)"})["ticker"].tolist() == \

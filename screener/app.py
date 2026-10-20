@@ -32,7 +32,7 @@ from screener import portfolio as PF  # noqa: E402
 from screener import presets as P  # noqa: E402
 from screener import theme  # noqa: E402
 from screener.data import FETCH_LOCK, Store, load_universe  # noqa: E402
-from screener.data.store import DATA_DIR, session_date  # noqa: E402
+from screener.data.store import DATA_DIR, market_date, session_date  # noqa: E402
 from screener.data.tradingview import fetch_market, fetch_universe  # noqa: E402
 from screener.derive import add_derived  # noqa: E402
 from screener.fields import COLUMNS, DEFAULT_SORT, GROUP_COLUMNS, VIEWS, provider_columns  # noqa: E402
@@ -149,7 +149,7 @@ def get_data(force: bool = False):
                     st.rerun()
                 st.stop()
         ss.snap = snap
-        ss.df = add_derived(snap.df)
+        ss.df = add_derived(snap.df, today=market_date(snap.fetched_at))
     return ss.snap, ss.df
 
 
@@ -766,12 +766,12 @@ HEAT_UNIVERSES = ["S&P 500", "Nasdaq 100", "Screener results", "All stocks (top 
 
 
 def groups_page(universe: pd.DataFrame, res: pd.DataFrame) -> None:
-    c1, c2, c3, c4, c5 = st.columns([1.6, 1.8, 2.4, 1.6, 1.2], vertical_alignment="bottom")
+    c1, c2, c3, c4, c5 = st.columns([1.6, 2.2, 2.0, 1.6, 1.2], vertical_alignment="bottom")
     ss.setdefault("g_by", "Sector")
-    ss.setdefault("g_weight", "Equal")
+    ss.setdefault("g_weight", "Median")
     c1.segmented_control(t("Group by"), ["Sector", "Industry"], key="g_by", required=True, format_func=t)
-    c2.segmented_control(t("Averages"), ["Equal", "Market cap"], key="g_weight", required=True, format_func=t,
-                         help="שווה = כל מניה נספרת פעם אחת. שווי שוק = מניות גדולות משפיעות יותר (כמו מדד)")
+    c2.segmented_control(t("Averages"), ["Median", "Equal", "Market cap"], key="g_weight", required=True, format_func=t,
+                         help="חציון = הערך האמצעי (עמיד בפני חריגים). שווה = ממוצע שווה-משקל. שווי שוק = מניות גדולות משפיעות יותר (כמו מדד)")
     base = res if ss.get("g_results") else universe
     by = ss.g_by.lower()
     if by == "industry":
@@ -788,7 +788,8 @@ def groups_page(universe: pd.DataFrame, res: pd.DataFrame) -> None:
     if base.empty:
         st.info("אין מניות להצגה — הפילטרים או החיפוש לא החזירו תוצאות")
         return
-    table = G.group_performance(base, by=by, weight="cap" if ss.g_weight == "Market cap" else "equal")
+    weight_mode = "cap" if ss.g_weight == "Market cap" else "equal" if ss.g_weight == "Equal" else "median"
+    table = G.group_performance(base, by=by, weight=weight_mode)
     st.markdown(f"#### {len(table):,} {t('sectors' if by == 'sector' else 'industries')} · "
                 f"{len(base):,} {t('stocks')}")
     cc = st.column_config

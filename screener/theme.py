@@ -14,6 +14,7 @@ ACCENT = "#1F4E8C"      # buttons, selection, links (never red/green: those mean
 GAIN = "#147A43"
 LOSS = "#C2352B"
 FLAT = "#3B4048"        # heatmap middle (no change)
+NO_DATA = "#8A8880"     # heatmap tile with no value (not "no change")
 
 CSS = f"""
 <style>

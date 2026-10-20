@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from screener.theme import FLAT, GAIN, LOSS
+from screener.theme import FLAT, GAIN, LOSS, NO_DATA
 
 PERF = ["change", "perf_w", "perf_m", "perf_q", "perf_h", "perf_ytd", "perf_y"]
 OTHER = "Other"
@@ -25,7 +25,7 @@ def _wmean(x: pd.Series, w: pd.Series) -> float:
     return float(np.average(x[ok], weights=w[ok])) if ok.any() else np.nan
 
 
-def group_performance(df: pd.DataFrame, by: str = "sector", weight: str = "equal") -> pd.DataFrame:
+def group_performance(df: pd.DataFrame, by: str = "sector", weight: str = "median") -> pd.DataFrame:
     """One row per group, largest market cap first. An empty input gives an empty table (same columns)."""
     groups = df[by].fillna(OTHER).astype(str)
     above = (df["price"] > df["sma50"]).astype(float).where(df["sma50"].notna())
@@ -36,8 +36,10 @@ def group_performance(df: pd.DataFrame, by: str = "sector", weight: str = "equal
         if weight == "cap":     # sum(x * cap) / sum(cap), over the stocks that have both
             ok = df[c].notna() & w.notna()
             out[c] = (df[c] * w).where(ok).groupby(groups).sum(min_count=1) / w.where(ok).groupby(groups).sum(min_count=1)
-        else:
+        elif weight == "equal":
             out[c] = df[c].groupby(groups).mean()
+        else:                   # median
+            out[c] = df[c].groupby(groups).median()
     out["pct_above_sma50"] = above.groupby(groups).mean() * 100
     out = out.rename_axis("group").reset_index()
     return out.sort_values("market_cap", ascending=False, na_position="last").reset_index(drop=True)
@@ -71,15 +73,22 @@ def heatmap_figure(df: pd.DataFrame, color: str = "change", limit: float = 3.0, 
                    root: str = "US stocks", stocks: str = "stocks", cap_label: str = "Market cap") -> go.Figure:
     """root / stocks / cap_label are display texts (Hebrew UI passes translations)."""
     n = heatmap_data(df, color, root, stocks)
-    shown = n["color"].clip(-limit, limit).fillna(0)
+    val = n["color"].to_numpy(dtype=float)
+    has_val = ~np.isnan(val)
+
+    # numbers go through the colorscale; a tile with no value gets its own grey, not the "no change" color
+    marker_colors = [float(np.clip(v, -limit, limit)) if ok else NO_DATA for v, ok in zip(val, has_val)]
+
+    fmt_color = np.where(has_val, [f"{v:+.2f}%" for v in val], "—")
+
     fig = go.Figure(go.Treemap(
         ids=n["id"], parents=n["parent"], labels=n["label"], values=n["value"], branchvalues="total",
-        customdata=np.column_stack([n["color"].to_numpy(dtype=float), n["text"]]),
-        marker=dict(colors=shown, colorscale=[[0, LOSS], [0.5, FLAT], [1, GAIN]],
+        customdata=np.column_stack([fmt_color, n["text"]]),
+        marker=dict(colors=marker_colors, colorscale=[[0, LOSS], [0.5, FLAT], [1, GAIN]],
                     cmin=-limit, cmax=limit, cmid=0, showscale=True,
                     colorbar=dict(title="%", ticksuffix="%", thickness=12)),
-        texttemplate="<b>%{label}</b><br>%{customdata[0]:+.2f}%",
-        hovertemplate="<b>%{label}</b> %{customdata[1]}<br>%{customdata[0]:+.2f}%"
+        texttemplate="<b>%{label}</b><br>%{customdata[0]}",
+        hovertemplate="<b>%{label}</b> %{customdata[1]}<br>%{customdata[0]}"
                       f"<br>{cap_label} $%{{value:,.3s}}<extra></extra>",
         textfont=dict(color="white"), pathbar=dict(visible=True), maxdepth=4,   # root > sector > industry > ticker
     ))
