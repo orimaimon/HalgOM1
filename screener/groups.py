@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from screener.theme import FLAT, GAIN, LOSS
+from screener.theme import FLAT, GAIN, LOSS, NO_DATA
 
 PERF = ["change", "perf_w", "perf_m", "perf_q", "perf_h", "perf_ytd", "perf_y"]
 OTHER = "Other"
@@ -76,11 +76,8 @@ def heatmap_figure(df: pd.DataFrame, color: str = "change", limit: float = 3.0, 
     val = n["color"].to_numpy(dtype=float)
     has_val = ~np.isnan(val)
 
-    shown_colors = np.where(has_val, np.clip(val, -limit, limit), 0.0)
-    marker_colors = list(shown_colors)
-    for i, ok in enumerate(has_val):
-        if not ok:
-            marker_colors[i] = "#808080"
+    # numbers go through the colorscale; a tile with no value gets its own grey, not the "no change" color
+    marker_colors = [float(np.clip(v, -limit, limit)) if ok else NO_DATA for v, ok in zip(val, has_val)]
 
     fmt_color = np.where(has_val, [f"{v:+.2f}%" for v in val], "—")
 
