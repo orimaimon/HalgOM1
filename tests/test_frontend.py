@@ -262,3 +262,69 @@ def test_import_problems_are_hebrew():
     texts = [I.problem(p) for p in PF.parse(raw).problems]
     assert texts == ["שורה 3: מספר לא תקין במחיר: abc", "שורה 4: חסר סימול"]
     assert I.problem(PF.Problem(0, "oversold", "AAPL")).startswith("ב-AAPL נמכרו")
+
+
+# ── round 3, part B1 (#43) ──────────────────────────────────────────────────
+
+def test_one_ticker_with_a_comma_is_an_exact_search():
+    from screener.filters import search
+    df = pd.DataFrame({"ticker": ["F", "PFE", "AFL"], "company": ["Ford", "Pfizer", "Aflac"]})
+    assert list(search(df, "F,")["ticker"]) == ["F"]
+    assert list(search(df, "F")["ticker"]) == ["F", "PFE", "AFL"]          # a word is still a substring search
+
+
+def test_show_one_ticker_list_in_screener(app):
+    a, _, _ = open_portfolios(app)
+    PF.save(PF.PList("אחת", PF.WATCHLIST, [{"ticker": a, "date": "2026-10-01", "price": 10.0, "note": ""}]))
+    app.session_state["only_new"] = True
+    app.run()
+    app.button(key="pf_show").click().run()
+    assert not app.exception, app.exception
+    assert app.session_state["hide_junk"] is False and app.session_state["only_new"] is False
+    assert any("1 תוצאות" in m.value for m in app.markdown)
+    assert any("מוצגת הרשימה" in h for h in notes(app))
+    app.button(key="list_banner_close").click().run()
+    assert app.session_state["query"] == "" and not any("מוצגת הרשימה" in h for h in notes(app))
+
+
+def test_reset_turns_only_new_off(app):
+    app.run()
+    app.session_state["only_new"] = True
+    app.run()
+    next(b for b in app.button if b.label == "איפוס").click().run()
+    assert not app.exception, app.exception
+    assert app.session_state["only_new"] is False
+
+
+def test_changed_preset_is_marked_and_can_be_reapplied(app):
+    app.run()
+    app.selectbox(key="preset").select("Unusual volume").run()
+    assert "preset_reapply" not in [b.key for b in app.button]
+    app.selectbox(key="f_rel_volume").select("Any").run()                  # change the preset's filter
+    assert not app.exception, app.exception
+    assert any("(שונה)" in o for o in app.selectbox(key="preset").options)   # options are the shown labels
+    app.button(key="preset_reapply").click().run()
+    assert app.session_state["f_rel_volume"] != "Any"
+    assert "preset_reapply" not in [b.key for b in app.button]
+
+
+def test_results_count_follows_only_new(app, tmp_path):
+    import datetime as dt
+
+    import screener.data.store as store_mod
+    raw = clean(make_raw(300).assign(is_primary=True, currency="USD"))
+    snaps = tmp_path / "snapshots"
+    snaps.mkdir(exist_ok=True)
+    raw.head(250).to_parquet(snaps / f"{store_mod.session_date(dt.datetime.now() - dt.timedelta(days=4))}.parquet")
+    app.run()
+    app.toggle(key="only_new").set_value(True).run()
+    assert not app.exception, app.exception
+    shown = len(app.dataframe[0].value) if app.dataframe else 0
+    assert any(f"{shown} תוצאות" in m.value for m in app.markdown)
+
+
+def test_goodbye_mentions_other_tabs(app, monkeypatch):
+    monkeypatch.setattr(lifecycle, "stop_server", lambda reason: None)
+    app.run()
+    app.button(key="exit").click().run()
+    assert any("לשוניות אחרות" in h for h in notes(app))

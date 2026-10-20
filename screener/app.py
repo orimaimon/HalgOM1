@@ -289,12 +289,23 @@ def on_reset():
         ss[f"f_{f.key}"] = ANY
     ss.preset = CUSTOM
     ss.query = ""
+    ss.only_new = False
 
 
 def on_clear_all():
     """The empty-results button: every filter, the search and "Only new"."""
     on_reset()
-    ss.only_new = False
+
+
+def preset_modified(presets: dict[str, P.Preset]) -> bool:
+    """The selected preset's filters were changed by hand since it was chosen."""
+    p = presets.get(ss.get("preset"))
+    return p is not None and active(selections()) != active({f.key: p.filters.get(f.key, ANY) for f in FILTERS})
+
+
+def on_list_banner_close():
+    ss.query = ""
+    ss.pop("list_view", None)
 
 
 def on_save():
@@ -536,8 +547,12 @@ def toolbar(presets: dict[str, P.Preset]) -> None:
     if ss.get("preset") not in names:
         ss.preset = CUSTOM
     c1, c2, c3, c4, c7, c5, c6 = st.columns([2.2, 2.0, 1.5, 1.1, 1.6, 1.0, 1.3], vertical_alignment="bottom")
+    changed = ss.preset if preset_modified(presets) else None
+    lang = L()
+
     def preset_name(n: str) -> str:
-        return t(n) if n == CUSTOM else n if n.startswith(USER_PREFIX) else I.preset(n, L())
+        name = I.ui(n, lang) if n == CUSTOM else n if n.startswith(USER_PREFIX) else I.preset(n, lang)
+        return f"{name} {I.ui('(changed)', lang)}" if n == changed else name
 
     c1.selectbox(t("Screen"), names, key="preset", on_change=on_preset, format_func=preset_name,
                  help="סריקות מוכנות. בחירה בסריקה ממלאת את הפילטרים — אפשר לשנות אותם אחר כך")
@@ -559,6 +574,12 @@ def toolbar(presets: dict[str, P.Preset]) -> None:
     note = presets.get(ss.preset).note if ss.preset in presets else ""
     if note:
         hebrew_note(f"ℹ️ {note}")
+    if changed:
+        n1, n2 = st.columns([4, 1.3], vertical_alignment="center")
+        with n1:
+            hebrew_note("הפילטרים שונו מאז שנבחרה הסריקה.")
+        n2.button(t("Restore screen"), on_click=on_preset, key="preset_reapply", use_container_width=True,
+                  help="מחזיר את הפילטרים של הסריקה שנבחרה")
 
 
 def filter_panel(df: pd.DataFrame) -> None:
@@ -585,9 +606,19 @@ def filter_panel(df: pd.DataFrame) -> None:
 def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
             prev: history.Previous | None) -> None:
     top = st.columns([3, 5, 1.6], vertical_alignment="center")
+    n_new = int((res["new"] == history.NEW).sum()) if prev is not None else 0
+    if prev is not None and ss.get("only_new"):          # the count must match the table below it
+        res = res[res["new"] == history.NEW]
     of = f"<small>/ {len(universe):,}</small>" if len(res) != len(universe) else ""
     top[0].markdown(f'<div class="hs-count">{len(res):,} {html.escape(t("results"))}{of}</div>',
                     unsafe_allow_html=True)
+    banner = ss.get("list_view")
+    if banner and ss.get("query") == banner[1]:
+        b1, b2 = st.columns([4, 1.3], vertical_alignment="center")
+        with b1:
+            hebrew_note(f"מוצגת הרשימה “{banner[0]}” מדף התיקים")
+        b2.button(t("Back to all stocks"), on_click=on_list_banner_close, key="list_banner_close",
+                  use_container_width=True)
     with top[1]:
         st.segmented_control("View", list(VIEWS), key="view", label_visibility="collapsed", required=True,
                              format_func=t)
@@ -604,14 +635,11 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
     if ss.hide_junk and len(universe) < len(df):
         notes.append(f"{len(df) - len(universe):,} מניות זבל מוסתרות ({t('Hide junk')})")
     if prev is not None:
-        n_new = int((res["new"] == history.NEW).sum())
         day_str = hebrew_day_str(prev.day)
         top[2].toggle(f"{t('Only new')} ({n_new:,})", key="only_new",
                       help=f"רק מניות שנכנסו לתוצאות מאז ה-snapshot של {day_str}")
         view_cols = [view_cols[0], "new", *view_cols[1:]]
         notes.append(f"חדש = לא היה בתוצאות ב{day_str}")
-        if ss.get("only_new"):
-            res = res[res["new"] == history.NEW]
     if notes:
         hebrew_note(" · ".join(notes))
     if prev is not None and prev.missing:
@@ -758,6 +786,8 @@ def export_bar(res: pd.DataFrame, view_cols: list[str], snap) -> None:
     preset = ss.get("preset")
     shown_title = (t("(custom)") if preset in (None, CUSTOM) else title if preset.startswith(USER_PREFIX)
                    else I.preset(title, L()))
+    if preset_modified(all_presets()):
+        shown_title += f" {t('(changed)')}"
 
     def xlsx() -> bytes:
         data = export.to_excel(display_values(res), cols, filters_desc, snap.fetched_at, shown_title,
@@ -1054,9 +1084,12 @@ def on_pf_delete():
         ss.pop("pf_name", None)
 
 
-def on_show_in_screener(tickers: list[str]):
+def on_show_in_screener(name: str, tickers: list[str]):
     on_reset()                                    # filters would hide part of the list
-    ss.query = ", ".join(tickers)
+    ss.hide_junk = False                          # ... and so would Hide junk ("Only new" is off after the reset)
+    query = ", ".join(tickers) + ("," if len(tickers) == 1 else "")    # a comma = exact tickers, even one
+    ss.query = query
+    ss.list_view = (name, query)                  # the banner shows while this search is on
     ss.page = "Screener"
 
 
@@ -1224,7 +1257,7 @@ def portfolios_page(df: pd.DataFrame) -> None:
                  format_func=lambda n: f"{n} · {t('Portfolio' if lists[n].kind == PF.PORTFOLIO else 'Watchlist')}")
     plist = lists[ss.pf_name]
     tickers = list(dict.fromkeys(r["ticker"] for r in plist.rows))
-    c2.button(t("Show in screener"), on_click=on_show_in_screener, args=(tickers,), disabled=not tickers,
+    c2.button(t("Show in screener"), on_click=on_show_in_screener, args=(plist.name, tickers), disabled=not tickers,
               use_container_width=True, icon=":material/search:", key="pf_show",
               help="פותח את הסורק עם המניות של הרשימה בלבד (הפילטרים מתאפסים)")
     c3.download_button(t("Export list"), PF.to_csv(plist), f"{export.file_stem(plist.name)}.csv", mime="text/csv",
@@ -1249,8 +1282,8 @@ def goodbye() -> None:
             '<div dir="rtl" style="text-align:center;margin-top:1.2rem;font-size:1.4rem;font-weight:600">'
             'הסקרינר נסגר</div>'
             f'<div dir="rtl" style="text-align:center;margin-top:0.6rem;color:{theme.MUTED}">'
-            'אפשר לסגור את הלשונית הזו. כדי לפתוח שוב — לחיצה כפולה על הקיצור "HalgOM Screener" '
-            'בשולחן העבודה.</div>')
+            'אפשר לסגור את הלשונית הזו, וגם לשוניות אחרות של הסקרינר אם פתוחות. כדי לפתוח שוב — '
+            'לחיצה כפולה על הקיצור "HalgOM Screener" בשולחן העבודה.</div>')
     if not ss.get("exit_sent"):
         ss.exit_sent = True
         lifecycle.stop_server("Exit button")

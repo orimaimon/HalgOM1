@@ -69,6 +69,7 @@ UI: dict[str, str] = {
     "Empty watchlist": "רשימת מעקב ריקה", "— New watchlist —": "— רשימת מעקב חדשה —",
     "Add to watchlist": "הוספה לרשימת מעקב", "Add tickers": "הוספת סימולים", "Add": "הוספה",
     "Remove ticker": "הסרת סימול", "Remove": "הסרה", "Add trade": "הוספת עסקה", "Trades": "עסקאות",
+    "Restore screen": "החזרת הסריקה", "Back to all stocks": "חזרה לכל המניות", "(changed)": "(שונה)",
     "Show in screener": "הצגה בסורק", "Export list": "ייצוא הרשימה", "Delete list": "מחיקת הרשימה",
     "Ticker": "סימול", "Date": "תאריך", "Quantity": "כמות", "Side": "פעולה", "buy": "קנייה", "sell": "מכירה",
     "Fees": "עמלות", "Market value": "שווי נוכחי", "Cost": "עלות", "Unrealized P&L": "רווח/הפסד פתוח",
