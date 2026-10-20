@@ -11,6 +11,7 @@ import html
 import json
 import logging
 import logging.handlers
+import re
 import sys
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from screener import groups as G  # noqa: E402
 from screener import history  # noqa: E402
 from screener import i18n as I  # noqa: E402
 from screener import lifecycle  # noqa: E402
+from screener import portfolio as PF  # noqa: E402
 from screener import presets as P  # noqa: E402
 from screener import theme  # noqa: E402
 from screener.data import Store, load_universe  # noqa: E402
@@ -44,13 +46,13 @@ RETRY_AFTER = dt.timedelta(minutes=2)    # when offline, don't hammer the networ
 CUSTOM = "— Custom —"
 USER_PREFIX = "★ "
 GRID = 6
-PAGES = ["Screener", "Groups", "Heatmap", "Guide"]
+PAGES = ["Screener", "Groups", "Heatmap", "Portfolios", "Guide"]
 GUIDE = Path(__file__).with_name("guide.html")
 # provider columns a cached snapshot must have; an older cache without them is refetched
 REQUIRED = provider_columns()
 # widget keys that must survive while their widget is not on the current page
 PERSIST = ["lang", "preset", "query", "sort_col", "sort_asc", "view", "hide_junk", "only_new", "export_all",
-           "g_by", "g_weight", "g_sector", "g_results", "h_universe", "h_color", "large_text"]
+           "g_by", "g_weight", "g_sector", "g_results", "h_universe", "h_color", "large_text", "pf_name"]
 
 st.set_page_config(page_title="HalgOM Screener", page_icon="📈", layout="wide")
 ss = st.session_state
@@ -466,7 +468,7 @@ def junk_toggle(container) -> None:
 def nav() -> str:
     st.segmented_control("Page", PAGES, key="page", label_visibility="collapsed", required=True, format_func=t,
                          help="סורק = סריקת מניות, קבוצות = ביצועים לפי סקטור ותעשייה, מפת חום = מפת השוק, "
-                              "מדריך = הסבר על הסקרינר ועל המונחים")
+                              "תיקים ומעקב = רשימות מעקב ותיקי השקעות שלך, מדריך = הסבר על הסקרינר ועל המונחים")
     return ss.page
 
 
@@ -657,6 +659,20 @@ def detail(row: pd.Series) -> None:
         st.html(snapshot_table(row))
         st.markdown(f"[{t('Open in TradingView')} ↗]({export.tradingview_url(row['tv_symbol'])}) · "
                     f"[Finviz ↗](https://finviz.com/quote.ashx?t={row['ticker']})")
+        add_to_watchlist_button(row["ticker"])
+
+
+def add_to_watchlist_button(ticker: str) -> None:
+    watchlists = [n for n, p in PF.load_all().items() if p.kind == PF.WATCHLIST]
+    options = watchlists + [NEW_WATCHLIST]
+    if ss.get("add_wl") not in options:
+        ss.add_wl = options[0]
+    with st.popover(t("Add to watchlist"), icon=":material/playlist_add:", use_container_width=True):
+        st.selectbox(t("Watchlist"), options, key="add_wl", format_func=lambda n: t(n) if n == NEW_WATCHLIST else n)
+        if ss.add_wl == NEW_WATCHLIST:
+            st.text_input(t("List name"), key="add_wl_name")
+        st.button(f"{t('Add')} {ticker}", on_click=on_add_to_watchlist, args=(ticker,), type="primary",
+                  key="add_wl_btn")
 
 
 def export_bar(res: pd.DataFrame, view_cols: list[str], snap) -> None:
@@ -788,6 +804,287 @@ def heatmap_page(universe: pd.DataFrame, res: pd.DataFrame) -> None:
                 "לחיצה על סקטור או תעשייה מגדילה אותם; לחזרה לחץ על שורת הניווט למעלה.")
 
 
+# ─────────────────────────── Portfolios page ───────────────────────────────
+
+NEW_WATCHLIST = "— New watchlist —"
+
+
+def _by_ticker(df: pd.DataFrame, col: str = "price") -> pd.Series:
+    """ticker -> a universe column (prices come from the screener's data: no extra requests)."""
+    return df.drop_duplicates("ticker").set_index("ticker")[col]
+
+
+def _money(v: float) -> str:
+    return "—" if pd.isna(v) else f"-${abs(v):,.0f}" if v < 0 else f"${v:,.0f}"
+
+
+def on_pf_import():
+    imp, name = ss.get("pf_pending"), (ss.get("pf_new_name") or "").strip()
+    if imp is None or not imp.ok or not name:
+        return
+    PF.save(PF.from_imported(name, imp, _by_ticker(ss.df)))
+    ss.pf_name, ss.pf_new_name = name, ""
+    ss.pf_upload = ss.get("pf_upload", 0) + 1          # a new uploader widget: the file is cleared
+    st.toast(f"הרשימה נשמרה: “{name}”", icon="💾")
+
+
+def on_pf_new_watchlist():
+    name = (ss.get("pf_new_name") or "").strip()
+    if not name or name in PF.load_all():
+        return
+    PF.save(PF.PList(name, PF.WATCHLIST))
+    ss.pf_name, ss.pf_new_name = name, ""
+
+
+def add_tickers(plist: PF.PList, text: str, prices: pd.Series) -> tuple[list[str], list[str]]:
+    """'aapl, msft nvda' -> (added, not in the screener). Tickers already in the list are skipped."""
+    added, unknown = [], []
+    for tk in filter(None, (PF.normalize_ticker(x) for x in re.split(r"[,;\s]+", text))):
+        if tk not in prices.index:
+            unknown.append(tk)
+        elif PF.add_to_watchlist(plist, tk, prices[tk]):
+            added.append(tk)
+    return added, unknown
+
+
+def _add_and_report(plist: PF.PList, text: str) -> None:
+    added, unknown = add_tickers(plist, text, _by_ticker(ss.df))
+    PF.save(plist)
+    if added:
+        st.toast(f"נוספו ל“{plist.name}”: {', '.join(added)}", icon="✅")
+    if unknown:
+        st.toast(f"לא נמצאו בסקרינר: {', '.join(unknown)}", icon="⚠️")
+
+
+def on_pf_add_tickers():
+    plist = PF.load_all().get(ss.get("pf_name"))
+    if plist is not None:
+        _add_and_report(plist, ss.get("pf_add") or "")
+    ss.pf_add = ""
+
+
+def on_add_to_watchlist(ticker: str):
+    """From the stock details panel."""
+    name = ss.get("add_wl")
+    if name == NEW_WATCHLIST:
+        name = (ss.get("add_wl_name") or "").strip()
+        if not name:
+            return
+    lists = PF.load_all()
+    plist = lists.get(name) or PF.PList(name, PF.WATCHLIST)
+    if plist.kind != PF.WATCHLIST:
+        st.toast(f"“{name}” הוא תיק, לא רשימת מעקב", icon="⚠️")
+        return
+    _add_and_report(plist, ticker)
+    ss.add_wl, ss.add_wl_name = name, ""
+
+
+def on_pf_remove():
+    plist = PF.load_all().get(ss.get("pf_name"))
+    if plist is not None:
+        plist.rows = [r for r in plist.rows if r["ticker"] != ss.get("pf_remove")]
+        PF.save(plist)
+
+
+def on_pf_trade():
+    plist = PF.load_all().get(ss.get("pf_name"))
+    if plist is None:
+        return
+    raw = pd.DataFrame([{"ticker": ss.get("pf_t_ticker") or "", "date": ss.get("pf_t_date"),
+                         "price": ss.get("pf_t_price"), "quantity": ss.get("pf_t_qty"),
+                         "side": ss.get("pf_t_side"), "fees": ss.get("pf_t_fees") or 0.0,
+                         "note": ss.get("pf_t_note") or ""}])
+    imp = PF.parse(raw)
+    errors = [I.problem(PF.Problem(0, p.code, p.value)) for p in imp.problems]
+    if not errors:
+        errors = [I.problem(PF.Problem(0, "oversold", tk)) for tk in PF.add_trades(plist, imp.rows)]
+    if errors:
+        ss.pf_trade_errors = errors
+        return
+    PF.save(plist)
+    ss.pf_trade_errors = []
+    for k in ("pf_t_ticker", "pf_t_price", "pf_t_qty", "pf_t_fees", "pf_t_note"):
+        ss.pop(k, None)
+    st.toast(f"העסקה נוספה: {imp.rows['ticker'].iloc[0]}", icon="✅")
+
+
+def on_pf_delete():
+    PF.delete(ss.get("pf_name"))
+    ss.pop("pf_name", None)
+
+
+def on_show_in_screener(tickers: list[str]):
+    on_reset()                                    # filters would hide part of the list
+    ss.query = ", ".join(tickers)
+    ss.page = "Screener"
+
+
+def import_panel(lists: dict[str, PF.PList], df: pd.DataFrame) -> None:
+    with st.expander(t("New list / import a file"), expanded=not lists, icon=":material/upload_file:"):
+        hebrew_note("קובץ CSV או אקסל, שורה לכל עסקה: סימול, תאריך, שער, כמות, ואפשר גם פעולה (קנייה/מכירה), "
+                    "עמלות והערה. קובץ עם עמודת סימולים בלבד נשמר כרשימת מעקב. הכותרות יכולות להיות בעברית. "
+                    "כדי לערוך רשימה קיימת: מייצאים אותה, משנים באקסל ומייבאים שוב באותו שם.")
+        c1, c2 = st.columns([1, 1.4], vertical_alignment="bottom")
+        name = c1.text_input(t("List name"), key="pf_new_name").strip()
+        up = c2.file_uploader(t("CSV or Excel file"), type=["csv", "xlsx", "xls"],
+                              key=f"pf_file_{ss.get('pf_upload', 0)}")
+        ss.pf_pending = None
+        if up is not None:
+            try:
+                imp = PF.parse(PF.read_table(up.getvalue(), up.name))
+            except Exception as e:
+                log.warning("cannot read %s: %s", up.name, e)
+                st.error("לא ניתן לקרוא את הקובץ. שמור אותו באקסל כ-CSV או כ-xlsx ונסה שוב.")
+                imp = None
+            if imp is not None and imp.problems:
+                st.error("יש לתקן בקובץ ולטעון שוב:\n\n" + "\n".join(f"- {I.problem(p)}" for p in imp.problems[:15])
+                         + (f"\n- ועוד {len(imp.problems) - 15}" if len(imp.problems) > 15 else ""))
+            elif imp is not None and imp.rows.empty:
+                st.error("הקובץ ריק")
+            elif imp is not None:
+                ss.pf_pending = imp
+                n_tk = imp.rows["ticker"].nunique()
+                what = (f"{t('Portfolio')}: {len(imp.rows)} {t('Trades')} ב-{n_tk} מניות"
+                        if imp.kind == PF.PORTFOLIO else f"{t('Watchlist')}: {n_tk} מניות")
+                unknown = sorted(set(imp.rows["ticker"]) - set(df["ticker"]))
+                st.success(what)
+                if unknown:
+                    hebrew_note(f"אין בסקרינר מחיר ל: {', '.join(unknown)} (למשל קרנות סל). "
+                                "הן יישמרו, אבל בלי שווי נוכחי.")
+        if name and name in lists:
+            hebrew_note(f"כבר יש רשימה בשם “{name}”. שמירה עם קובץ תחליף אותה.")
+        b1, b2, b3 = st.columns([1, 1, 1])
+        b1.button(t("Save list"), on_click=on_pf_import, type="primary", use_container_width=True,
+                  disabled=not (name and ss.pf_pending is not None), key="pf_save")
+        b2.button(t("Empty watchlist"), on_click=on_pf_new_watchlist, use_container_width=True,
+                  disabled=not name or name in lists, key="pf_empty", icon=":material/add:")
+        b3.download_button(t("Sample file"), PF.template_csv(), "halgom_portfolio_sample.csv", mime="text/csv",
+                           on_click="ignore", use_container_width=True, icon=":material/download:")
+
+
+def watchlist_view(plist: PF.PList, df: pd.DataFrame) -> None:
+    w = PF.watch_performance(plist.frame(), _by_ticker(df))
+    if w.empty:
+        hebrew_note("הרשימה ריקה. מוסיפים סימולים בתיבה למטה, או מכפתור “הוספה לרשימת מעקב” בפרטי מניה בסורק.")
+    else:
+        w["company"] = w["ticker"].map(_by_ticker(df, "company"))
+        w["change"] = w["ticker"].map(_by_ticker(df, "change"))
+        cols = ["ticker", "company", "date", "price", "current", "change", "since_added_pct", "note"]
+        cc = st.column_config
+        config = {"ticker": cc.TextColumn(t("Ticker"), pinned=True, width="small"),
+                  "company": cc.TextColumn(col_label("company"), width="medium"),
+                  "date": cc.DateColumn(t("Added"), format="DD/MM/YYYY"),
+                  "price": cc.NumberColumn(t("Price then"), format="%.2f"),
+                  "current": cc.NumberColumn(t("Price"), format="%.2f"),
+                  "change": cc.NumberColumn(col_label("change"), format="%.2f%%"),
+                  "since_added_pct": cc.NumberColumn(t("Since added"), format="%.2f%%"),
+                  "note": cc.TextColumn(t("Notes"))}
+        st.dataframe(w[cols].style.map(_sign_color, subset=["change", "since_added_pct"]), hide_index=True,
+                     column_config=config, placeholder="—", key="pf_watch_table", height=min(38 + 35 * len(w), 600))
+    c1, c2, c3 = st.columns([2.4, 1, 1.4], vertical_alignment="bottom")
+    c1.text_input(t("Add tickers"), key="pf_add", placeholder="AAPL, MSFT")
+    c2.button(t("Add"), on_click=on_pf_add_tickers, use_container_width=True, key="pf_add_btn")
+    if not w.empty:
+        with c3.popover(t("Remove ticker"), icon=":material/remove:", use_container_width=True):
+            st.selectbox(t("Ticker"), list(w["ticker"]), key="pf_remove")
+            st.button(t("Remove"), on_click=on_pf_remove, key="pf_remove_btn")
+
+
+def portfolio_view(plist: PF.PList, df: pd.DataFrame) -> None:
+    trades = plist.frame()
+    val = PF.valuation(PF.positions(trades), _by_ticker(df))
+    val["company"] = val["ticker"].map(_by_ticker(df, "company"))
+    val["change"] = val["ticker"].map(_by_ticker(df, "change"))
+    held = val[val["quantity"] > 0]
+    priced = held[held["price"].notna()]
+    value, cost = priced["value"].sum(), priced["cost"].sum()
+    today = (priced["value"] * priced["change"] / (100 + priced["change"])).sum()
+    cc = st.column_config
+    m = st.columns(4)
+    m[0].metric(t("Market value"), _money(value), f"{_money(today)} {t('today')}" if len(priced) else None)
+    m[1].metric(t("Cost"), _money(cost))
+    m[2].metric(t("Unrealized P&L"), _money(value - cost),
+                f"{(value - cost) / cost * 100:+.2f}%" if cost > 0 else None)
+    m[3].metric(t("Realized P&L"), _money(val["realized"].sum()))
+    missing = held.loc[held["price"].isna(), "ticker"].tolist()
+    if missing:
+        hebrew_note(f"אין בסקרינר מחיר ל: {', '.join(missing)} (למשל קרנות סל). הן לא נכללות בשווי ובסיכומים.")
+    if held.empty:
+        hebrew_note("אין כרגע פוזיציות פתוחות בתיק.")
+    else:
+        cols = ["ticker", "company", "quantity", "avg_cost", "price", "change", "value", "pnl", "pnl_pct",
+                "weight", "annual_pct", "first_buy"]
+        config = {"ticker": cc.TextColumn(t("Ticker"), pinned=True, width="small"),
+                  "company": cc.TextColumn(col_label("company"), width="medium"),
+                  "quantity": cc.NumberColumn(t("Quantity"), format="localized"),
+                  "avg_cost": cc.NumberColumn(t("Avg cost"), format="%.2f"),
+                  "price": cc.NumberColumn(t("Price"), format="%.2f"),
+                  "change": cc.NumberColumn(col_label("change"), format="%.2f%%"),
+                  "value": cc.NumberColumn(t("Market value"), format="dollar"),
+                  "pnl": cc.NumberColumn(t("P&L"), format="dollar"),
+                  "pnl_pct": cc.NumberColumn(t("P&L %"), format="%.2f%%"),
+                  "weight": cc.ProgressColumn(t("Weight"), min_value=0, max_value=100, format="%.1f%%"),
+                  "annual_pct": cc.NumberColumn(t("Annual return"), format="%.2f%%",
+                                                help="תשואה שנתית ממוצעת לפי תאריך הקנייה הממוצע. מוצגת רק "
+                                                     "אחרי 90 יום, כי לפני כן המספר מטעה"),
+                  "first_buy": cc.DateColumn(t("First buy"), format="DD/MM/YYYY")}
+        st.dataframe(held[cols].style.map(_sign_color, subset=["change", "pnl", "pnl_pct", "annual_pct"]),
+                     hide_index=True, column_config=config, placeholder="—", key="pf_positions",
+                     height=min(38 + 35 * len(held), 600))
+    hebrew_note("עלות ממוצעת כוללת עמלות. ספליטים ודיבידנדים אחרי הקנייה עוד לא מחושבים.")
+    with st.expander(f"{t('Trades')} ({len(trades)})"):
+        shown = trades.assign(side=trades["side"].map(t))
+        st.dataframe(shown, hide_index=True, placeholder="—", key="pf_trades", column_config={
+            "ticker": t("Ticker"), "date": cc.DateColumn(t("Date"), format="DD/MM/YYYY"),
+            "price": cc.NumberColumn(t("Price"), format="%.2f"), "quantity": t("Quantity"),
+            "side": t("Side"), "fees": cc.NumberColumn(t("Fees"), format="%.2f"), "note": t("Notes")})
+    with st.popover(t("Add trade"), icon=":material/add:"):
+        with st.form("pf_trade", border=False):
+            c1, c2 = st.columns(2)
+            c1.text_input(t("Ticker"), key="pf_t_ticker")
+            c2.date_input(t("Date"), key="pf_t_date", value=dt.date.today(), max_value=dt.date.today(),
+                          format="DD/MM/YYYY")
+            c1.number_input(t("Price"), key="pf_t_price", min_value=0.0, value=None, step=0.01, format="%.2f")
+            c2.number_input(t("Quantity"), key="pf_t_qty", min_value=0.0, value=None, step=1.0)
+            c1.radio(t("Side"), ["buy", "sell"], key="pf_t_side", format_func=t, horizontal=True)
+            c2.number_input(t("Fees"), key="pf_t_fees", min_value=0.0, value=0.0, step=0.5)
+            st.text_input(t("Notes"), key="pf_t_note")
+            st.form_submit_button(t("Add trade"), on_click=on_pf_trade, type="primary")
+        for e in ss.get("pf_trade_errors") or []:
+            st.error(e)
+
+
+def portfolios_page(df: pd.DataFrame) -> None:
+    lists = PF.load_all()
+    import_panel(lists, df)
+    if not lists:
+        hebrew_note("עוד אין רשימות. אפשר לייבא קובץ מהברוקר או מאקסל, ליצור רשימת מעקב ריקה, "
+                    "או להוסיף מניה מפרטי המניה בסורק.")
+        return
+    names = list(lists)
+    if ss.get("pf_name") not in names:
+        ss.pf_name = names[0]
+    c1, c2, c3, c4 = st.columns([3, 1.2, 1.2, 1.2], vertical_alignment="bottom")
+    c1.selectbox(t("List"), names, key="pf_name",
+                 format_func=lambda n: f"{n} · {t('Portfolio' if lists[n].kind == PF.PORTFOLIO else 'Watchlist')}")
+    plist = lists[ss.pf_name]
+    tickers = list(dict.fromkeys(r["ticker"] for r in plist.rows))
+    c2.button(t("Show in screener"), on_click=on_show_in_screener, args=(tickers,), disabled=not tickers,
+              use_container_width=True, icon=":material/search:", key="pf_show",
+              help="פותח את הסורק עם המניות של הרשימה בלבד (הפילטרים מתאפסים)")
+    c3.download_button(t("Export list"), PF.to_csv(plist), f"{export.file_stem(plist.name)}.csv", mime="text/csv",
+                       on_click="ignore", use_container_width=True, icon=":material/download:",
+                       help="קובץ CSV באותו מבנה של הייבוא: גיבוי, עריכה באקסל או העברה למחשב אחר")
+    with c4.popover(t("Delete list"), icon=":material/delete:", use_container_width=True):
+        hebrew_note(f"למחוק את “{plist.name}”? אי אפשר לבטל. כדאי לייצא קודם.")
+        st.button(t("Delete"), on_click=on_pf_delete, type="primary", key="pf_delete")
+    if plist.kind == PF.PORTFOLIO:
+        portfolio_view(plist, df)
+    else:
+        watchlist_view(plist, df)
+    hebrew_note("הרשימות נשמרות במחשב הזה בלבד. מחירים מהסקרינר (בעיכוב של כ-15 דקות).")
+
+
 # ─────────────────────────── page ──────────────────────────────────────────
 
 def goodbye() -> None:
@@ -839,6 +1136,8 @@ def main() -> None:
         groups_page(universe, res)
     elif page == "Heatmap":
         heatmap_page(universe, res)
+    elif page == "Portfolios":
+        portfolios_page(df)
     else:
         prev = get_previous(snap)                # "New since yesterday" is only shown here
         res = res.assign(new=new_column(res, prev, sel))

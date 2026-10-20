@@ -62,6 +62,19 @@ UI: dict[str, str] = {
     "stocks": "מניות", "Stocks": "מניות", "Color by": "צבע לפי",
     "S&P 500": "S&P 500", "Nasdaq 100": "Nasdaq 100", "Screener results": "תוצאות הסריקה",
     "All stocks (top 1,000)": "כל המניות (1,000 הגדולות)",
+    # portfolios / watchlists
+    "Portfolios": "תיקים ומעקב", "List": "רשימה", "Watchlist": "רשימת מעקב", "Portfolio": "תיק",
+    "New list / import a file": "רשימה חדשה / ייבוא קובץ", "List name": "שם הרשימה",
+    "CSV or Excel file": "קובץ CSV או אקסל", "Sample file": "קובץ לדוגמה", "Save list": "שמירת הרשימה",
+    "Empty watchlist": "רשימת מעקב ריקה", "— New watchlist —": "— רשימת מעקב חדשה —",
+    "Add to watchlist": "הוספה לרשימת מעקב", "Add tickers": "הוספת סימולים", "Add": "הוספה",
+    "Remove ticker": "הסרת סימול", "Remove": "הסרה", "Add trade": "הוספת עסקה", "Trades": "עסקאות",
+    "Show in screener": "הצגה בסורק", "Export list": "ייצוא הרשימה", "Delete list": "מחיקת הרשימה",
+    "Ticker": "סימול", "Date": "תאריך", "Quantity": "כמות", "Side": "פעולה", "buy": "קנייה", "sell": "מכירה",
+    "Fees": "עמלות", "Market value": "שווי נוכחי", "Cost": "עלות", "Unrealized P&L": "רווח/הפסד פתוח",
+    "Realized P&L": "רווח/הפסד ממומש", "today": "היום", "Avg cost": "עלות ממוצעת", "P&L": "רווח/הפסד",
+    "P&L %": "רווח/הפסד %", "Weight": "משקל", "Annual return": "תשואה שנתית", "First buy": "קנייה ראשונה",
+    "Added": "תאריך הוספה", "Price then": "מחיר בהוספה", "Since added": "מאז ההוספה",
     # export sheet
     "Results": "תוצאות", "Status / Action": "סטטוס / פעולה", "Target Entry": "מחיר כניסה",
     "Notes": "הערות", "Filter": "פילטר", "Value": "ערך", "HalgOM Screener export": "ייצוא HalgOM Screener",
@@ -346,6 +359,32 @@ def value(column_key: str, v, lang: str):
     if lang != HE or not isinstance(v, str):
         return v
     return VALUES_HE.get(column_key, {}).get(v, v)
+
+
+PROBLEMS_HE = {
+    "no_ticker_column": "לא נמצאה עמודת סימולים. בשורה הראשונה צריכה להיות כותרת ticker או סימול",
+    "bad_ticker": "סימול לא תקין: {value}",
+    "unknown_ticker": "הסימול {value} לא נמצא בסקרינר",
+    "bad_date": "תאריך לא מובן: {value} (למשל 14/03/2025)",
+    "future_date": "תאריך עתידי: {value}",
+    "bad_number": "מספר לא תקין ב{value}",
+    "missing_value": "חסר {value}",
+    "bad_side": "פעולה לא מוכרת: {value} (קנייה או מכירה)",
+    "oversold": "ב-{value} נמכרו יותר מניות ממה שנקנו עד אותו תאריך",
+}
+_FIELDS_HE = {"ticker": "סימול", "date": "תאריך", "price": "מחיר", "quantity": "כמות", "fees": "עמלות"}
+
+
+def problem(p) -> str:
+    """A portfolio.Problem in Hebrew: 'שורה 4: חסר מחיר'."""
+    v = p.value
+    if p.code == "missing_value":
+        v = _FIELDS_HE.get(v, v)
+    elif p.code == "bad_number":
+        col, _, raw = v.partition(": ")
+        v = f"{_FIELDS_HE.get(col, col)}: {raw}"
+    text = PROBLEMS_HE.get(p.code, p.code).format(value=v)
+    return f"שורה {p.row}: {text}" if p.row else text
 
 
 def rtl_cell(text):

@@ -16,6 +16,7 @@ from screener import groups as G
 from screener import history
 from screener import i18n as I
 from screener import lifecycle
+from screener import portfolio as PF
 from screener import presets as P
 from screener import signals as S
 from screener.data.store import Store, load_universe
@@ -633,6 +634,7 @@ def test_app_smoke(tmp_path, monkeypatch):
                            "di_plus": 25.0, "di_minus": 15.0}, index=["SPY", "QQQ", "HYG", "VIX"])
     monkeypatch.setattr(store_mod, "DATA_DIR", tmp_path)
     monkeypatch.setattr(P, "PRESETS_PATH", tmp_path / "presets.json")
+    monkeypatch.setattr(PF, "PORTFOLIOS_PATH", tmp_path / "portfolios.json")
     monkeypatch.setattr(export, "EXPORT_DIR", tmp_path / "exports")
     monkeypatch.setattr(tv, "fetch_universe", lambda: raw)
     monkeypatch.setattr(tv, "fetch_market", lambda: market)
@@ -676,7 +678,7 @@ def test_app_smoke(tmp_path, monkeypatch):
     at.run()
     assert not at.exception, at.exception
 
-    for page in ("Groups", "Guide", "Heatmap"):
+    for page in ("Groups", "Guide", "Portfolios", "Heatmap"):
         at.session_state["page"] = page
         at.run()
         assert not at.exception, (page, at.exception)
@@ -881,7 +883,7 @@ def test_columns_views_presets_groups_have_hebrew():
         assert not english_left(I.column(k, c.label, I.HE)), k
     for k, c in GROUP_COLUMNS.items():
         assert not english_left(I.group_column(k, c.label, I.HE)), k
-    for name in [*VIEWS, *GROUPS, "Screener", "Groups", "Heatmap"]:
+    for name in [*VIEWS, *GROUPS, "Screener", "Groups", "Heatmap", "Portfolios"]:
         assert I.ui(name, I.HE) != name, name
     for name in P.BUILTIN:
         assert I.preset(name, I.HE) != name, name
@@ -929,7 +931,7 @@ def test_guide_covers_presets_and_ui_names():
     for name in I.PRESETS_HE.values():
         assert f"<td>{name}</td>" in text, name
     quoted = set(re.findall(r'<span class="ui">([^<]+)</span>', text))
-    for en in ["Screener", "Groups", "Heatmap", *GROUPS, *VIEWS]:
+    for en in ["Screener", "Groups", "Heatmap", "Portfolios", *GROUPS, *VIEWS]:
         assert I.ui(en, I.HE) in quoted, en
     known = (set(I.UI.values()) | set(I.FILTERS_HE.values()) | set(I.OPTIONS_HE.values())
              | set(I.LANGS.values()) | {"HalgOM Screener", "Excel", "CSV"})
