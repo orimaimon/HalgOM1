@@ -45,6 +45,8 @@ UI: dict[str, str] = {
     "Save current screen as": "שמירת הסריקה הנוכחית בשם", "Save": "שמירה",
     "Delete saved screen": "מחיקת סריקה שמורה", "Delete": "מחיקה",
     "Saved screen": "הסריקה נשמרה", "Deleted": "נמחקה",
+    "A screen with this name already exists. Click save again to overwrite.":
+        "סריקה בשם זה כבר קיימת. לחיצה נוספת על שמירה תעדכן אותה.",
     # Hide junk rules (filters.JUNK_RULES)
     "Price under $1": "מחיר מתחת ל-$1", "Avg Volume under 50K": "מחזור ממוצע מתחת ל-50K",
     "Market Cap under $50M": "שווי שוק מתחת ל-$50M",
@@ -408,3 +410,37 @@ def signal_tags(text: str, lang: str) -> str:
         else:
             parts.append(tag)
     return ", ".join(parts)
+
+
+REGIME_REASONS_HE = {
+    "missing market data": "חסרים נתוני שוק",
+    "<18 calm": "<18 רגוע",
+    ">25 fear": ">25 פחד",
+    "18-25 elevated": "18-25 מתוח",
+    "above": "מעל",
+    "below": "מתחת ל-",
+    "credit risk-on": "אשראי risk-on",
+    "credit risk-off": "אשראי risk-off",
+}
+
+
+def regime_reason(text: str, lang: str) -> str:
+    """Translate a market regime reason string for display in tooltips."""
+    if lang != HE or not text:
+        return text
+    if text in REGIME_REASONS_HE:
+        return REGIME_REASONS_HE[text]
+    m_vix = re.match(r"^VIX ([\d\.]+) \((<18 calm|>25 fear|18-25 elevated)\)$", text)
+    if m_vix:
+        v, part = m_vix.group(1), REGIME_REASONS_HE.get(m_vix.group(2), m_vix.group(2))
+        return f"VIX {v} ({part})"
+    m_spy = re.match(r"^SPY (above|below) SMA200$", text)
+    if m_spy:
+        rel = "מעל" if m_spy.group(1) == "above" else "מתחת ל-"
+        return f"SPY {rel} SMA200"
+    m_hyg = re.match(r"^HYG (above|below) SMA20 \((credit risk-on|credit risk-off)\)$", text)
+    if m_hyg:
+        rel = "מעל" if m_hyg.group(1) == "above" else "מתחת ל-"
+        credit = REGIME_REASONS_HE.get(m_hyg.group(2), m_hyg.group(2))
+        return f"HYG {rel} SMA20 ({credit})"
+    return text

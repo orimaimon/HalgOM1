@@ -84,3 +84,17 @@ def start_idle_watchdog(count: Callable[[], int | None] = active_sessions,
     t.start()
     log.info("idle watchdog started (%d x %gs)", idle_polls, poll)
     return t
+
+
+_WATCHDOG_LOCK = threading.Lock()
+_WATCHDOG_THREAD: threading.Thread | None = None
+
+
+def ensure_idle_watchdog_started(count: Callable[[], int | None] = active_sessions,
+                                 stop: Callable[[str], None] = stop_server,
+                                 poll: float = POLL_SECONDS, idle_polls: int = IDLE_POLLS) -> threading.Thread:
+    global _WATCHDOG_THREAD
+    with _WATCHDOG_LOCK:
+        if _WATCHDOG_THREAD is None:
+            _WATCHDOG_THREAD = start_idle_watchdog(count=count, stop=stop, poll=poll, idle_polls=idle_polls)
+        return _WATCHDOG_THREAD

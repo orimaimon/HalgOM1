@@ -22,20 +22,34 @@ class Regime:
     reasons: list[str] = field(default_factory=list)
 
 
+VIX_CALM = "<18 calm"
+VIX_FEAR = ">25 fear"
+VIX_ELEVATED = "18-25 elevated"
+SPY_ABOVE = "above"
+SPY_BELOW = "below"
+HYG_RISK_ON = "credit risk-on"
+HYG_RISK_OFF = "credit risk-off"
+MISSING_DATA = "missing market data"
+
+
 def compute_regime(m: pd.DataFrame) -> Regime:
     try:
         vix = m.at["VIX", "close"]
         spy, spy200 = m.at["SPY", "close"], m.at["SPY", "sma200"]
         hyg, hyg20 = m.at["HYG", "close"], m.at["HYG", "sma20"]
     except KeyError:
-        return Regime("unknown", ["missing market data"])
+        return Regime("unknown", [MISSING_DATA])
     if any(v is None or (isinstance(v, float) and math.isnan(v)) for v in (vix, spy, spy200, hyg, hyg20)):
-        return Regime("unknown", ["missing market data"])
+        return Regime("unknown", [MISSING_DATA])
+
+    vix_part = VIX_CALM if vix < 18 else VIX_FEAR if vix > 25 else VIX_ELEVATED
+    spy_part = SPY_ABOVE if spy > spy200 else SPY_BELOW
+    hyg_part = HYG_RISK_ON if hyg > hyg20 else HYG_RISK_OFF
 
     reasons = [
-        f"VIX {vix:.1f} ({'<18 calm' if vix < 18 else '>25 fear' if vix > 25 else '18-25 elevated'})",
-        f"SPY {'above' if spy > spy200 else 'below'} SMA200",
-        f"HYG {'above' if hyg > hyg20 else 'below'} SMA20 (credit {'risk-on' if hyg > hyg20 else 'risk-off'})",
+        f"VIX {vix:.1f} ({vix_part})",
+        f"SPY {spy_part} SMA200",
+        f"HYG {SPY_ABOVE if hyg > hyg20 else SPY_BELOW} SMA20 ({hyg_part})",
     ]
     bear_count = int(vix > 25) + int(spy < spy200) + int(hyg < hyg20)
     if bear_count >= 2:
