@@ -35,9 +35,10 @@ if not errorlevel 1 set "UV=1"
 
 rem --- 3. Python environment (first run takes 1-2 minutes) ---
 set "PY=screener\.venv\Scripts\python.exe"
-rem A venv copied from another PC (Drive, ZIP) points at a Python that is not here: rebuild it
+rem A venv copied from another PC (Drive, ZIP) points at a Python that is not here, and one built
+rem from a Python older than 3.11 cannot install the packages: rebuild it
 if exist "%PY%" (
-    "%PY%" -c "import sys" >nul 2>nul
+    "%PY%" -c "import sys; assert sys.version_info.minor >= 11" >nul 2>nul
     if errorlevel 1 rmdir /s /q "screener\.venv"
 )
 if not exist "%PY%" (
@@ -45,11 +46,14 @@ if not exist "%PY%" (
     if defined UV (uv venv --python 3.12 screener\.venv --quiet) else (call :syspython)
 )
 if not exist "%PY%" goto :fail
+set "INSTALL_FAILED="
 if defined UV (uv pip install --python screener\.venv -r screener\requirements.lock --quiet) else ("%PY%" -m pip install --quiet --disable-pip-version-check -r screener\requirements.lock)
-if errorlevel 1 goto :fail
+rem A failed install still runs the update below: the fix for it may be in the next version
+if errorlevel 1 set "INSTALL_FAILED=1"
 
 rem --- 4. updates - ONE line, no parentheses (a folder name may contain them); see NOTE ---
-if not defined SCREENER_NO_UPDATE if not defined SCREENER_UPDATED echo [3/3] Checking for updates... & "%PY%" -m screener.update & if errorlevel 3 set "SCREENER_UPDATED=1" & cmd /c ""%~f0"" & exit /b
+if not defined SCREENER_NO_UPDATE if not defined SCREENER_UPDATED echo [3/3] Checking for updates... & "%PY%" -m screener.update & if errorlevel 3 set "SCREENER_UPDATED=1" & cmd /c call "%~f0" & exit /b
+if defined INSTALL_FAILED goto :fail
 
 rem Skip Streamlit's one-time "enter your email" prompt
 if not exist "%USERPROFILE%\.streamlit\credentials.toml" (
@@ -74,7 +78,7 @@ echo  To close it: click Exit at the top of the screener, or close this window.
 echo  It also closes by itself 15 minutes after the last browser tab is closed.
 echo.
 "%PY%" -m streamlit run screener\app.py --server.port 8501 --browser.gatherUsageStats false --theme.base light --client.toolbarMode minimal --server.runOnSave false
-if errorlevel 1 goto :fail
+if errorlevel 1 goto :portbusy
 goto :eof
 
 :running
@@ -94,6 +98,15 @@ py -3 -m venv screener\.venv >nul 2>nul
 if not exist "%PY%" python -m venv screener\.venv >nul 2>nul
 exit /b 0
 
+:portbusy
+rem The screener did not start. If another program holds port 8501, say so instead of a generic error
+powershell -NoProfile -Command "if (Get-NetTCPConnection -LocalPort 8501 -State Listen -ErrorAction SilentlyContinue) { exit 0 }; exit 1" >nul 2>nul
+if errorlevel 1 goto :fail
+echo.
+echo  Another program on this computer is using port 8501, so the screener cannot start.
+echo  Close that program, or restart the computer, and try again.
+goto :fail
+
 :fail
 echo.
 echo  Something went wrong. Send the screenshot of this window, and the file
@@ -108,5 +121,6 @@ rem byte-identical and ends at byte 785, and the text above it keeps its total l
 rem (adjust the "rem ---" padding line). The block is now switched off by
 rem SCREENER_NO_UPDATE=1 just before it; step 4 runs screener\update.py instead, which needs
 rem no git. update.py may rewrite this file too, so step 4 is a single line: cmd has read the
-rem whole line before it runs, and the line itself restarts the launcher (cmd /c) when
-rem update.py exits with 3. tests/test_screener.py checks all of this.
+rem whole line before it runs, and the line itself restarts the launcher (cmd /c call) when
+rem update.py exits with 3. "call" keeps the path quoted for both cmd's, so a folder name with
+rem "&" or parentheses works. tests/test_screener.py checks all of this.

@@ -9,9 +9,14 @@ Self-update without git: run_screener.bat runs `python -m screener.update` befor
   - Anything else (another branch, local edits, local commits) is left alone, like `git pull --ff-only`.
 
 Remote: GitHub over SSH with a read-only deploy key when %USERPROFILE%\\.halgom\\deploy_key exists
-(needed once the repo is private), otherwise anonymous HTTPS. A `deploy_key` file put next to
-run_screener.bat is moved there on the first run, so the key does not stay in a shared folder.
-The key never goes into the repo (.gitignore).
+(needed once the repo is private), otherwise anonymous HTTPS. SSH tries port 22, then GitHub's port 443,
+then HTTPS. A `deploy_key` (or `deploy_key.txt`, as Notepad saves it) put next to run_screener.bat is
+moved there on the first run, so the key does not stay in a shared folder. The key never goes into
+the repo (.gitignore).
+
+A checkout writes .git/HALGOM_CHECKOUT (the target commit) first and removes it last: if it is cut
+off (window closed, power loss, a file locked by antivirus or OneDrive), the next run finishes it
+instead of taking the half-written files for local edits and skipping every later update.
 """
 from __future__ import annotations
 
@@ -20,6 +25,8 @@ import logging
 import os
 import shutil
 import sys
+import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,8 +34,12 @@ MAIN = b"refs/heads/main"
 ORIGIN_MAIN = b"refs/remotes/origin/main"
 HTTPS_URL = "https://github.com/orimaimon/HalgOM1.git"
 SSH_HOST, SSH_USER, SSH_PATH = "github.com", "git", "orimaimon/HalgOM1.git"
+SSH_443 = "ssh.github.com"            # GitHub's SSH over port 443, for networks that block port 22
 KEY_NAME = "deploy_key"
+KEY_NAMES = (KEY_NAME, KEY_NAME + ".txt")   # Notepad adds .txt
 TIMEOUT = 30
+DEADLINE = 45                    # seconds for the whole fetch: a stalled network must not hold the start
+PENDING = "HALGOM_CHECKOUT"         # in .git: the commit a checkout in progress is writing
 UPDATED, NOTHING = 3, 0
 
 # GitHub's published SSH host keys (fingerprints checked against docs.github.com, 2026-10-19).
@@ -53,8 +64,8 @@ def key_path() -> Path:
 
 def install_key(root: Path, dest: Path) -> None:
     """Move a deploy key dropped next to run_screener.bat into the user's profile."""
-    src = root / KEY_NAME
-    if not src.is_file():
+    src = next((root / n for n in KEY_NAMES if (root / n).is_file()), None)
+    if src is None:
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dest))
@@ -110,8 +121,9 @@ def ssh_vendor(key_file: Path):
         def run_command(self, host, command, username=None, port=None, password=None, key_filename=None,
                         ssh_command=None, protocol_version=None):
             client = paramiko.SSHClient()
-            for kind, b64 in GITHUB_HOST_KEYS.items():
-                client.get_host_keys().add(SSH_HOST, kind, paramiko.PKey.from_type_string(kind, _b64(b64)))
+            for kind, b64 in GITHUB_HOST_KEYS.items():        # ssh.github.com:443 has the same keys
+                for name in (SSH_HOST, f"[{SSH_443}]:443"):
+                    client.get_host_keys().add(name, kind, paramiko.PKey.from_type_string(kind, _b64(b64)))
             client.set_missing_host_key_policy(paramiko.RejectPolicy())
             client.connect(host, port=port or 22, username=username, key_filename=str(key_file),
                            look_for_keys=False, allow_agent=False, timeout=TIMEOUT, banner_timeout=TIMEOUT,
@@ -131,29 +143,75 @@ def _b64(s: str) -> bytes:
     return base64.b64decode(s)
 
 
-def remote(url: str | None, key_file: Path | None):
-    """(dulwich client, path) for the given url, else for GitHub (SSH with the key, else HTTPS)."""
+def remotes(url: str | None, key_file: Path | None) -> list[tuple[str, object, str]]:
+    """(name, dulwich client, path) to try in order: the given url; else GitHub over SSH with the key
+    (port 22, then port 443), then anonymous HTTPS (works while the repo is public)."""
     from dulwich.client import SSHGitClient, default_urllib3_manager, get_transport_and_path
     if url:
-        return get_transport_and_path(url)
+        return [("url", *get_transport_and_path(url))]
+    out = []
     if key_file is not None and key_file.is_file():
-        return SSHGitClient(SSH_HOST, username=SSH_USER, vendor=ssh_vendor(key_file)), SSH_PATH
-    return get_transport_and_path(HTTPS_URL, pool_manager=default_urllib3_manager(None, timeout=TIMEOUT))
+        vendor = ssh_vendor(key_file)
+        out += [("ssh", SSHGitClient(SSH_HOST, username=SSH_USER, vendor=vendor), SSH_PATH),
+                ("ssh-443", SSHGitClient(SSH_443, port=443, username=SSH_USER, vendor=vendor), SSH_PATH)]
+    import urllib3
+    pool = default_urllib3_manager(None, timeout=TIMEOUT)
+    pool.connection_pool_kw["retries"] = urllib3.Retry(total=None, connect=0, read=0, status=0, other=0,
+                                                       redirect=5)   # urllib3 retries 3x by default
+    out.append(("https", *get_transport_and_path(HTTPS_URL, pool_manager=pool)))
+    return out
+
+
+def remote(url: str | None, key_file: Path | None):
+    """The first (dulwich client, path) that fetch_main() tries."""
+    return remotes(url, key_file)[0][1:]
+
+
+def _with_deadline(fn, seconds: float):
+    """fn() in a worker thread; TimeoutError if it is not done in time (the thread is left behind)."""
+    box: dict = {}
+
+    def run():
+        try:
+            box["value"] = fn()
+        except BaseException as e:               # handed to the caller
+            box["error"] = e
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        raise TimeoutError(f"no answer from the server in {seconds:.0f} s")
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
 
 
 def fetch_main(repo, url: str | None, key_file: Path | None) -> bytes:
-    client, path = remote(url, key_file)
-
     def wants(refs, depth=None):
         sha = refs.get(MAIN)
         return [sha] if sha and sha not in repo.object_store else []
 
-    result = client.fetch(path, repo, determine_wants=wants)
-    sha = result.refs.get(MAIN)
-    if not sha:
-        raise RuntimeError("remote has no main branch")
-    repo.refs[ORIGIN_MAIN] = sha
-    return sha
+    end = time.monotonic() + DEADLINE
+    errors = []
+    for name, client, path in remotes(url, key_file):
+        left = end - time.monotonic()
+        if left <= 0:
+            break
+        try:
+            result = _with_deadline(lambda c=client, p=path: c.fetch(p, repo, determine_wants=wants), left)
+        except Exception as e:
+            log.info("fetch over %s failed: %s: %s", name, type(e).__name__, e)
+            errors.append(e)
+            continue
+        sha = result.refs.get(MAIN)
+        if not sha:
+            raise RuntimeError("remote has no main branch")
+        if errors:
+            log.info("fetched over %s", name)
+        repo.refs[ORIGIN_MAIN] = sha
+        return sha
+    raise errors[-1] if errors else TimeoutError(f"no answer from the server in {DEADLINE} s")
 
 
 # ── update ───────────────────────────────────────────────────────────────────
@@ -165,6 +223,10 @@ def _is_ancestor(repo, old: bytes, new: bytes) -> bool:
 def _tracked(repo, commit: bytes):
     from dulwich.object_store import iter_tree_contents
     return iter_tree_contents(repo.object_store, repo[commit].tree)
+
+
+def _same(data: bytes, blob: bytes) -> bool:
+    return data == blob or data.replace(b"\r\n", b"\n") == blob.replace(b"\r\n", b"\n")
 
 
 def _local_changes(repo) -> list[str]:
@@ -179,15 +241,48 @@ def _local_changes(repo) -> list[str]:
         path = root / os.fsdecode(entry.path)
         if not path.is_file():
             continue
-        data, blob = path.read_bytes(), repo[entry.sha].data
-        if data != blob and data.replace(b"\r\n", b"\n") != blob.replace(b"\r\n", b"\n"):
+        if not _same(path.read_bytes(), repo[entry.sha].data):
             changed.append(os.fsdecode(entry.path))
     return changed
+
+
+def _staged_new(repo) -> list[str]:
+    """Files added to the index (git add) but not committed: a hard reset would delete them."""
+    tracked = {entry.path for entry in _tracked(repo, repo.refs[MAIN])}
+    return [os.fsdecode(p) for p in repo.open_index() if p not in tracked]
+
+
+def _in_the_way(repo, old: bytes, new: bytes) -> list[str]:
+    """Untracked files of this folder at paths the new commit adds, with other content: the update
+    would overwrite them."""
+    root = Path(repo.path)
+    before = {entry.path for entry in _tracked(repo, old)}
+    return [os.fsdecode(e.path) for e in _tracked(repo, new)
+            if e.path not in before and (root / os.fsdecode(e.path)).is_file()
+            and not _same((root / os.fsdecode(e.path)).read_bytes(), repo[e.sha].data)]
+
+
+def _missing(repo) -> list[str]:
+    """Tracked files that are gone (e.g. quarantined by antivirus)."""
+    root = Path(repo.path)
+    return [os.fsdecode(e.path) for e in _tracked(repo, repo.refs[MAIN])
+            if not (root / os.fsdecode(e.path)).exists()]
+
+
+def _pending(repo) -> bytes | None:
+    """Target commit of a checkout that was cut off, if any."""
+    try:
+        sha = (Path(repo.controldir()) / PENDING).read_text(encoding="ascii").strip().encode()
+    except OSError:
+        return None
+    return sha if sha in repo.object_store else None
 
 
 def _checkout(repo, sha: bytes) -> None:
     from dulwich import porcelain
     from dulwich.index import index_entry_from_stat
+    marker = Path(repo.controldir()) / PENDING
+    marker.write_text(sha.decode(), encoding="ascii")      # removed only when everything is written
     repo.refs[MAIN] = sha
     repo.refs.set_symbolic_ref(b"HEAD", MAIN)
     porcelain.reset(repo, "hard", sha)
@@ -199,6 +294,7 @@ def _checkout(repo, sha: bytes) -> None:
         if path.is_file():
             index[entry.path] = index_entry_from_stat(os.lstat(path), entry.sha, mode=entry.mode)
     index.write()
+    marker.unlink()
 
 
 def update(root: Path = ROOT, url: str | None = None, key_file: Path | None = None) -> int:
@@ -219,8 +315,17 @@ def update(root: Path = ROOT, url: str | None = None, key_file: Path | None = No
         return UPDATED
 
     with Repo(str(root)) as repo:
-        if MAIN not in repo.refs:                    # an earlier conversion stopped half-way
-            sha = fetch_main(repo, url, key_file)
+        pending = _pending(repo)
+        if pending:                                  # a checkout was cut off: finish it first
+            _checkout(repo, pending)
+            log.info("finished an interrupted update to %s", pending.decode()[:7])
+            print("        finished an interrupted update")
+            return UPDATED
+        if MAIN not in repo.refs:
+            if any(r.startswith(b"refs/heads/") for r in repo.refs.allkeys()):
+                log.info("skipped: no local main branch")    # e.g. a developer's clone of another branch
+                return NOTHING
+            sha = fetch_main(repo, url, key_file)    # an earlier conversion stopped before its checkout
             _checkout(repo, sha)
             log.info("finished converting %s at %s", root, sha.decode()[:7])
             return UPDATED
@@ -228,7 +333,7 @@ def update(root: Path = ROOT, url: str | None = None, key_file: Path | None = No
         if head != MAIN:
             log.info("skipped: HEAD is %s, not main", head or b"detached")
             return NOTHING
-        changed = _local_changes(repo)
+        changed = _local_changes(repo) + _staged_new(repo)
         if changed:
             log.info("skipped: local changes in %s", ", ".join(changed[:5]))
             print("        update skipped - files in this folder were changed")
@@ -236,9 +341,19 @@ def update(root: Path = ROOT, url: str | None = None, key_file: Path | None = No
         local = repo.refs[MAIN]
         sha = fetch_main(repo, url, key_file)
         if sha == local:
+            missing = _missing(repo)
+            if missing:
+                _checkout(repo, local)
+                log.info("restored %s", ", ".join(missing[:5]))
+                return UPDATED
             return NOTHING
         if not _is_ancestor(repo, local, sha):
             log.info("skipped: local main %s is not behind origin/main %s", local.decode()[:7], sha.decode()[:7])
+            return NOTHING
+        blocking = _in_the_way(repo, local, sha)
+        if blocking:
+            log.info("skipped: the update would overwrite %s", ", ".join(blocking[:5]))
+            print("        update skipped - files in this folder were changed")
             return NOTHING
         _checkout(repo, sha)
         print("        updated to the latest version")
@@ -268,13 +383,28 @@ def main(argv: list[str] | None = None) -> int:
     try:
         key = key_path()
         install_key(root, key)
-        if "google drive" in str(root).lower() or "my drive" in str(root).lower():
-            print("        note: this folder is inside Google Drive - copy it to a local folder, e.g. C:\\HalgOM")
+        cloud = cloud_folder(root)
+        if cloud:
+            print(f"        note: this folder is inside {cloud} - copy it to a local folder, e.g. C:\\HalgOM")
         return update(root, args.url, key)
     except Exception as e:                            # never stop the screener from starting
         log.exception("update failed")
         print(f"        update skipped - {type(e).__name__}")
-        return NOTHING
+        # Cut off in the middle of a checkout: run_screener.bat may already be the new file, so the
+        # launcher must restart (the next run finishes the checkout).
+        return UPDATED if (root / ".git" / PENDING).exists() else NOTHING
+
+
+def cloud_folder(root: Path) -> str | None:
+    """A synced cloud folder (it locks files while uploading and syncs the large .venv), if root is in one."""
+    path = str(root).lower()
+    onedrive = [os.environ[v].lower() for v in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial")
+                if os.environ.get(v)]
+    if "onedrive" in path or any(path.startswith(d) for d in onedrive):
+        return "OneDrive"
+    if "google drive" in path or "my drive" in path or "googledrive" in path:
+        return "Google Drive"
+    return None
 
 
 if __name__ == "__main__":

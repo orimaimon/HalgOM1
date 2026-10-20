@@ -90,15 +90,15 @@ jobs:
           if ($lf -ne $crlf) { Write-Host "run_screener.bat lost its CRLF line endings"; $failed = $true }
           if ($failed) { exit 1 }
 
-      # The whole double-click flow in a ZIP folder whose name has a space and parentheses: the launcher
-      # updates (exit 3), restarts itself from its single update line, and the server comes up.
+      # The whole double-click flow in a ZIP folder whose name has a space, "&" and parentheses: the
+      # launcher updates (exit 3), restarts itself from its single update line, and the server comes up.
       - name: Double-click flow in a ZIP folder (update, restart, start)
         env:
           STREAMLIT_SERVER_HEADLESS: "true"
           SCREENER_NO_BROWSER: "1"
         run: |
           Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue   # see the launcher-smoke job
-          $copy = Join-Path $env:RUNNER_TEMP "HalgOM zip (1)"
+          $copy = Join-Path $env:RUNNER_TEMP "HalgOM & zip (1)"
           Expand-Archive "$env:RUNNER_TEMP\src.zip" -DestinationPath $copy
           $log = Join-Path $env:RUNNER_TEMP "zip_run.log"
           $p = Start-Process -FilePath cmd.exe -ArgumentList '/c', "run_screener.bat < NUL > `"$log`" 2>&1" `

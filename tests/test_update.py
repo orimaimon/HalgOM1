@@ -148,7 +148,7 @@ def test_deploy_key_moves_out_of_the_shared_folder(tmp_path):
 
 def test_deploy_key_is_never_committed():
     ignored = (Path(U.ROOT) / ".gitignore").read_text().split()
-    assert U.KEY_NAME in ignored
+    assert U.KEY_NAME + "*" in ignored                  # also deploy_key.txt (Notepad)
 
 
 def test_remote_choice(tmp_path):
@@ -183,3 +183,122 @@ def test_ssh_channel_reads_exact_lengths():
             return out
     ch = U._Channel(None, FakeChannel(b"0123456789"))
     assert ch.read(5) == b"01234" and ch.read() == b"56789" and ch.read(4) == b""
+
+
+# ── never stuck, never losing files (issue #20) ─────────────────────────────
+
+def test_interrupted_checkout_is_finished_next_time(remote, zip_copy, monkeypatch):
+    from dulwich import porcelain
+    U.update(zip_copy, url=str(remote))
+    new = commit(remote, {"a.txt": "v2\n", "b.txt": "b2\n"}, "v2")
+    real_reset = porcelain.reset
+
+    def cut_off(repo, mode, sha):                   # one file written, then a locked file stops it
+        (zip_copy / "a.txt").write_bytes(b"v2\n")
+        raise PermissionError("b.txt is locked")
+
+    monkeypatch.setattr(porcelain, "reset", cut_off)
+    # the launcher restarts (the .bat may already be new) instead of going on with a half-written folder
+    assert U.main(["--root", str(zip_copy), "--url", str(remote)]) == U.UPDATED
+    assert (zip_copy / ".git" / U.PENDING).exists()
+    monkeypatch.setattr(porcelain, "reset", real_reset)
+    assert U.update(zip_copy, url=str(remote)) == U.UPDATED            # finished, not "local changes"
+    assert (zip_copy / "b.txt").read_text() == "b2\n" and head(zip_copy) == new
+    assert not (zip_copy / ".git" / U.PENDING).exists()
+    newer = commit(remote, {"a.txt": "v3\n"}, "v3")                    # and later updates still apply
+    assert U.update(zip_copy, url=str(remote)) == U.UPDATED and head(zip_copy) == newer
+
+
+def test_clone_without_main_is_left_alone(remote, tmp_path):
+    dev = tmp_path / "dev-clone"
+    dev.mkdir()
+    with Repo.init(str(dev)) as r:                  # a developer's clone of a feature branch only
+        r.refs.set_symbolic_ref(b"HEAD", b"refs/heads/dev")
+    commit(dev, {"a.txt": "dev\n"}, "dev work")
+    write(dev, {"a.txt": "uncommitted\n"})
+    assert U.update(dev, url=str(remote)) == U.NOTHING
+    assert (dev / "a.txt").read_text() == "uncommitted\n"
+
+
+def test_staged_new_file_blocks_the_update(remote, zip_copy):
+    U.update(zip_copy, url=str(remote))
+    write(zip_copy, {"new_work.py": "x = 1\n"})
+    with Repo(str(zip_copy)) as r:
+        porcelain.add(r, paths=[str(zip_copy / "new_work.py")])
+    commit(remote, {"a.txt": "v2\n"}, "v2")
+    assert U.update(zip_copy, url=str(remote)) == U.NOTHING
+    assert (zip_copy / "new_work.py").read_text() == "x = 1\n"
+
+
+def test_untracked_file_in_the_way_blocks_the_update(remote, zip_copy):
+    U.update(zip_copy, url=str(remote))
+    write(zip_copy, {"c.txt": "mine\n"})
+    commit(remote, {"c.txt": "theirs\n"}, "adds c.txt")
+    assert U.update(zip_copy, url=str(remote)) == U.NOTHING
+    assert (zip_copy / "c.txt").read_text() == "mine\n"
+    write(zip_copy, {"c.txt": "theirs\n"})                              # same content: nothing is lost
+    assert U.update(zip_copy, url=str(remote)) == U.UPDATED
+
+
+def test_missing_tracked_file_is_restored(remote, zip_copy):
+    U.update(zip_copy, url=str(remote))
+    (zip_copy / "b.txt").unlink()                                       # quarantined by antivirus
+    assert U.update(zip_copy, url=str(remote)) == U.UPDATED
+    assert (zip_copy / "b.txt").read_text() == "b\n"
+    assert U.update(zip_copy, url=str(remote)) == U.NOTHING
+
+
+def test_stalled_network_gives_up_in_time(zip_copy, monkeypatch):
+    import threading
+    import time
+    release = threading.Event()
+
+    class Stalled:
+        def fetch(self, *a, **kw):
+            release.wait(5)
+            raise ConnectionError("gone")
+
+    monkeypatch.setattr(U, "DEADLINE", 0.3)
+    monkeypatch.setattr(U, "remotes", lambda url, key: [("https", Stalled(), "x")])
+    start = time.monotonic()
+    assert U.main(["--root", str(zip_copy)]) == U.NOTHING
+    release.set()
+    assert time.monotonic() - start < 3
+    assert "no answer from the server" in (zip_copy / "screener/_data/logs/update.log").read_text()
+
+
+def test_next_remote_is_tried_when_one_fails(remote, zip_copy, monkeypatch):
+    from dulwich.client import get_transport_and_path
+
+    class Blocked:
+        def fetch(self, *a, **kw):
+            raise OSError("port 22 blocked")
+
+    monkeypatch.setattr(U, "remotes", lambda url, key: [("ssh", Blocked(), "x"),
+                                                        ("https", *get_transport_and_path(str(remote)))])
+    assert U.update(zip_copy) == U.UPDATED and (zip_copy / "a.txt").read_text() == "v1\n"
+
+
+def test_ssh_remotes_fall_back_to_443_then_https(tmp_path):
+    key = tmp_path / U.KEY_NAME
+    key.write_text("x")
+    names = [name for name, _, _ in U.remotes(None, key)]
+    assert names == ["ssh", "ssh-443", "https"]
+    assert [name for name, _, _ in U.remotes(None, tmp_path / "none")] == ["https"]
+
+
+def test_deploy_key_saved_by_notepad_is_moved(tmp_path):
+    root, dest = tmp_path / "HalgOM", tmp_path / "home" / ".halgom" / U.KEY_NAME
+    write(root, {U.KEY_NAME + ".txt": "-----BEGIN OPENSSH PRIVATE KEY-----\n"})
+    U.install_key(root, dest)
+    assert dest.is_file() and not (root / (U.KEY_NAME + ".txt")).exists()
+    ignored = (Path(U.ROOT) / ".gitignore").read_text().split()
+    assert "deploy_key*" in ignored
+
+
+def test_cloud_folders_are_detected(monkeypatch):
+    monkeypatch.setenv("OneDrive", r"C:\Users\haim\OneDrive - Personal")
+    assert U.cloud_folder(Path(r"C:\Users\haim\OneDrive - Personal\Desktop\HalgOM")) == "OneDrive"
+    assert U.cloud_folder(Path("/home/x/OneDrive/HalgOM")) == "OneDrive"
+    assert U.cloud_folder(Path("G:/My Drive/HalgOM")) == "Google Drive"
+    assert U.cloud_folder(Path("C:/HalgOM")) is None
