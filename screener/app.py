@@ -31,7 +31,7 @@ from screener import lifecycle  # noqa: E402
 from screener import portfolio as PF  # noqa: E402
 from screener import presets as P  # noqa: E402
 from screener import theme  # noqa: E402
-from screener.data import Store, load_universe  # noqa: E402
+from screener.data import FETCH_LOCK, Store, load_universe  # noqa: E402
 from screener.data.store import DATA_DIR  # noqa: E402
 from screener.data.tradingview import fetch_market, fetch_universe  # noqa: E402
 from screener.derive import add_derived  # noqa: E402
@@ -109,21 +109,33 @@ def _store() -> Store:
 
 
 @st.cache_data(ttl=MAX_AGE, show_spinner=False)
+def _fetch_market():
+    with FETCH_LOCK:
+        return fetch_market()
+
+
 def _market():
     try:
-        m = fetch_market()
+        m = _fetch_market()
         return m, compute_regime(m)
     except Exception:
         log.exception("market fetch failed")
         return None, None
 
 
+_market.clear = _fetch_market.clear
+
+
 def get_data(force: bool = False):
-    now = dt.datetime.now()
+    now = dt.datetime.now(dt.timezone.utc)
     snap = ss.get("snap")
-    due = (force or snap is None
-           or (snap.source == "stale" and now - ss.get("last_attempt", now) > RETRY_AFTER)
-           or (snap.source != "stale" and snap.age > MAX_AGE))
+    last_attempt = ss.get("last_attempt")
+    if last_attempt is not None and last_attempt.tzinfo is None:
+        last_attempt = last_attempt.replace(tzinfo=dt.timezone.utc)
+    attempt_due = (snap is not None and snap.source == "stale" and
+                   (last_attempt is None or now - last_attempt > RETRY_AFTER))
+    due = (force or snap is None or attempt_due
+           or (snap.source != "stale" and (snap.age > MAX_AGE or snap.age < dt.timedelta(0))))
     if due:
         ss.last_attempt = now
         with st.spinner(t("Loading market data from TradingView… (≈15 sec)")):

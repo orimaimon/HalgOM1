@@ -90,6 +90,16 @@ def validate_universe(df: pd.DataFrame, raw: pd.DataFrame) -> None:
     if len(df) < MIN_UNIVERSE_ROWS:
         raise TradingViewError(f"universe size ({len(df)}) below minimum floor ({MIN_UNIVERSE_ROWS})")
 
+    from screener.fields import provider_columns
+    p_cols = set(provider_columns())
+    for col in df.columns:
+        fill_rate = df[col].notna().mean() if len(df) else 0.0
+        log.info("column %s fill rate: %.1f%%", col, fill_rate * 100)
+
+    for col in p_cols:
+        if col not in df.columns or (len(df) and df[col].notna().sum() == 0):
+            log.warning("provider column %s is completely empty", col)
+
 
 def fetch_universe(timeout: float = 60) -> pd.DataFrame:
     """Fetch the full US stock universe as a DataFrame keyed by canonical column names."""
