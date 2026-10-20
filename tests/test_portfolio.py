@@ -136,3 +136,13 @@ def test_damaged_file_and_template(tmp_path):
     assert PF.load_all(bad) == {}
     imp = PF.parse(PF.read_table(PF.template_csv(), "template.csv"), KNOWN, TODAY)
     assert imp.ok and imp.kind == PF.PORTFOLIO and len(imp.rows) == 2
+
+
+def test_add_trades_refuses_an_oversell():
+    plist = PF.PList("p", PF.PORTFOLIO)
+    buy = parse("ticker,date,price,quantity\nAAPL,2025-01-02,10,5\n").rows
+    assert PF.add_trades(plist, buy) == [] and len(plist.rows) == 1
+    sell = parse("ticker,date,price,quantity,side\nAAPL,2025-02-02,12,6,sell\n").rows
+    assert PF.add_trades(plist, sell) == ["AAPL"] and len(plist.rows) == 1      # nothing added
+    sell = parse("ticker,date,price,quantity,side\nAAPL,2025-02-02,12,5,sell\n").rows
+    assert PF.add_trades(plist, sell) == [] and len(plist.rows) == 2

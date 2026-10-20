@@ -67,7 +67,10 @@ screener/.venv/bin/python -m streamlit run screener/app.py
 - `screener/guide.html` — Hebrew user guide, shown on the "Guide" page. It quotes UI names; when a button, page,
   tab, view or built-in preset is renamed, update the guide (tests enforce the presets and page/tab/view names).
   `.gitignore` ignores `*.html`, so the guide is un-ignored explicitly.
-- `screener/app.py` — Streamlit UI (pages: Screener / Groups / Heatmap / Guide). Selecting a row embeds the official
+- `screener/portfolio.py` — watchlists and portfolios: one CSV/Excel import format (one row per trade, Hebrew headers
+  allowed; tickers only = watchlist), average-cost positions and P&L from the universe's prices (no extra requests),
+  stored per machine in `screener/_data/portfolios.json`. Import problems are `Problem` codes, Hebrew text in i18n.
+- `screener/app.py` — Streamlit UI (pages: Screener / Groups / Heatmap / Portfolios / Guide). Selecting a row embeds the official
   TradingView Advanced Chart widget. Widget state is re-assigned each run (`keep_widget_state`) so filters
   survive a visit to another page.
 
@@ -109,7 +112,9 @@ Phase 2 leftovers:
 
 Phase 3:
 - HalgOM strategy presets via a two-stage funnel (TradingView prefilter → yfinance history for ~200 names).
-- Watchlist that tracks performance since added; daily email/Telegram report of preset changes.
+- **[DONE]** Watchlists (performance since added) and portfolios (Portfolios page). Next: splits/dividends after the
+  trade date and value over time vs SPY/QQQ (needs the price-history layer); prices for ETFs held in a portfolio.
+- Daily email/Telegram report of preset changes.
 - Optional: real-time data via the user's own TradingView `sessionid` cookie (account-flag risk — opt-in only).
 
 Later — less dependence on TradingView (discussed 2026-10-18; add layers, don't replace it; own branch/PR):

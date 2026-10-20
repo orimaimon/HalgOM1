@@ -1,12 +1,15 @@
 """Front-end behaviour that needs the running app (Streamlit AppTest, offline, synthetic data)."""
 from __future__ import annotations
 
+import datetime as dt
+
 import pandas as pd
 import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from screener import export, lifecycle
+from screener import portfolio as PF
 from screener import presets as P
 from screener.data.tradingview import clean
 from tests.test_screener import ROOT, make_raw
@@ -23,6 +26,7 @@ def app(tmp_path, monkeypatch):
                            "di_plus": 25.0, "di_minus": 15.0}, index=["SPY", "QQQ", "HYG", "VIX"])
     monkeypatch.setattr(store_mod, "DATA_DIR", tmp_path)
     monkeypatch.setattr(P, "PRESETS_PATH", tmp_path / "presets.json")
+    monkeypatch.setattr(PF, "PORTFOLIOS_PATH", tmp_path / "portfolios.json")
     monkeypatch.setattr(export, "EXPORT_DIR", tmp_path / "exports")
     monkeypatch.setattr(tv, "fetch_universe", lambda: raw)
     monkeypatch.setattr(tv, "fetch_market", lambda: market)
@@ -135,3 +139,85 @@ def test_empty_results_explain_and_clear_everything(app):
     assert app.session_state["f_pe"] == "Any" and app.session_state["query"] == ""
     assert not any("אף מניה לא עומדת" in h for h in notes(app))
     assert "clear_all" not in [b.key for b in app.button]
+
+
+# ── Portfolios page ─────────────────────────────────────────────────────────
+
+def open_portfolios(app: AppTest) -> list[str]:
+    """Run the app, go to the Portfolios page; returns some universe tickers."""
+    app.run()
+    tickers = list(app.session_state["df"]["ticker"][:3])
+    app.session_state["page"] = "Portfolios"
+    app.run()
+    assert not app.exception, app.exception
+    return tickers
+
+
+def test_watchlist_create_add_and_show_in_screener(app):
+    a, b, _ = open_portfolios(app)
+    assert any("עוד אין רשימות" in h for h in notes(app))
+    app.text_input(key="pf_new_name").input("מעקב").run()
+    app.button(key="pf_empty").click().run()
+    assert not app.exception, app.exception
+    assert app.session_state["pf_name"] == "מעקב"
+    app.text_input(key="pf_add").input(f"{a.lower()}, {b} NOSUCH").run()
+    app.button(key="pf_add_btn").click().run()
+    assert not app.exception, app.exception
+    saved = PF.load_all()["מעקב"]
+    assert saved.kind == PF.WATCHLIST and [r["ticker"] for r in saved.rows] == [a, b]
+    assert all(r["price"] is not None for r in saved.rows)                  # price when added
+    assert any("NOSUCH" in toast.value for toast in app.toast)
+
+    app.button(key="pf_show").click().run()
+    assert not app.exception, app.exception
+    assert app.session_state["page"] == "Screener" and app.session_state["query"] == f"{a}, {b}"
+    assert any("2 תוצאות" in m.value for m in app.markdown)
+
+
+def test_portfolio_values_and_trades(app):
+    a, b, _ = open_portfolios(app)
+    PF.save(PF.PList("תיק", PF.PORTFOLIO, [
+        {"ticker": a, "date": "2025-01-02", "price": 10.0, "quantity": 10, "side": "buy", "fees": 0, "note": ""},
+        {"ticker": "SPY", "date": "2025-01-02", "price": 500.0, "quantity": 1, "side": "buy", "fees": 0, "note": ""},
+    ]))
+    app.run()
+    assert not app.exception, app.exception
+    assert app.session_state["pf_name"] == "תיק"
+    price = float(app.session_state["df"].set_index("ticker").loc[a, "price"])
+    metrics = {m.label: m.value for m in app.metric}
+    assert metrics["עלות"] == "$100"                                          # SPY has no price: left out
+    assert metrics["שווי נוכחי"] == f"${price * 10:,.0f}"
+    assert any("SPY" in h and "אין בסקרינר מחיר" in h for h in notes(app))
+
+    # selling more than is held is refused, with a Hebrew message
+    app.text_input(key="pf_t_ticker").input(a)
+    app.number_input(key="pf_t_price").set_value(12.0)
+    app.number_input(key="pf_t_qty").set_value(50.0)
+    app.radio(key="pf_t_side").set_value("sell")
+    app.button[[x.label for x in app.button].index("הוספת עסקה")].click().run()
+    assert not app.exception, app.exception
+    assert any("נמכרו יותר" in e.value for e in app.error)
+    assert len(PF.load_all()["תיק"].rows) == 2
+
+    app.text_input(key="pf_t_ticker").input(b)
+    app.number_input(key="pf_t_price").set_value(20.0)
+    app.number_input(key="pf_t_qty").set_value(5.0)
+    app.radio(key="pf_t_side").set_value("buy")
+    app.button[[x.label for x in app.button].index("הוספת עסקה")].click().run()
+    assert not app.exception, app.exception
+    rows = PF.load_all()["תיק"].rows
+    assert rows[-1]["ticker"] == b and rows[-1]["quantity"] == 5 and rows[-1]["date"] == dt.date.today().isoformat()
+    assert {m.label: m.value for m in app.metric}["עלות"] == "$200"
+
+    app.button(key="pf_delete").click().run()
+    assert not app.exception, app.exception
+    assert PF.load_all() == {}
+
+
+def test_import_problems_are_hebrew():
+    from screener import i18n as I
+    raw = pd.DataFrame({"סימול": ["AAPL", "AAPL", ""], "תאריך": ["2025-01-02", "2025-02-01", "2025-03-01"],
+                        "שער": ["10", "abc", "5"], "כמות": ["1", "1", "1"]})
+    texts = [I.problem(p) for p in PF.parse(raw).problems]
+    assert texts == ["שורה 3: מספר לא תקין במחיר: abc", "שורה 4: חסר סימול"]
+    assert I.problem(PF.Problem(0, "oversold", "AAPL")).startswith("ב-AAPL נמכרו")

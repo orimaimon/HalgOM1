@@ -288,6 +288,15 @@ def add_to_watchlist(plist: PList, ticker: str, price: float, today: dt.date | N
     return True
 
 
+def add_trades(plist: PList, rows: pd.DataFrame) -> list[str]:
+    """Append parsed trades. If that would sell more than is held, nothing is added and the tickers
+    are returned."""
+    bad = oversold(pd.concat([plist.frame(), rows], ignore_index=True))
+    if not bad:
+        plist.rows += _records(rows)
+    return bad
+
+
 def _records(df: pd.DataFrame) -> list[dict]:
     recs = []
     for r in df.to_dict("records"):
