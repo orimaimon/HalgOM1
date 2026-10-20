@@ -50,7 +50,7 @@ GUIDE = Path(__file__).with_name("guide.html")
 REQUIRED = provider_columns()
 # widget keys that must survive while their widget is not on the current page
 PERSIST = ["lang", "preset", "query", "sort_col", "sort_asc", "view", "hide_junk", "only_new", "export_all",
-           "g_by", "g_weight", "g_sector", "g_results", "h_universe", "h_color"]
+           "g_by", "g_weight", "g_sector", "g_results", "h_universe", "h_color", "large_text"]
 
 st.set_page_config(page_title="HalgOM Screener", page_icon="📈", layout="wide")
 ss = st.session_state
@@ -189,6 +189,24 @@ def described() -> list[tuple[str, str]]:
     """(filter, option) of the active filters in the display language — for the chips and the exports."""
     return [(I.filter_label(k, FILTERS_BY_KEY[k].label, L()), opt(v)) for k, v in active(selections()).items()]
 
+def find_removed_pill(active_keys: list[str], selected_pills: list[str]) -> str | None:
+    """Given the old active filters and the new selected pills, return the key that was deselected."""
+    for key in active_keys:
+        if key not in selected_pills:
+            return key
+    return None
+
+def pills_key(labels: list[str]) -> str:
+    """A new pills widget for every set of active filters: a kept widget would keep its old selection,
+    and a filter added later would show as an unselected (removed-looking) pill."""
+    return "active_pills_" + hashlib.md5("|".join(labels).encode()).hexdigest()[:10]
+
+
+def on_remove_pill(key: str, filter_of: dict[str, str]):
+    removed = find_removed_pill(list(filter_of), ss.get(key) or [])
+    if removed:
+        ss[f"f_{filter_of[removed]}"] = ANY
+
 
 def display_values(df: pd.DataFrame) -> pd.DataFrame:
     """Copy with data values in the display language (sector, country, the NEW tag) for tables and exports."""
@@ -233,6 +251,12 @@ def on_reset():
     ss.query = ""
 
 
+def on_clear_all():
+    """The empty-results button: every filter, the search and "Only new"."""
+    on_reset()
+    ss.only_new = False
+
+
 def on_save():
     name = (ss.get("save_name") or "").strip()
     if not name:
@@ -265,7 +289,12 @@ def column_config(key: str):
     kw = {"label": col_label(key), "help": c.help}
     match c.kind:
         case "text":
-            width = {"signals": 300, "indexes": 240, "new": 60}.get(key)
+            width_map = {
+                "signals": 300, "indexes": 240, "new": 60,
+                "ticker": "small", "exchange": "small", "country": "small", "sec_type": "small",
+                "company": "medium", "sector": "medium", "industry": "medium"
+            }
+            width = width_map.get(key)
             return cc.TextColumn(pinned=key == "ticker", width=width, **kw)
         case "price":
             return cc.NumberColumn(format="%.2f", **kw)
@@ -365,8 +394,10 @@ def _header(snap, n_universe: int) -> None:
     with left:
         st.html('<div class="hs-brand"><i></i><b>HalgOM</b><span>Screener</span></div>')
         st.caption(f"v{VERSION} · {t('US stocks')} · {n_universe:,} {t('in universe')}")
-        st.segmented_control("Language", list(I.LANGS), key="lang", format_func=I.LANGS.get, required=True,
+        c1, c2 = st.columns([1, 1], vertical_alignment="center")
+        c1.segmented_control("Language", list(I.LANGS), key="lang", format_func=I.LANGS.get, required=True,
                              label_visibility="collapsed")
+        c2.toggle(t("Large text"), key="large_text")
     with mid:
         market, regime = _market()
         if market is None:
@@ -393,7 +424,8 @@ def _header(snap, n_universe: int) -> None:
                     c.caption(vs200.removeprefix(" · "))
     with right:
         src = t({"live": "live", "cache": "cached", "stale": "OFFLINE"}[snap.source])
-        st.caption(f"{t('Data as of')} **{snap.fetched_at:%Y-%m-%d %H:%M}** ({src}) · {source_text(snap.meta)}",
+        st.caption(f"{t('Data time')}: **{snap.fetched_at:%H:%M}** · {snap.fetched_at:%d/%m/%Y} ({src}) · "
+                   f"{source_text(snap.meta)}",
                    help="מקור הנתונים ומצב העדכון כפי שהספק מדווח. delayed = בעיכוב, realtime = בזמן אמת")
         r1, r2 = st.columns([1.7, 1.2])
         if r1.button(t("Refresh data"), icon=":material/refresh:", use_container_width=True):
@@ -442,7 +474,7 @@ def toolbar(presets: dict[str, P.Preset]) -> None:
     names = [CUSTOM] + list(presets)
     if ss.get("preset") not in names:
         ss.preset = CUSTOM
-    c1, c2, c3, c4, c7, c5, c6 = st.columns([2.6, 2.4, 1.8, 1.1, 1.2, 1, 1], vertical_alignment="bottom")
+    c1, c2, c3, c4, c7, c5, c6 = st.columns([2.5, 2.3, 1.7, 1.3, 1.4, 1.1, 1.1], vertical_alignment="bottom")
     def preset_name(n: str) -> str:
         return t(n) if n == CUSTOM else n if n.startswith(USER_PREFIX) else I.preset(n, L())
 
@@ -501,7 +533,12 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
     view_cols = VIEWS[ss.view]
     chips = described()
     if chips:
-        st.caption(" · ".join(f"**{k}:** {v}" for k, v in chips))
+        filter_of = {f"{k}: {v}": f for (k, v), f in zip(chips, active(selections()))}   # pill label -> filter
+        labels = list(filter_of)
+        key = pills_key(labels)
+        st.pills(t("Active filters"), options=labels, default=labels, selection_mode="multi",
+                 label_visibility="collapsed", key=key, on_change=on_remove_pill, args=(key, filter_of),
+                 help="לחיצה על פילטר מבטלת אותו")
     notes = []                                   # end-user explanations are Hebrew (CLAUDE.md)
     if ss.hide_junk and len(universe) < len(df):
         notes.append(f"{len(df) - len(universe):,} מניות זבל מוסתרות ({t('Hide junk')})")
@@ -518,6 +555,12 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
     if prev is not None and prev.missing:
         hebrew_note(f"ההשוואה ל-{prev.day:%d/%m/%Y} חלקית: ה-snapshot נשמר בגרסה קודמת בלי {len(prev.missing)} "
                     "שדות חדשים, ולכן פילטרים על השדות האלה מסמנים יותר מניות כ-NEW. יסתדר מעצמו ממחר.")
+
+    if res.empty:
+        hebrew_note("אף מניה לא עומדת בכל התנאים. אפשר להחליש או להסיר פילטר (הם מופיעים למעלה), "
+                    "לנקות את החיפוש, או לאפס הכול בלחיצה אחת:")
+        st.button(t("Clear all filters"), on_click=on_clear_all, type="primary", key="clear_all")
+        return
 
     table = display_values(res[view_cols])
     if L() == I.HE and "signals" in table.columns:   # grid only: Excel/CSV get the plain text
@@ -578,6 +621,21 @@ def snapshot_table(row: pd.Series) -> str:
     return "".join(out)
 
 
+def range52_bar(price: float, low: float, high: float) -> str:
+    """Where the price sits between the 52-week low and high; "" when that cannot be drawn honestly."""
+    if pd.isna(price) or pd.isna(low) or pd.isna(high) or low >= high:
+        return ""
+    pct = max(0.0, min(100.0, (price - low) / (high - low) * 100))
+
+    return (f'<div dir="ltr" style="display:flex;align-items:center;gap:6px;font-size:12px;color:{theme.MUTED};'
+            f'margin-bottom:8px">'
+            f'<span>{low:.2f}</span>'
+            f'<div style="flex:1;height:4px;background:{theme.HAIRLINE};border-radius:2px;position:relative">'
+            f'<div style="position:absolute;left:{pct}%;top:-3px;width:6px;height:10px;'
+            f'background:{theme.ACCENT};border-radius:2px;transform:translateX(-50%)"></div>'
+            f'</div><span>{high:.2f}</span></div>')
+
+
 def detail(row: pd.Series) -> None:
     st.divider()
     chart, info = st.columns([3, 1.25])
@@ -590,6 +648,10 @@ def detail(row: pd.Series) -> None:
         st.caption(f"{row['company']}{lrm}  \n{sector} · {row['industry']}{lrm} · {country}"
                    + (f"  \n{row['indexes']}" if row.get("indexes") else ""))
         st.metric(t("Price"), fmt_value("price", row["price"]), f"{row['change']:+.2f}%")
+        bar = range52_bar(row.get("price"), row.get("low52"), row.get("high52"))
+        if bar:
+            st.caption(f"**{t('52-Week Range')}**")
+            st.html(bar)
         if row.get("signals"):
             st.caption(f"**{t('Signals')}:** {I.signal_tags(row['signals'], L())}")
         st.html(snapshot_table(row))
@@ -745,7 +807,9 @@ def goodbye() -> None:
 def main() -> None:
     _setup_logging()
     ss.setdefault("lang", I.HE)
-    st.html(theme.CSS + (theme.RTL_CSS if L() == I.HE else ""))
+    ss.setdefault("large_text", False)
+    css = theme.CSS + (theme.RTL_CSS if L() == I.HE else "") + (theme.LARGE_TEXT_CSS if ss.large_text else "")
+    st.html(css)
     if ss.get("exiting"):
         goodbye()
         return

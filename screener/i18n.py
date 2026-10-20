@@ -30,16 +30,18 @@ UI: dict[str, str] = {
     "BULL": "שוק עולה", "BEAR": "שוק יורד", "SIDEWAYS": "דשדוש", "UNKNOWN": "לא ידוע",
     "Trend strong": "מגמה חזקה", "Trend building": "מגמה מתפתחת", "Trend weak": "מגמה חלשה",
     "Trend n/a": "אין נתון מגמה",
-    "Data as of": "נתונים נכונים ל-", "live": "חי", "cached": "שמור", "OFFLINE": "לא מקוון",
+    "Data as of": "נתונים נכונים ל-", "Data time": "שעת הנתונים", "live": "חי", "cached": "שמור", "OFFLINE": "לא מקוון",
     "delayed": "בעיכוב", "min": "דק'", "realtime": "בזמן אמת", "end of day": "סוף יום",
     "update mode": "מצב עדכון", "delayed ~15 min": "בעיכוב של כ-15 דק'",
     "Refresh data": "רענון נתונים", "Exit": "יציאה", "Close the screener": "סגירת הסקרינר",
+    "Large text": "טקסט גדול", "Active filters": "פילטרים פעילים",
     "Loading market data from TradingView… (≈15 sec)": "טוען נתוני שוק מ-TradingView… (כ-15 שניות)",
     "Try again": "נסה שוב", "Details": "פרטים",
     # toolbar
     "Screen": "סריקה", "— Custom —": "— מותאם אישית —", "Search": "חיפוש",
     "Ticker / company, or list: AAPL, MSFT": "סימול / חברה, או רשימה: AAPL, MSFT",
     "Order by": "מיון לפי", "Ascending": "סדר עולה", "Hide junk": "הסתר זבל", "Reset": "איפוס",
+    "Clear all filters": "איפוס כל הפילטרים והחיפוש",
     "Save current screen as": "שמירת הסריקה הנוכחית בשם", "Save": "שמירה",
     "Delete saved screen": "מחיקת סריקה שמורה", "Delete": "מחיקה",
     "Saved screen": "הסריקה נשמרה", "Deleted": "נמחקה",
@@ -51,6 +53,7 @@ UI: dict[str, str] = {
     "Export all columns": "ייצוא כל העמודות", "TradingView list": "רשימה ל-TradingView", "Tickers": "סימולים",
     # detail panel
     "Price": "מחיר", "Valuation & size": "תמחור", "Growth & quality": "צמיחה ואיכות",
+    "52-Week Range": "טווח 52 שבועות",
     "Events & scores": "אירועים וציונים", "Open in TradingView": "פתיחה ב-TradingView",
     # groups / heatmap
     "Group by": "קיבוץ לפי", "Sector": "סקטור", "Industry": "תעשייה", "Averages": "ממוצעים",
