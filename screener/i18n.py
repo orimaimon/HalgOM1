@@ -417,8 +417,6 @@ REGIME_REASONS_HE = {
     "<18 calm": "<18 רגוע",
     ">25 fear": ">25 פחד",
     "18-25 elevated": "18-25 מתוח",
-    "above": "מעל",
-    "below": "מתחת ל-",
     "credit risk-on": "אשראי risk-on",
     "credit risk-off": "אשראי risk-off",
 }
@@ -436,11 +434,10 @@ def regime_reason(text: str, lang: str) -> str:
         return f"VIX {v} ({part})"
     m_spy = re.match(r"^SPY (above|below) SMA200$", text)
     if m_spy:
-        rel = "מעל" if m_spy.group(1) == "above" else "מתחת ל-"
-        return f"SPY {rel} SMA200"
+        return "SPY מעל SMA200" if m_spy.group(1) == "above" else "SPY מתחת ל-SMA200"
     m_hyg = re.match(r"^HYG (above|below) SMA20 \((credit risk-on|credit risk-off)\)$", text)
     if m_hyg:
-        rel = "מעל" if m_hyg.group(1) == "above" else "מתחת ל-"
         credit = REGIME_REASONS_HE.get(m_hyg.group(2), m_hyg.group(2))
-        return f"HYG {rel} SMA20 ({credit})"
+        where = "מעל SMA20" if m_hyg.group(1) == "above" else "מתחת ל-SMA20"
+        return f"HYG {where} ({credit})"
     return text

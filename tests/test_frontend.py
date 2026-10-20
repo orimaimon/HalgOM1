@@ -394,12 +394,6 @@ def test_junk_conflict_hint(app):
     assert not any("מתנגשת עם “הסתר זבל”" in h for h in notes(app))
 
 
-def test_watchdog_starts_at_import_time():
-    from screener import lifecycle
-    thread = lifecycle.ensure_idle_watchdog_started()
-    assert thread is not None
-
-
 def test_pipeline_cached_on_rerun(app):
     app.run()
     assert "pipeline_key" in app.session_state
@@ -423,3 +417,10 @@ def test_search_as_removable_pill(app):
     pills.set_value([]).run()
     assert not app.exception, app.exception
     assert app.session_state["query"] == ""
+
+
+def test_regime_reasons_translation_below():
+    from screener import i18n as I
+    assert I.regime_reason("SPY below SMA200", I.HE) == "SPY מתחת ל-SMA200"
+    assert I.regime_reason("HYG below SMA20 (credit risk-off)", I.HE) == "HYG מתחת ל-SMA20 (אשראי risk-off)"
+    assert I.regime_reason("SPY below SMA200", I.EN) == "SPY below SMA200"

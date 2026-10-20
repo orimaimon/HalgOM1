@@ -115,8 +115,10 @@ def _setup_logging() -> Path:
     return log_dir / "screener.log"
 
 
-# Start idle watchdog at import time so server stops even if browser never connects
-lifecycle.ensure_idle_watchdog_started()
+@st.cache_resource
+def _watchdog():
+    """One per server: stops it after 15 minutes with no open browser tab (lifecycle.py)."""
+    return lifecycle.start_idle_watchdog()
 
 
 @st.cache_resource
@@ -231,10 +233,8 @@ def junk_conflict_hint() -> str | None:
             conflicts.append(f"“{opt(v)}”")
     if not conflicts:
         return None
-    c_text = ", ".join(conflicts)
-    if L() == I.HE:
-        return f"⚠️ האפשרות {c_text} מתנגשת עם “הסתר זבל” ולא תוחזר אף מניה. כדי לראות תוצאות, יש לכבות את “הסתר זבל”."
-    return f"⚠️ The option {c_text} conflicts with 'Hide junk' and will return 0 rows. Turn off 'Hide junk' to see results."
+    c_text = ", ".join(conflicts)                # explanations are Hebrew in both languages
+    return f"⚠️ האפשרות {c_text} מתנגשת עם “הסתר זבל” ולא תוחזר אף מניה. כדי לראות תוצאות, יש לכבות את “הסתר זבל”."
 
 
 def described() -> list[tuple[str, str]]:
@@ -1338,6 +1338,7 @@ def main() -> None:
     if ss.get("exiting"):
         goodbye()
         return
+    _watchdog()
     keep_widget_state()
     ss.setdefault("page", PAGES[0])
     ss.setdefault("view", "Overview")
