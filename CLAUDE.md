@@ -83,14 +83,20 @@ Rules:
   Edit below it freely; above it keep the length (pad the `rem ---` line). The block is now switched off
   (`SCREENER_NO_UPDATE=1` just before it, restored right after it).
 - Updates: `screener/update.py` (dulwich, no git needed), run by step 4 of the launcher, which must stay ONE line
-  (update.py may rewrite the .bat; the line restarts the launcher with `cmd /c` on exit code 3). It turns a
-  ZIP/copied folder into a checkout of main, fast-forwards a clean checkout on main, and leaves anything else
-  alone; it never blocks the start. Remote: SSH with a read-only deploy key if `%USERPROFILE%\.halgom\deploy_key`
-  exists (a `deploy_key` file next to the .bat is moved there on first run; it is gitignored, never commit it),
-  else anonymous HTTPS. GitHub's SSH host keys are pinned in update.py. Log: `screener/_data/logs/update.log`.
-- Launcher behavior: fixed port 8501; a second launch only opens the browser (health check;
-  `SCREENER_NO_BROWSER=1` skips the browser); a desktop shortcut is created once (`screener/_data/shortcut.done`);
-  a venv that does not start (copied from another PC) is rebuilt; without uv it falls back to an installed Python.
+  (update.py may rewrite the .bat; the line restarts the launcher with `cmd /c call "%~f0"` on exit code 3, which
+  keeps a folder name with `&` or parentheses quoted). It turns a ZIP/copied folder into a checkout of main,
+  fast-forwards a clean checkout on main, and leaves anything else alone (local edits, staged files, untracked files
+  in the way, another branch); it never blocks the start (45 s deadline for the whole fetch). A checkout writes
+  `.git/HALGOM_CHECKOUT` first and removes it last, so a cut-off checkout is finished on the next run.
+  Remote: SSH with a read-only deploy key if `%USERPROFILE%\.halgom\deploy_key` exists (a `deploy_key` or
+  `deploy_key.txt` next to the .bat is moved there on first run; `deploy_key*` is gitignored, never commit it),
+  trying port 22, then ssh.github.com:443, then anonymous HTTPS. GitHub's SSH host keys are pinned in update.py.
+  Log: `screener/_data/logs/update.log`.
+- Launcher behavior: fixed port 8501 (if another program holds it, the launcher says so); a second launch only
+  opens the browser (health check; `SCREENER_NO_BROWSER=1` skips the browser); a desktop shortcut is created once
+  (`screener/_data/shortcut.done`); a venv that does not start (copied from another PC) or is older than Python
+  3.11 is rebuilt; without uv it falls back to an installed Python; a failed package install still runs the
+  update (the fix may be in it) before stopping.
 - CI (`.github/workflows/tests.yml`): pytest on Linux + Windows, and a launcher smoke test that runs the real
   `run_screener.bat` on a clean Windows runner (health endpoint only, never the app page, so no TradingView calls).
 - Built-in preset option labels must match filter labels exactly (tests enforce this).

@@ -22,4 +22,4 @@ finance.yahoo.com/
 www.tradingview.com/
 
 # read-only deploy key for screener/update.py - never commit it
-deploy_key
+deploy_key*
