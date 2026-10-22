@@ -118,7 +118,7 @@ def _setup_logging() -> Path:
 @st.cache_resource
 def _watchdog():
     """One per server: stops it after 15 minutes with no open browser tab (lifecycle.py)."""
-    return lifecycle.start_idle_watchdog()
+    return lifecycle.ensure_idle_watchdog_started()
 
 
 @st.cache_resource

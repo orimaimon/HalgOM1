@@ -68,20 +68,30 @@ class IdleWatch:
         return self.idle >= self.idle_polls
 
 
-def start_idle_watchdog(count: Callable[[], int | None] = active_sessions,
-                        stop: Callable[[str], None] = stop_server,
-                        poll: float = POLL_SECONDS, idle_polls: int = IDLE_POLLS) -> threading.Thread:
-    watch = IdleWatch(idle_polls)
+_WATCHDOG_LOCK = threading.Lock()
+_watchdog_thread: threading.Thread | None = None
 
-    def run() -> None:
-        while True:
-            time.sleep(poll)
-            if watch.tick(count()):
-                stop(f"no browser tab for {idle_polls} checks")
-                return
+def ensure_idle_watchdog_started(count: Callable[[], int | None] = active_sessions,
+                                 stop: Callable[[str], None] = stop_server,
+                                 poll: float = POLL_SECONDS, idle_polls: int = IDLE_POLLS) -> threading.Thread:
+    global _watchdog_thread
+    with _WATCHDOG_LOCK:
+        if _watchdog_thread is not None and _watchdog_thread.is_alive():
+            return _watchdog_thread
 
-    t = threading.Thread(target=run, name="screener-idle-watchdog", daemon=True)
-    t.start()
-    log.info("idle watchdog started (%d x %gs)", idle_polls, poll)
-    return t
+        watch = IdleWatch(idle_polls)
+
+        def run() -> None:
+            while True:
+                time.sleep(poll)
+                if watch.tick(count()):
+                    stop(f"no browser tab for {idle_polls} checks")
+                    return
+
+        _watchdog_thread = threading.Thread(target=run, name="screener-idle-watchdog", daemon=True)
+        _watchdog_thread.start()
+        log.info("idle watchdog started (%d x %gs)", idle_polls, poll)
+        return _watchdog_thread
+
+ensure_idle_watchdog_started()
 

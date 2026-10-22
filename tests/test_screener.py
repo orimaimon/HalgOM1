@@ -643,7 +643,7 @@ def test_app_smoke(tmp_path, monkeypatch):
     monkeypatch.setattr(tv, "fetch_universe", lambda: raw)
     monkeypatch.setattr(tv, "fetch_market", lambda: market)
     stops = []
-    monkeypatch.setattr(lifecycle, "start_idle_watchdog", lambda: None)
+    monkeypatch.setattr(lifecycle, "ensure_idle_watchdog_started", lambda: None)
     monkeypatch.setattr(lifecycle, "stop_server", lambda reason: stops.append(reason))
     snaps = tmp_path / "snapshots"
     snaps.mkdir()
@@ -768,7 +768,8 @@ def test_idle_watchdog_stops_server_once_idle():
         reasons.append(reason)
         stopped.set()
 
-    t = lifecycle.start_idle_watchdog(count=lambda: next(counts, 0), stop=stop, poll=0.01, idle_polls=3)
+    lifecycle._watchdog_thread = None
+    t = lifecycle.ensure_idle_watchdog_started(count=lambda: next(counts, 0), stop=stop, poll=0.01, idle_polls=3)
     assert stopped.wait(5) and reasons == ["no browser tab for 3 checks"]
     t.join(5)
     assert not t.is_alive()
