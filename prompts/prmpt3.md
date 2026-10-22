@@ -1,0 +1,1 @@
+Please review the file `screener/portfolio.py`. Check how portfolio and watchlist CSV/Excel imports are parsed. Pay special attention to edge cases like empty quantities, fractional positions, same-day trade sorting (buys before sells), and missing historical prices. Ensure the file adheres to memory constraints regarding portfolio vs watchlist definition.

@@ -1,0 +1,1 @@
+Please review the `screener/app.py` file. Focus on UI consistency, performance, and adherence to Streamlit best practices (especially regarding session state management). Pay attention to whether data is correctly passed to caching decorators, if widget keys are handled properly, and if the UI text rendering relies on `screener/i18n.py`.
