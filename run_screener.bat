@@ -47,7 +47,7 @@ if not exist "%PY%" (
 )
 if not exist "%PY%" goto :fail
 set "INSTALL_FAILED="
-if defined UV (uv pip install --python screener\.venv -r screener\requirements.lock --quiet) else ("%PY%" -m pip install --quiet --disable-pip-version-check -r screener\requirements.lock)
+if defined UV (uv pip install --python screener\.venv --upgrade pip --quiet 2>nul & uv pip install --python screener\.venv -r screener\requirements.lock --quiet) else ("%PY%" -m pip install --upgrade pip --quiet 2>nul & "%PY%" -m pip install --quiet --disable-pip-version-check -r screener\requirements.lock)
 rem A failed install still runs the update below: the fix for it may be in the next version
 if errorlevel 1 set "INSTALL_FAILED=1"
 

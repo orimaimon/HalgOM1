@@ -24,6 +24,9 @@ CSS = f"""
   }}
   .block-container {{padding-top: 3.25rem; padding-bottom: 2rem; max-width: 1800px;}}  /* clear the fixed top bar */
 
+  /* hide internal dev / promotion nudges */
+  [data-testid="stSkillsNudge"] {{display: none !important;}}
+
   /* numbers line up in columns: prices, deltas, counts */
   [data-testid="stMetricValue"], [data-testid="stMetricDelta"], [data-testid="stCaptionContainer"],
   .hs-count, .hs-snapshot {{font-variant-numeric: tabular-nums;}}
