@@ -282,9 +282,9 @@ def test_show_one_ticker_list_in_screener(app):
     assert not app.exception, app.exception
     assert app.session_state["hide_junk"] is False and app.session_state["only_new"] is False
     assert any("1 תוצאות" in m.value for m in app.markdown)
-    assert any("מוצגת הרשימה" in h for h in notes(app))
+    assert any("Showing list" in h for h in notes(app))
     app.button(key="list_banner_close").click().run()
-    assert app.session_state["query"] == "" and not any("מוצגת הרשימה" in h for h in notes(app))
+    assert app.session_state["query"] == "" and not any("Showing list" in h for h in notes(app))
 
 
 def test_reset_turns_only_new_off(app):

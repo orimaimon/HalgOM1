@@ -19,6 +19,31 @@ LANGS = {HE: "עברית", EN: "English"}
 
 # ── app texts (buttons, captions, page names) ──────────────────────────────
 UI: dict[str, str] = {
+    "No price in screener for:": "אין בסקרינר מחיר ל:",
+    "(e.g. ETFs). They will be saved, but without current value.": "(למשל קרנות סל). הן יישמרו, אבל בלי שווי נוכחי.",
+    "(e.g. ETFs). They are not included in the value and summaries.": "(למשל קרנות סל). הן לא נכללות בשווי ובסיכומים.",
+
+    "Cannot connect to TradingView right now - showing saved data from": "לא ניתן להתחבר ל-TradingView כרגע — מוצגים נתונים שמורים מ-",
+    "at": "בשעה",
+    "Will try again automatically in a few minutes.": "ננסה שוב אוטומטית בעוד כמה דקות.",
+
+    "Cannot read file. Save it as CSV or xlsx in Excel and try again.": "לא ניתן לקרוא את הקובץ. שמור אותו באקסל כ-CSV או כ-xlsx ונסה שוב.",
+    "Fix errors in the file and load again:": "יש לתקן בקובץ ולטעון שוב:",
+    "File is empty": "הקובץ ריק",
+    "No stocks to show - filters or search yielded no results": "אין מניות להצגה — הפילטרים או החיפוש לא החזירו תוצאות",
+    "No stocks to show": "אין מניות להצגה",
+
+    "Cannot save right now, please try again later": "לא ניתן לשמור כרגע, נסו שוב בעוד רגע",
+    "Data was updated": "הנתונים עודכנו לפני",
+    "seconds ago": "שניות",
+    "List saved": "הרשימה נשמרה",
+    "Added to": "נוספו ל",
+    "Not found in screener": "לא נמצאו בסקרינר",
+    "The list was deleted in another window": "הרשימה נמחקה בחלון אחר",
+    "is a portfolio, not a watchlist": "הוא תיק, לא רשימת מעקב",
+    "Trade added": "העסקה נוספה",
+    "Cannot download data, and there is no saved data from the last time. Check your internet connection and try again.": "לא ניתן להוריד נתונים, ואין נתונים שמורים מהפעם הקודמת. בדוק את החיבור לאינטרנט ונסה שוב.",
+
     # pages, views, filter tabs
     "Screener": "סורק", "Groups": "קבוצות", "Heatmap": "מפת חום", "Guide": "מדריך",
     "Overview": "סקירה", "Valuation": "תמחור", "Financial": "פיננסי", "Performance": "ביצועים",

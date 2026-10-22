@@ -151,7 +151,7 @@ def get_data(force: bool = False):
            or (snap.source == "stale" and now - ss.get("last_attempt", now) > RETRY_AFTER)
            or (snap.source != "stale" and not dt.timedelta(0) <= snap.age <= MAX_AGE))   # < 0: clock went back
     if due:
-        ss.last_attempt = now
+        ss["last_attempt"] = now
         with st.spinner(t("Loading market data from TradingView… (≈15 sec)")):
             try:
                 retry = snap is not None and snap.source == "stale"     # offline: don't block a click for 60 s
@@ -165,29 +165,29 @@ def get_data(force: bool = False):
                 if st.button(t("Try again"), type="primary"):
                     st.rerun()
                 st.stop()
-        ss.snap = snap
-        ss.df = add_derived(snap.df, today=market_date(snap.fetched_at))
-    return ss.snap, ss.df
+        ss["snap"] = snap
+        ss["df"] = add_derived(snap.df, today=market_date(snap.fetched_at))
+    return ss.get("snap"), ss.get("df")
 
 
 def get_previous(snap) -> history.Previous | None:
     """Previous day's snapshot (derived), loaded once per snapshot day."""
     day = session_date(snap.fetched_at)
     if ss.get("prev_for") != day:
-        ss.prev = history.load_previous(_store(), day)
-        ss.prev_for = day
-        ss.prev_hits = {}
-    return ss.prev
+        ss["prev"] = history.load_previous(_store(), day)
+        ss["prev_for"] = day
+        ss["prev_hits"] = {}
+    return ss.get("prev")
 
 
 def new_column(res: pd.DataFrame, prev: history.Previous | None, sel: dict[str, str]) -> pd.Series:
     """'NEW' tags; yesterday's matches are computed once per (filters, junk switch), not on every click."""
     if prev is None:
         return history.mark_new(res, None)
-    key = (tuple(sorted(active(sel).items())), ss.hide_junk)
-    if key not in ss.prev_hits:
-        ss.prev_hits[key] = history.previous_tickers(prev, sel, ss.hide_junk)
-    return history.mark_new(res, ss.prev_hits[key])
+    key = (tuple(sorted(active(sel).items())), ss.get("hide_junk"))
+    if key not in ss.get("prev_hits"):
+        ss.get("prev_hits")[key] = history.previous_tickers(prev, sel, ss.get("hide_junk"))
+    return history.mark_new(res, ss.get("prev_hits")[key])
 
 
 def rows_key(res: pd.DataFrame) -> str:
@@ -259,7 +259,7 @@ def on_remove_pill(key: str, filter_of: dict[str, str]):
     if removed:
         target = filter_of[removed]
         if target == "query":
-            ss.query = ""
+            ss["query"] = ""
         else:
             ss[f"f_{target}"] = ANY
 
@@ -297,23 +297,23 @@ def keep_widget_state() -> None:
 # ─────────────────────────── callbacks ─────────────────────────────────────
 
 def on_preset():
-    p = all_presets().get(ss.preset)
+    p = all_presets().get(ss.get("preset"))
     if p is None:
         return
     for f in FILTERS:
         ss[f"f_{f.key}"] = p.filters.get(f.key, ANY)
-    ss.view = p.view if p.view in VIEWS else "Overview"
-    ss.sort_col = p.sort if p.sort in COLUMNS else DEFAULT_SORT[0]
-    ss.sort_asc = p.ascending
-    ss.query = ""
+    ss["view"] = p.view if p.view in VIEWS else "Overview"
+    ss["sort_col"] = p.sort if p.sort in COLUMNS else DEFAULT_SORT[0]
+    ss["sort_asc"] = p.ascending
+    ss["query"] = ""
 
 
 def on_reset():
     for f in FILTERS:
         ss[f"f_{f.key}"] = ANY
-    ss.preset = CUSTOM
-    ss.query = ""
-    ss.only_new = False
+    ss["preset"] = CUSTOM
+    ss["query"] = ""
+    ss["only_new"] = False
 
 
 def on_clear_all():
@@ -328,7 +328,7 @@ def preset_modified(presets: dict[str, P.Preset]) -> bool:
 
 
 def on_list_banner_close():
-    ss.query = ""
+    ss["query"] = ""
     ss.pop("list_view", None)
 
 
@@ -338,23 +338,23 @@ def on_save():
         return
     user = P.load_user()
     if name in user and ss.get("confirm_save_name") != name:
-        ss.confirm_save_name = name
+        ss["confirm_save_name"] = name
         return
     ss.pop("confirm_save_name", None)
     try:
-        P.save_user(name, P.Preset(filters=active(selections()), view=ss.view,
-                                   sort=ss.sort_col, ascending=ss.sort_asc))
+        P.save_user(name, P.Preset(filters=active(selections()), view=ss.get("view"),
+                                   sort=ss.get("sort_col"), ascending=ss.get("sort_asc")))
     except Exception as e:
         log.warning("cannot save screen %r: %s", name, e)
-        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
         return
-    ss.preset = USER_PREFIX + name
-    ss.save_name = ""
+    ss["preset"] = USER_PREFIX + name
+    ss["save_name"] = ""
     st.toast(f"{t('Saved screen')}: “{name}”", icon="💾")
 
 
 def on_exit():
-    ss.exiting = True
+    ss["exiting"] = True
 
 
 def on_delete():
@@ -364,10 +364,10 @@ def on_delete():
             P.delete_user(name)
         except Exception as e:
             log.warning("cannot delete screen %r: %s", name, e)
-            st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+            st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
             return
         if ss.get("preset") == USER_PREFIX + name:
-            ss.preset = CUSTOM
+            ss["preset"] = CUSTOM
         st.toast(f"{t('Deleted')}: “{name}”", icon="🗑️")
 
 
@@ -529,18 +529,17 @@ def _header(snap, n_universe: int) -> None:
         r1, r2 = st.columns([1.4, 1.3])
         if r1.button(t("Refresh data"), icon=":material/refresh:", use_container_width=True):
             if snap.source != "stale" and snap.age < REFRESH_MIN:      # every click is a TradingView request
-                st.toast(f"הנתונים עודכנו לפני {max(0, int(snap.age.total_seconds()))} שניות", icon="ℹ️")
+                st.toast(f"{t('Data was updated')} {max(0, int(snap.age.total_seconds()))} {t('seconds ago')}", icon="ℹ️")
             else:
                 get_data(force=True)
                 _market.clear()
                 st.rerun()
         with r2.popover(t("Exit"), icon=":material/power_settings_new:", use_container_width=True,
                         help="סגירת הסקרינר"):
-            hebrew_note("סוגר את הסקרינר ואת החלון השחור. בפעם הבאה פותחים שוב מהקיצור בשולחן העבודה.")
+            hebrew_note(t("Closes the screener and the black window. Next time, open again from the desktop shortcut."))
             st.button(t("Close the screener"), key="exit", type="primary", on_click=on_exit)
     if snap.source == "stale":
-        st.warning(f"⚠️ לא ניתן להתחבר ל-TradingView כרגע — מוצגים נתונים שמורים מ-"
-                   f"{snap.fetched_at:%d/%m/%Y} בשעה {snap.fetched_at:%H:%M}. ננסה שוב אוטומטית בעוד כמה דקות.")
+        st.warning(f"⚠️ {t('Cannot connect to TradingView right now - showing saved data from')} {snap.fetched_at:%d/%m/%Y} {t('at')} {snap.fetched_at:%H:%M}. {t('Will try again automatically in a few minutes.')}")
 
 
 def source_text(meta: dict | None) -> str:
@@ -569,15 +568,15 @@ def nav() -> str:
     st.segmented_control("Page", PAGES, key="page", label_visibility="collapsed", required=True, format_func=t,
                          help="סורק = סריקת מניות, קבוצות = ביצועים לפי סקטור ותעשייה, מפת חום = מפת השוק, "
                               "תיקים ומעקב = רשימות מעקב ותיקי השקעות שלך, מדריך = הסבר על הסקרינר ועל המונחים")
-    return ss.page
+    return ss.get("page")
 
 
 def toolbar(presets: dict[str, P.Preset]) -> None:
     names = [CUSTOM] + list(presets)
     if ss.get("preset") not in names:
-        ss.preset = CUSTOM
+        ss["preset"] = CUSTOM
     c1, c2, c3, c4, c7, c5, c6 = st.columns([2.2, 2.0, 1.5, 1.1, 1.6, 1.0, 1.3], vertical_alignment="bottom")
-    changed = ss.preset if preset_modified(presets) else None
+    changed = ss.get("preset") if preset_modified(presets) else None
     lang = L()
 
     def preset_name(n: str) -> str:
@@ -604,13 +603,13 @@ def toolbar(presets: dict[str, P.Preset]) -> None:
             st.divider()
             st.selectbox(t("Delete saved screen"), list(user), key="delete_name")
             st.button(t("Delete"), on_click=on_delete)
-    note = presets.get(ss.preset).note if ss.preset in presets else ""
+    note = presets.get(ss.get("preset")).note if ss.get("preset") in presets else ""
     if note:
         hebrew_note(f"ℹ️ {note}")
     if changed:
         n1, n2 = st.columns([4, 1.3], vertical_alignment="center")
         with n1:
-            hebrew_note("הפילטרים שונו מאז שנבחרה הסריקה.")
+            hebrew_note(t("Filters have been changed since the screen was selected."))
         n2.button(t("Restore screen"), on_click=on_preset, key="preset_reapply", use_container_width=True,
                   help="מחזיר את הפילטרים של הסריקה שנבחרה")
 
@@ -652,13 +651,13 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
     if banner and ss.get("query") == banner[1]:
         b1, b2 = st.columns([4, 1.3], vertical_alignment="center")
         with b1:
-            hebrew_note(f"מוצגת הרשימה “{banner[0]}” מדף התיקים")
+            hebrew_note(f"{t('Showing list')} “{banner[0]}” {t('from Portfolios page')}")
         b2.button(t("Back to all stocks"), on_click=on_list_banner_close, key="list_banner_close",
                   use_container_width=True)
     with top[1]:
         st.segmented_control("View", list(VIEWS), key="view", label_visibility="collapsed", required=True,
                              format_func=t)
-    view_cols = VIEWS[ss.view]
+    view_cols = VIEWS[ss.get("view")]
     chips = described()
     items = [(f"{k}: {v}", f) for (k, v), f in zip(chips, active(selections()))]
     query_val = (ss.get("query") or "").strip()
@@ -672,7 +671,7 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
                  label_visibility="collapsed", key=key, on_change=on_remove_pill, args=(key, filter_of),
                  help="לחיצה על פילטר מבטלת אותו")
     notes = []                                   # end-user explanations are Hebrew (CLAUDE.md)
-    if ss.hide_junk and len(universe) < len(df):
+    if ss.get("hide_junk") and len(universe) < len(df):
         notes.append(f"{len(df) - len(universe):,} מניות זבל מוסתרות ({t('Hide junk')})")
     if prev is not None:
         day_str = hebrew_day_str(prev.day)
@@ -716,7 +715,7 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
         detail(selected_row)
     else:
         ss.pop("selected_ticker", None)
-        hebrew_note("👆 לחץ על שורה בטבלה כדי לפתוח גרף ונתונים של המניה")
+        hebrew_note(t("👆 Click a row in the table to open chart and stock details"))
     export_bar(res, view_cols, snap)
 
 
@@ -801,10 +800,10 @@ def add_to_watchlist_button(ticker: str) -> None:
     watchlists = [n for n, p in PF.load_all().items() if p.kind == PF.WATCHLIST]
     options = watchlists + [NEW_WATCHLIST]
     if ss.get("add_wl") not in options:
-        ss.add_wl = options[0]
+        ss["add_wl"] = options[0]
     with st.popover(t("Add to watchlist"), icon=":material/playlist_add:", use_container_width=True):
         st.selectbox(t("Watchlist"), options, key="add_wl", format_func=lambda n: t(n) if n == NEW_WATCHLIST else n)
-        if ss.add_wl == NEW_WATCHLIST:
+        if ss.get("add_wl") == NEW_WATCHLIST:
             st.text_input(t("List name"), key="add_wl_name")
         st.button(f"{t('Add')} {ticker}", on_click=on_add_to_watchlist, args=(ticker,), type="primary",
                   key="add_wl_btn")
@@ -812,7 +811,7 @@ def add_to_watchlist_button(ticker: str) -> None:
 
 def export_bar(res: pd.DataFrame, view_cols: list[str], snap) -> None:
     st.divider()
-    title = ss.preset.removeprefix(USER_PREFIX) if ss.get("preset") not in (None, CUSTOM) else "custom"
+    title = ss.get("preset").removeprefix(USER_PREFIX) if ss.get("preset") not in (None, CUSTOM) else "custom"
     stem = export.file_stem(title)
     c0, c1, c2, c3, c4 = st.columns([1.6, 1, 1, 1.2, 1.2], vertical_alignment="center")
     all_cols = c0.toggle(t("Export all columns"), key="export_all",
@@ -821,7 +820,7 @@ def export_bar(res: pd.DataFrame, view_cols: list[str], snap) -> None:
     cols = [k for k, c in COLUMNS.items() if k != "tv_symbol" and c.kind != "flag"] if all_cols else view_cols
     filters_desc = described()
     if ss.get("query"):
-        filters_desc = filters_desc + [(t("Search"), ss.query)]
+        filters_desc = filters_desc + [(t("Search"), ss.get("query"))]
     headers = {k: col_label(k) for k in cols}
     preset = ss.get("preset")
     shown_title = (t("(custom)") if preset in (None, CUSTOM) else title if preset.startswith(USER_PREFIX)
@@ -858,7 +857,7 @@ def export_bar(res: pd.DataFrame, view_cols: list[str], snap) -> None:
     with c4.popover(t("Tickers"), icon=":material/content_copy:", use_container_width=True, disabled=empty):
         st.caption("לחץ על אייקון ההעתקה בפינה")
         st.code(export.tickers_text(res), language=None, wrap_lines=True)
-    hebrew_note(f"עותק של כל קובץ שמורד נשמר גם בתיקייה: {export.EXPORT_DIR}")
+    hebrew_note(f"{t('A copy of every downloaded file is also saved in:')} {export.EXPORT_DIR}")
 
 
 # ─────────────────────────── Groups / Heatmap pages ────────────────────────
@@ -875,22 +874,22 @@ def groups_page(universe: pd.DataFrame, res: pd.DataFrame) -> None:
     c2.segmented_control(t("Averages"), ["Median", "Equal", "Market cap"], key="g_weight", required=True, format_func=t,
                          help="חציון = הערך האמצעי (עמיד בפני חריגים). שווה = ממוצע שווה-משקל. שווי שוק = מניות גדולות משפיעות יותר (כמו מדד)")
     base = res if ss.get("g_results") else universe
-    by = ss.g_by.lower()
+    by = ss.get("g_by").lower()
     if by == "industry":
         sectors = ["All sectors"] + sorted(base["sector"].dropna().astype(str).unique())
         if ss.get("g_sector") not in sectors:
-            ss.g_sector = "All sectors"
+            ss["g_sector"] = "All sectors"
         c3.selectbox(t("Sector"), sectors, key="g_sector", help="הצגת התעשיות של סקטור אחד בלבד",
                      format_func=lambda v: t(v) if v == "All sectors" else I.value("sector", v, L()))
-        if ss.g_sector != "All sectors":
-            base = base[base["sector"] == ss.g_sector]
+        if ss.get("g_sector") != "All sectors":
+            base = base[base["sector"] == ss.get("g_sector")]
     c4.toggle(t("Only screener results"), key="g_results",
               help="דלוק: הקבוצות מחושבות רק מהמניות שעברו את הפילטרים בדף הסורק")
     junk_toggle(c5)
     if base.empty:
-        st.info("אין מניות להצגה — הפילטרים או החיפוש לא החזירו תוצאות")
+        st.info(t("No stocks to show - filters or search yielded no results"))
         return
-    weight_mode = "cap" if ss.g_weight == "Market cap" else "equal" if ss.g_weight == "Equal" else "median"
+    weight_mode = "cap" if ss.get("g_weight") == "Market cap" else "equal" if ss.get("g_weight") == "Equal" else "median"
     table = G.group_performance(base, by=by, weight=weight_mode)
     st.markdown(f"#### {len(table):,} {t('sectors' if by == 'sector' else 'industries')} · "
                 f"{len(base):,} {t('stocks')}")
@@ -924,7 +923,7 @@ def heatmap_page(universe: pd.DataFrame, res: pd.DataFrame) -> None:
     c2.selectbox(t("Color by"), list(HEAT_COLORS), key="h_color", format_func=col_label,
                  help="ירוק = עלייה, אדום = ירידה. הצבע רווי בקצוות הסקאלה (למשל ±3% לשינוי יומי)")
     junk_toggle(c3)
-    match ss.h_universe:
+    match ss.get("h_universe"):
         case "Screener results":
             data = res
         case "All stocks (top 1,000)":
@@ -932,9 +931,9 @@ def heatmap_page(universe: pd.DataFrame, res: pd.DataFrame) -> None:
         case label:
             data = universe[in_index(label)(universe)]
     if data.empty:
-        st.info("אין מניות להצגה")
+        st.info(t("No stocks to show"))
         return
-    color = ss.h_color
+    color = ss.get("h_color")
     fig = G.heatmap_figure(display_values(data), color, limit=HEAT_COLORS[color], root=t("US stocks"),
                            stocks=t("stocks"), cap_label=t("Market cap"))
     st.plotly_chart(fig, key="heatmap", config={"displaylogo": False})
@@ -961,14 +960,14 @@ def on_pf_import():
     if imp is None or not imp.ok or not name:
         return
     try:
-        PF.save(PF.from_imported(name, imp, _by_ticker(ss.df)))
+        PF.save(PF.from_imported(name, imp, _by_ticker(ss.get("df"))))
     except Exception as e:
         log.warning("cannot save portfolio %r: %s", name, e)
-        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
         return
-    ss.pf_name, ss.pf_new_name = name, ""
-    ss.pf_upload = ss.get("pf_upload", 0) + 1          # a new uploader widget: the file is cleared
-    st.toast(f"הרשימה נשמרה: “{name}”", icon="💾")
+    ss["pf_name"], ss["pf_new_name"] = name, ""
+    ss["pf_upload"] = ss.get("pf_upload", 0) + 1          # a new uploader widget: the file is cleared
+    st.toast(f"{t('List saved')}: “{name}”", icon="💾")
 
 
 def on_pf_new_watchlist():
@@ -977,7 +976,7 @@ def on_pf_new_watchlist():
         lists = PF.load_all()
     except Exception as e:
         log.warning("cannot load lists: %s", e)
-        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
         return
     if not name or name in lists:
         return
@@ -985,9 +984,9 @@ def on_pf_new_watchlist():
         PF.save(PF.PList(name, PF.WATCHLIST))
     except Exception as e:
         log.warning("cannot save watchlist %r: %s", name, e)
-        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
         return
-    ss.pf_name, ss.pf_new_name = name, ""
+    ss["pf_name"], ss["pf_new_name"] = name, ""
 
 
 def add_tickers(plist: PF.PList, text: str, prices: pd.Series) -> tuple[list[str], list[str]]:
@@ -1002,17 +1001,17 @@ def add_tickers(plist: PF.PList, text: str, prices: pd.Series) -> tuple[list[str
 
 
 def _add_and_report(plist: PF.PList, text: str) -> None:
-    added, unknown = add_tickers(plist, text, _by_ticker(ss.df))
+    added, unknown = add_tickers(plist, text, _by_ticker(ss.get("df")))
     try:
         PF.save(plist)
     except Exception as e:
         log.warning("cannot save list %r: %s", plist.name, e)
-        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
         return
     if added:
-        st.toast(f"נוספו ל“{plist.name}”: {', '.join(added)}", icon="✅")
+        st.toast(f"{t('Added to')} “{plist.name}”: {', '.join(added)}", icon="✅")
     if unknown:
-        st.toast(f"לא נמצאו בסקרינר: {', '.join(unknown)}", icon="⚠️")
+        st.toast(f"{t('Not found in screener')}: {', '.join(unknown)}", icon="⚠️")
 
 
 def on_pf_add_tickers():
@@ -1020,16 +1019,16 @@ def on_pf_add_tickers():
         lists = PF.load_all()
     except Exception as e:
         log.warning("cannot load list: %s", e)
-        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
         return
     name = ss.get("pf_name")
     if not name or name not in lists:
-        st.toast("הרשימה נמחקה בחלון אחר", icon="⚠️")
+        st.toast(t("The list was deleted in another window"), icon="⚠️")
         return
     plist = lists[name]
     if plist is not None:
         _add_and_report(plist, ss.get("pf_add") or "")
-    ss.pf_add = ""
+    ss["pf_add"] = ""
 
 
 def on_add_to_watchlist(ticker: str):
@@ -1043,14 +1042,14 @@ def on_add_to_watchlist(ticker: str):
         lists = PF.load_all()
     except Exception as e:
         log.warning("cannot load lists: %s", e)
-        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
         return
     plist = lists.get(name) or PF.PList(name, PF.WATCHLIST)
     if plist.kind != PF.WATCHLIST:
-        st.toast(f"“{name}” הוא תיק, לא רשימת מעקב", icon="⚠️")
+        st.toast(f"“{name}” {t('is a portfolio, not a watchlist')}", icon="⚠️")
         return
     _add_and_report(plist, ticker)
-    ss.add_wl, ss.add_wl_name = name, ""
+    ss["add_wl"], ss["add_wl_name"] = name, ""
 
 
 def on_pf_remove():
@@ -1058,11 +1057,11 @@ def on_pf_remove():
         lists = PF.load_all()
     except Exception as e:
         log.warning("cannot load list: %s", e)
-        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
         return
     name = ss.get("pf_name")
     if not name or name not in lists:
-        st.toast("הרשימה נמחקה בחלון אחר", icon="⚠️")
+        st.toast(t("The list was deleted in another window"), icon="⚠️")
         return
     plist = lists[name]
     if plist is not None:
@@ -1071,7 +1070,7 @@ def on_pf_remove():
             PF.save(plist)
         except Exception as e:
             log.warning("cannot save list: %s", e)
-            st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+            st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
             return
 
 
@@ -1080,11 +1079,11 @@ def on_pf_trade():
         lists = PF.load_all()
     except Exception as e:
         log.warning("cannot load list: %s", e)
-        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
         return
     name = ss.get("pf_name")
     if not name or name not in lists:
-        st.toast("הרשימה נמחקה בחלון אחר", icon="⚠️")
+        st.toast(t("The list was deleted in another window"), icon="⚠️")
         return
     plist = lists[name]
     if plist is None:
@@ -1098,18 +1097,18 @@ def on_pf_trade():
     if not errors:
         errors = [I.problem(PF.Problem(0, "oversold", tk)) for tk in PF.add_trades(plist, imp.rows)]
     if errors:
-        ss.pf_trade_errors = errors
+        ss["pf_trade_errors"] = errors
         return
     try:
         PF.save(plist)
     except Exception as e:
         log.warning("cannot save trade: %s", e)
-        st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+        st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
         return
-    ss.pf_trade_errors = []
+    ss["pf_trade_errors"] = []
     for k in ("pf_t_ticker", "pf_t_price", "pf_t_qty", "pf_t_fees", "pf_t_note"):
         ss.pop(k, None)
-    st.toast(f"העסקה נוספה: {imp.rows['ticker'].iloc[0]}", icon="✅")
+    st.toast(f"{t('Trade added')}: {imp.rows['ticker'].iloc[0]}", icon="✅")
 
 
 def on_pf_delete():
@@ -1119,18 +1118,18 @@ def on_pf_delete():
             PF.delete(name)
         except Exception as e:
             log.warning("cannot delete portfolio %r: %s", name, e)
-            st.toast("לא ניתן לשמור כרגע, נסו שוב בעוד רגע", icon="⚠️")
+            st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
             return
         ss.pop("pf_name", None)
 
 
 def on_show_in_screener(name: str, tickers: list[str]):
     on_reset()                                    # filters would hide part of the list
-    ss.hide_junk = False                          # ... and so would Hide junk ("Only new" is off after the reset)
+    ss["hide_junk"] = False                          # ... and so would Hide junk ("Only new" is off after the reset)
     query = ", ".join(tickers) + ("," if len(tickers) == 1 else "")    # a comma = exact tickers, even one
-    ss.query = query
-    ss.list_view = (name, query)                  # the banner shows while this search is on
-    ss.page = "Screener"
+    ss["query"] = query
+    ss["list_view"] = (name, query)                  # the banner shows while this search is on
+    ss["page"] = "Screener"
 
 
 def import_panel(lists: dict[str, PF.PList], df: pd.DataFrame) -> None:
@@ -1142,21 +1141,21 @@ def import_panel(lists: dict[str, PF.PList], df: pd.DataFrame) -> None:
         name = c1.text_input(t("List name"), key="pf_new_name").strip()
         up = c2.file_uploader(t("CSV or Excel file"), type=["csv", "xlsx", "xls"],
                               key=f"pf_file_{ss.get('pf_upload', 0)}")
-        ss.pf_pending = None
+        ss["pf_pending"] = None
         if up is not None:
             try:
                 imp = PF.parse(PF.read_table(up.getvalue(), up.name))
             except Exception as e:
                 log.warning("cannot read %s: %s", up.name, e)
-                st.error("לא ניתן לקרוא את הקובץ. שמור אותו באקסל כ-CSV או כ-xlsx ונסה שוב.")
+                st.error(t("Cannot read file. Save it as CSV or xlsx in Excel and try again."))
                 imp = None
             if imp is not None and imp.problems:
-                st.error("יש לתקן בקובץ ולטעון שוב:\n\n" + "\n".join(f"- {I.problem(p)}" for p in imp.problems[:15])
+                st.error(t("Fix errors in the file and load again:") + "\n\n" + "\n".join(f"- {I.problem(p)}" for p in imp.problems[:15])
                          + (f"\n- ועוד {len(imp.problems) - 15}" if len(imp.problems) > 15 else ""))
             elif imp is not None and imp.rows.empty:
-                st.error("הקובץ ריק")
+                st.error(t("File is empty"))
             elif imp is not None:
-                ss.pf_pending = imp
+                ss["pf_pending"] = imp
                 n_tk = imp.rows["ticker"].nunique()
                 kind_str = t("Portfolio") if imp.kind == PF.PORTFOLIO else t("Watchlist")
                 details = [f"סוג: **{kind_str}**"]
@@ -1180,10 +1179,10 @@ def import_panel(lists: dict[str, PF.PList], df: pd.DataFrame) -> None:
                     hebrew_note(f"אין בסקרינר מחיר ל: {', '.join(unknown)} (למשל קרנות סל). "
                                 "הן יישמרו, אבל בלי שווי נוכחי.")
         if name and name in lists:
-            hebrew_note(f"כבר יש רשימה בשם “{name}”. שמירה עם קובץ תחליף אותה.")
+            hebrew_note(f"{t('There is already a list named')} “{name}”. {t('Saving with a file will replace it.')}")
         b1, b2, b3 = st.columns([1, 1, 1])
         b1.button(t("Save list"), on_click=on_pf_import, type="primary", use_container_width=True,
-                  disabled=not (name and ss.pf_pending is not None), key="pf_save")
+                  disabled=not (name and ss.get("pf_pending") is not None), key="pf_save")
         b2.button(t("Empty watchlist"), on_click=on_pf_new_watchlist, use_container_width=True,
                   disabled=not name or name in lists, key="pf_empty", icon=":material/add:")
         b3.download_button(t("Sample file"), PF.template_csv(), "halgom_portfolio_sample.csv", mime="text/csv",
@@ -1193,7 +1192,7 @@ def import_panel(lists: dict[str, PF.PList], df: pd.DataFrame) -> None:
 def watchlist_view(plist: PF.PList, df: pd.DataFrame) -> None:
     w = PF.watch_performance(plist.frame(), _by_ticker(df))
     if w.empty:
-        hebrew_note("הרשימה ריקה. מוסיפים סימולים בתיבה למטה, או מכפתור “הוספה לרשימת מעקב” בפרטי מניה בסורק.")
+        hebrew_note(t("The list is empty. Add tickers in the box below, or from the \"Add to watchlist\" button in the stock details in the screener."))
     else:
         w["company"] = w["ticker"].map(_by_ticker(df, "company"))
         w["change"] = w["ticker"].map(_by_ticker(df, "change"))
@@ -1236,9 +1235,9 @@ def portfolio_view(plist: PF.PList, df: pd.DataFrame) -> None:
     m[3].metric(t("Realized P&L"), _money(val["realized"].sum()))
     missing = held.loc[held["price"].isna(), "ticker"].tolist()
     if missing:
-        hebrew_note(f"אין בסקרינר מחיר ל: {', '.join(missing)} (למשל קרנות סל). הן לא נכללות בשווי ובסיכומים.")
+        hebrew_note(f"{t('No price in screener for:')} {', '.join(missing)} {t('(e.g. ETFs). They are not included in the value and summaries.')}")
     if held.empty:
-        hebrew_note("אין כרגע פוזיציות פתוחות בתיק.")
+        hebrew_note(t("There are currently no open positions in the portfolio."))
     else:
         cols = ["ticker", "company", "quantity", "avg_cost", "price", "change", "value", "pnl", "pnl_pct",
                 "weight", "annual_pct", "first_buy"]
@@ -1259,7 +1258,7 @@ def portfolio_view(plist: PF.PList, df: pd.DataFrame) -> None:
         st.dataframe(held[cols].style.map(_sign_color, subset=["change", "pnl", "pnl_pct", "annual_pct"]),
                      hide_index=True, column_config=config, placeholder="—", key="pf_positions",
                      height=min(38 + 35 * len(held), 600))
-    hebrew_note("עלות ממוצעת כוללת עמלות. ספליטים ודיבידנדים אחרי הקנייה עוד לא מחושבים.")
+    hebrew_note(t("Average cost includes fees. Splits and dividends after purchase are not yet calculated."))
     with st.expander(f"{t('Trades')} ({len(trades)})"):
         shown = trades.assign(side=trades["side"].map(t))
         st.dataframe(shown, hide_index=True, placeholder="—", key="pf_trades", column_config={
@@ -1291,11 +1290,11 @@ def portfolios_page(df: pd.DataFrame) -> None:
         return
     names = list(lists)
     if ss.get("pf_name") not in names:
-        ss.pf_name = names[0]
+        ss["pf_name"] = names[0]
     c1, c2, c3, c4 = st.columns([3, 1.2, 1.2, 1.2], vertical_alignment="bottom")
     c1.selectbox(t("List"), names, key="pf_name",
                  format_func=lambda n: f"{n} · {t('Portfolio' if lists[n].kind == PF.PORTFOLIO else 'Watchlist')}")
-    plist = lists[ss.pf_name]
+    plist = lists[ss.get("pf_name")]
     tickers = list(dict.fromkeys(r["ticker"] for r in plist.rows))
     c2.button(t("Show in screener"), on_click=on_show_in_screener, args=(plist.name, tickers), disabled=not tickers,
               use_container_width=True, icon=":material/search:", key="pf_show",
@@ -1304,13 +1303,13 @@ def portfolios_page(df: pd.DataFrame) -> None:
                        on_click="ignore", use_container_width=True, icon=":material/download:",
                        help="קובץ CSV באותו מבנה של הייבוא: גיבוי, עריכה באקסל או העברה למחשב אחר")
     with c4.popover(t("Delete list"), icon=":material/delete:", use_container_width=True):
-        hebrew_note(f"למחוק את “{plist.name}”? אי אפשר לבטל. כדאי לייצא קודם.")
+        hebrew_note(f"{t('Delete')} “{plist.name}”? {t('This cannot be undone. Consider exporting first.')}")
         st.button(t("Delete"), on_click=on_pf_delete, type="primary", key="pf_delete")
     if plist.kind == PF.PORTFOLIO:
         portfolio_view(plist, df)
     else:
         watchlist_view(plist, df)
-    hebrew_note("הרשימות נשמרות במחשב הזה בלבד. מחירים מהסקרינר (בעיכוב של כ-15 דקות).")
+    hebrew_note(t("Lists are saved on this computer only. Prices are from the screener (delayed ~15 min)."))
 
 
 # ─────────────────────────── page ──────────────────────────────────────────
@@ -1325,7 +1324,7 @@ def goodbye() -> None:
             'אפשר לסגור את הלשונית הזו, וגם לשוניות אחרות של הסקרינר אם פתוחות. כדי לפתוח שוב — '
             'לחיצה כפולה על הקיצור "HalgOM Screener" בשולחן העבודה.</div>')
     if not ss.get("exit_sent"):
-        ss.exit_sent = True
+        ss["exit_sent"] = True
         lifecycle.stop_server("Exit button")
 
 
@@ -1333,7 +1332,7 @@ def main() -> None:
     _setup_logging()
     ss.setdefault("lang", I.HE)
     ss.setdefault("large_text", False)
-    css = theme.CSS + (theme.RTL_CSS if L() == I.HE else "") + (theme.LARGE_TEXT_CSS if ss.large_text else "")
+    css = theme.CSS + (theme.RTL_CSS if L() == I.HE else "") + (theme.LARGE_TEXT_CSS if ss.get("large_text") else "")
     st.html(css)
     if ss.get("exiting"):
         goodbye()
@@ -1364,13 +1363,13 @@ def main() -> None:
         universe = ss["pipeline_universe"]
         res = ss["pipeline_res"]
     else:
-        universe = hide_junk(df, ss.hide_junk)
+        universe = hide_junk(df, ss.get("hide_junk"))
         res = search(apply_filters(universe, sel), ss.get("query", ""))
         res = res.assign(new=new_column(res, prev, sel))
-        res = res.sort_values(ss.sort_col, ascending=ss.sort_asc, na_position="last")
-        ss.pipeline_key = pipeline_key
-        ss.pipeline_universe = universe
-        ss.pipeline_res = res
+        res = res.sort_values(ss.get("sort_col"), ascending=ss.get("sort_asc"), na_position="last")
+        ss["pipeline_key"] = pipeline_key
+        ss["pipeline_universe"] = universe
+        ss["pipeline_res"] = res
 
     if page == "Guide":
         st.html(GUIDE.read_text(encoding="utf-8"))      # Hebrew only, like all end-user explanations
@@ -1382,7 +1381,7 @@ def main() -> None:
         portfolios_page(df)
     else:
         results(df, universe, res, snap, prev)
-    hebrew_note("נתונים: TradingView (בעיכוב של כ-15 דקות). הכלי לצורכי מחקר בלבד ואינו ייעוץ השקעות.")
+    hebrew_note(t("Data: TradingView (delayed ~15 min). For research purposes only, not investment advice."))
 
 
 main()
