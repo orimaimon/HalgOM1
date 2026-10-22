@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from typing import Any
@@ -30,7 +31,7 @@ def _read_state() -> dict[str, str]:
 
 def _write_state(state: dict[str, str]) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    temp_file = STATE_FILE.with_suffix(".json.tmp")
+    temp_file = STATE_FILE.with_name(f"{STATE_FILE.name}.{uuid.uuid4().hex}.tmp")
     temp_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
     os.replace(temp_file, STATE_FILE)
 
@@ -139,9 +140,10 @@ def _has_actions(df: pd.DataFrame) -> bool:
 
 
 def _write(ticker: str, df: pd.DataFrame) -> None:
-    tmp = _parquet_path(ticker).with_suffix(".parquet.tmp")
+    path = _parquet_path(ticker)
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
     df.to_parquet(tmp)
-    os.replace(tmp, _parquet_path(ticker))              # a crash mid-write never leaves a broken file
+    os.replace(tmp, path)              # a crash mid-write never leaves a broken file
 
 
 def ensure(tickers: list[str], start: dt.date) -> tuple[list[str], list[str]]:
