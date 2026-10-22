@@ -89,6 +89,8 @@ def test_find_removed_pill():
 def test_active_filters_pills(app):
     app.run()
     app.selectbox(key="f_pe").select("Low (<15)").run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
 
     def pills():
@@ -101,6 +103,8 @@ def test_active_filters_pills(app):
     # clicking the P/E pill removes only that filter; the market-cap pill stays selected
     cap = next(o for o in pills().options if "P/E" not in o)
     pills().set_value([cap]).run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert app.session_state["f_pe"] == "Any" and app.session_state["f_market_cap"] != "Any"
     assert pills().value == [cap]
@@ -108,6 +112,8 @@ def test_active_filters_pills(app):
 
 def test_large_text_toggle(app):
     app.run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
 
     # Toggle off by default
@@ -122,6 +128,8 @@ def test_large_text_toggle(app):
 
 def test_data_time_header(app):
     app.run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert any("שעת הנתונים:" in c.value for c in app.caption)
 
@@ -150,6 +158,8 @@ def test_escape_markdown_and_clean_str():
 
 def test_filter_panel_collapsed_by_default(app):
     app.run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     # Expander for filters should be collapsed when 0 filters are active
     exp = app.expander[0]
@@ -162,6 +172,8 @@ def test_filter_panel_collapsed_by_default(app):
 
 def test_save_bookmark_button_label(app):
     app.run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     # Popover button for saving screen should have label "שמירה"
     assert any("שמירה" in b.label for b in app.button)
@@ -171,11 +183,15 @@ def test_empty_results_explain_and_clear_everything(app):
     app.run()
     app.selectbox(key="f_pe").select("Low (<15)").run()
     app.text_input(key="query").input("NO-SUCH-STOCK").run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert any("אף מניה לא עומדת" in h for h in notes(app))
     button = app.button(key="clear_all")
     assert button.label == "איפוס כל הפילטרים והחיפוש"
     button.click().run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert app.session_state["f_pe"] == "Any" and app.session_state["query"] == ""
     assert not any("אף מניה לא עומדת" in h for h in notes(app))
@@ -190,6 +206,8 @@ def open_portfolios(app: AppTest) -> list[str]:
     tickers = list(app.session_state["df"]["ticker"][:3])
     app.session_state["page"] = "Portfolios"
     app.run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     return tickers
 
@@ -199,10 +217,14 @@ def test_watchlist_create_add_and_show_in_screener(app):
     assert any("עוד אין רשימות" in h for h in notes(app))
     app.text_input(key="pf_new_name").input("מעקב").run()
     app.button(key="pf_empty").click().run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert app.session_state["pf_name"] == "מעקב"
     app.text_input(key="pf_add").input(f"{a.lower()}, {b} NOSUCH").run()
     app.button(key="pf_add_btn").click().run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     saved = PF.load_all()["מעקב"]
     assert saved.kind == PF.WATCHLIST and [r["ticker"] for r in saved.rows] == [a, b]
@@ -210,6 +232,8 @@ def test_watchlist_create_add_and_show_in_screener(app):
     assert any("NOSUCH" in toast.value for toast in app.toast)
 
     app.button(key="pf_show").click().run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert app.session_state["page"] == "Screener" and app.session_state["query"] == f"{a}, {b}"
     assert any("2 תוצאות" in m.value for m in app.markdown)
@@ -222,6 +246,8 @@ def test_portfolio_values_and_trades(app):
         {"ticker": "SPY", "date": "2025-01-02", "price": 500.0, "quantity": 1, "side": "buy", "fees": 0, "note": ""},
     ]))
     app.run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert app.session_state["pf_name"] == "תיק"
     price = float(app.session_state["df"].set_index("ticker").loc[a, "price"])
@@ -236,6 +262,8 @@ def test_portfolio_values_and_trades(app):
     app.number_input(key="pf_t_qty").set_value(50.0)
     app.radio(key="pf_t_side").set_value("sell")
     app.button[[x.label for x in app.button].index("הוספת עסקה")].click().run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert any("נמכרו יותר" in e.value for e in app.error)
     assert len(PF.load_all()["תיק"].rows) == 2
@@ -245,12 +273,16 @@ def test_portfolio_values_and_trades(app):
     app.number_input(key="pf_t_qty").set_value(5.0)
     app.radio(key="pf_t_side").set_value("buy")
     app.button[[x.label for x in app.button].index("הוספת עסקה")].click().run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     rows = PF.load_all()["תיק"].rows
     assert rows[-1]["ticker"] == b and rows[-1]["quantity"] == 5 and rows[-1]["date"] == dt.date.today().isoformat()
     assert {m.label: m.value for m in app.metric}["עלות"] == "$200"
 
     app.button(key="pf_delete").click().run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert PF.load_all() == {}
 
@@ -279,6 +311,8 @@ def test_show_one_ticker_list_in_screener(app):
     app.session_state["only_new"] = True
     app.run()
     app.button(key="pf_show").click().run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert app.session_state["hide_junk"] is False and app.session_state["only_new"] is False
     assert any("1 תוצאות" in m.value for m in app.markdown)
@@ -292,6 +326,8 @@ def test_reset_turns_only_new_off(app):
     app.session_state["only_new"] = True
     app.run()
     next(b for b in app.button if b.label == "איפוס").click().run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert app.session_state["only_new"] is False
 
@@ -301,6 +337,8 @@ def test_changed_preset_is_marked_and_can_be_reapplied(app):
     app.selectbox(key="preset").select("Unusual volume").run()
     assert "preset_reapply" not in [b.key for b in app.button]
     app.selectbox(key="f_rel_volume").select("Any").run()                  # change the preset's filter
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert any("(שונה)" in o for o in app.selectbox(key="preset").options)   # options are the shown labels
     app.button(key="preset_reapply").click().run()
@@ -318,6 +356,8 @@ def test_results_count_follows_only_new(app, tmp_path):
     raw.head(250).to_parquet(snaps / f"{store_mod.session_date(dt.datetime.now() - dt.timedelta(days=4))}.parquet")
     app.run()
     app.toggle(key="only_new").set_value(True).run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     shown = len(app.dataframe[0].value) if app.dataframe else 0
     assert any(f"{shown} תוצאות" in m.value for m in app.markdown)
@@ -366,16 +406,20 @@ def test_save_screen_overwrite_warning(app):
     # Enter existing name and click save
     app.text_input(key="save_name").input("MySavedScreen").run()
     app.button[[b.label for b in app.button].index("שמירה")].click().run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
 
     # First click sets confirmation state and displays warning
-    assert app.session_state.get("confirm_save_name") == "MySavedScreen"
+    assert "confirm_save_name" in app.session_state and app.session_state["confirm_save_name"] == "MySavedScreen"
     assert any("סריקה בשם זה כבר קיימת" in w.value for w in app.warning)
 
     # Second click completes overwrite
     app.button[[b.label for b in app.button].index("שמירה")].click().run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
-    assert app.session_state.get("confirm_save_name") is None
+    assert "confirm_save_name" not in app.session_state
     assert app.session_state["preset"] == "★ MySavedScreen"
 
 
@@ -385,11 +429,15 @@ def test_junk_conflict_hint(app):
 
     # Select Nano (under $50M) when Hide junk is on
     app.selectbox(key="f_market_cap").select("Nano (under $50M)").run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert any("מתנגשת עם “הסתר זבל”" in h for h in notes(app))
 
     # Turn off Hide junk: conflict hint disappears
     app.toggle(key="hide_junk").set_value(False).run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert not any("מתנגשת עם “הסתר זבל”" in h for h in notes(app))
 
@@ -408,6 +456,8 @@ def test_pipeline_cached_on_rerun(app):
 def test_search_as_removable_pill(app):
     app.run()
     app.text_input(key="query").input("AAPL").run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
 
     pills = next(p for p in app.get("button_group") if (p.key or "").startswith("active_pills_"))
@@ -415,6 +465,8 @@ def test_search_as_removable_pill(app):
 
     # Deselecting search pill clears search query
     pills.set_value([]).run()
+    if app.exception:
+        raise app.exception[0]
     assert not app.exception, app.exception
     assert app.session_state["query"] == ""
 
