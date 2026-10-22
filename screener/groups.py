@@ -33,6 +33,8 @@ def group_performance(df: pd.DataFrame, by: str = "sector", weight: str = "media
                         "market_cap": df["market_cap"].groupby(groups).sum(min_count=1)})
     w = df["market_cap"].where(df["market_cap"] > 0)
     for c in PERF + ["rel_volume"]:
+        if c not in df.columns:
+            continue
         if weight == "cap":     # sum(x * cap) / sum(cap), over the stocks that have both
             ok = df[c].notna() & w.notna()
             out[c] = (df[c] * w).where(ok).groupby(groups).sum(min_count=1) / w.where(ok).groupby(groups).sum(min_count=1)
