@@ -490,7 +490,7 @@ def search(df: pd.DataFrame, text: str) -> pd.DataFrame:
         return df
     parts = [p.upper() for p in text.replace(";", ",").replace(",", " ").split()]
     if "," in text or ";" in text or (len(parts) > 1 and text.isupper()):
-        return df[df["ticker"].str.upper().isin(parts)]
+        return df[df["ticker"].fillna("").str.upper().isin(parts)]
     t = text.upper()
-    return df[df["ticker"].str.upper().str.contains(t, regex=False)
+    return df[df["ticker"].fillna("").str.upper().str.contains(t, regex=False)
               | df["company"].fillna("").str.upper().str.contains(t, regex=False)]
