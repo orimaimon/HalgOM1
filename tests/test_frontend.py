@@ -30,7 +30,7 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setattr(export, "EXPORT_DIR", tmp_path / "exports")
     monkeypatch.setattr(tv, "fetch_universe", lambda: raw)
     monkeypatch.setattr(tv, "fetch_market", lambda: market)
-    monkeypatch.setattr(lifecycle, "start_idle_watchdog", lambda: None)
+    monkeypatch.setattr(lifecycle, "ensure_idle_watchdog_started", lambda: None)
     st.cache_data.clear()
     st.cache_resource.clear()
     return AppTest.from_file(str(ROOT / "screener" / "app.py"), default_timeout=60)
