@@ -29,11 +29,11 @@ def add_derived(raw: pd.DataFrame, today: dt.date | None = None) -> pd.DataFrame
     # Snapshots saved by an older version lack newer fields: add them as missing (NaN never passes a filter).
     from screener.fields import provider_columns
     missing = [k for k in provider_columns() if k not in df.columns]
-    # New columns go in with one concat each (column by column, pandas warns about fragmentation).
     if missing:
-        df = _with(df, {k: None if COLUMNS[k].kind == "text" else np.nan for k in missing})
+        missing_dict = {k: None if COLUMNS[k].kind == "text" else np.nan for k in missing}
         if "earnings_date" in missing:
-            df["earnings_date"] = pd.to_datetime(df["earnings_date"])
+            missing_dict["earnings_date"] = pd.to_datetime(pd.Series(np.nan, index=df.index))
+        df = _with(df, missing_dict)
 
     today = today or dt.date.today()
     p = df["price"]
@@ -53,7 +53,7 @@ def add_derived(raw: pd.DataFrame, today: dt.date | None = None) -> pd.DataFrame
     der["range_5d_pct"] = _pct_from(df["high_5d"], df["low_5d"])
     der["target_upside"] = _pct_from(df["target"], p)
 
-    days = (df["earnings_date"] - pd.Timestamp(today)).dt.days
+    days = (pd.to_datetime(df.get("earnings_date"), errors="coerce") - pd.Timestamp(today)).dt.days
     der["days_to_earnings"] = days.where(days >= 0).astype(float)
 
     df = _with(df, der).replace([np.inf, -np.inf], np.nan)

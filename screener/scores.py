@@ -45,19 +45,21 @@ def _subscore(df: pd.DataFrame, spec) -> pd.Series:
 
 
 def add_scores(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
     df_scores = df.copy()
     if "roe" in df_scores.columns and "debt_eq" in df_scores.columns:
         # Exclude ROE when debt_eq < 0 (negative equity)
         df_scores.loc[df_scores["debt_eq"] < 0, "roe"] = np.nan
 
-    df["score_value"] = _subscore(df_scores, VALUE)
-    df["score_quality"] = _subscore(df_scores, QUALITY)
-    df["score_momentum"] = _subscore(df_scores, MOMENTUM)
-    subs = df[["score_value", "score_quality", "score_momentum"]]
+    scores = {}
+    scores["score_value"] = _subscore(df_scores, VALUE)
+    scores["score_quality"] = _subscore(df_scores, QUALITY)
+    scores["score_momentum"] = _subscore(df_scores, MOMENTUM)
+    subs = pd.DataFrame(scores, index=df.index)
     valid = subs.notna().sum(axis=1) >= 2
     raw_score = subs.mean(axis=1).where(valid)
-    df["score"] = raw_score.rank(pct=True, na_option="keep") * 100
+    scores["score"] = raw_score.rank(pct=True, na_option="keep") * 100
+
     for c in ("score", "score_value", "score_quality", "score_momentum"):
-        df[c] = df[c].round(0)
-    return df
+        scores[c] = scores[c].round(0)
+
+    return pd.concat([df.drop(columns=list(scores), errors="ignore"), pd.DataFrame(scores, index=df.index)], axis=1)
