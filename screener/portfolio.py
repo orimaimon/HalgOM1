@@ -237,7 +237,12 @@ def parse(raw: pd.DataFrame, known: set[str] | None = None, today: dt.date | Non
                 if c not in df.columns or _blank(r[c]):
                     problems.append(Problem(n, "missing_value", c))
 
-            raw_qty = parse_number(r["quantity"]) if "quantity" in df.columns and not _blank(r["quantity"]) else None
+            raw_qty = None
+            if "quantity" in df.columns and not _blank(r["quantity"]):
+                raw_qty = parse_number(r["quantity"])
+                if raw_qty is None:
+                    problems.append(Problem(n, "bad_number", f"quantity: {r['quantity']}"))
+
             side_str = str(r["side"]).strip().lower() if "side" in df.columns and not _blank(r["side"]) else ""
 
             if raw_qty is not None:
