@@ -32,8 +32,7 @@ class Previous:
 
 
 def load_previous(store: Store, today: dt.date) -> Previous | None:
-    fetched_at = store.latest_fetched_at()     # snapshot days are trading session dates (store.session_date)
-    current_session = session_date(fetched_at) if fetched_at else session_date(today)
+    current_session = session_date(today)
     day = store.previous_snapshot_date(current_session)
     if day is None:
         return None

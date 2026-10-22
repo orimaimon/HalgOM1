@@ -62,7 +62,8 @@ def test_synthetic_snapshots_monday_morning_israel(tmp_path):
     meta = f'{{"fetched_at": "{ts_mon_morning_il.isoformat()}"}}'
     (store.cache_dir / "latest_meta.json").write_text(meta, encoding="utf-8")
 
-    prev = load_previous(store, ts_mon_morning_il.date())
+    from screener.data.store import session_date
+    prev = load_previous(store, session_date(ts_mon_morning_il))
     assert prev is not None
     assert prev.day == dt.date(2026, 10, 15)
 
