@@ -172,7 +172,9 @@ def tickers_text(df: pd.DataFrame) -> str:
 
 def file_stem(title: str, when: dt.datetime | None = None) -> str:
     when = when or dt.datetime.now()
-    slug = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", title or "screen").strip("-").strip() or "screen"
+    title = ILLEGAL_CHARACTERS_RE.sub("", title or "screen")
+    # Replace invalid Windows filename characters and any remaining control characters (e.g. \n, \t) with hyphens
+    slug = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", title).strip("-").strip() or "screen"
     return f"{when:%Y-%m-%d_%H%M}_{slug}"
 
 
