@@ -20,6 +20,7 @@ from screener.alerts import Fired
 from screener.home import Morning
 from screener.market import Regime
 
+TELEGRAM_LIMIT = 4096       # characters per message
 SPECIAL_CHARS = set(r"_*[]()~`>#+-=|{}.!\\")
 
 
@@ -250,7 +251,7 @@ def _build_telegram(title: str, sections: list[tuple[str, list[str]]], footer: s
 
     while True:
         rendered = _render_telegram_msg(title, sections, sec_items, dropped_counts, footer)
-        if len(rendered) <= 4096:
+        if len(rendered) <= TELEGRAM_LIMIT:
             return rendered
 
         max_idx = -1
@@ -261,10 +262,21 @@ def _build_telegram(title: str, sections: list[tuple[str, list[str]]], footer: s
                 max_idx = i
 
         if max_idx == -1 or max_len <= 0:
-            return rendered
+            return _hard_cut(rendered)
 
         sec_items[max_idx].pop()
         dropped_counts[max_idx] += 1
+
+
+def _hard_cut(text: str, limit: int = TELEGRAM_LIMIT) -> str:
+    """Last resort when one item alone is too long: cut, never leaving a lone escaping backslash."""
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    trailing = len(cut) - len(cut.rstrip("\\"))
+    if trailing % 2:
+        cut = cut[:-1]
+    return cut + "…"
 
 
 def _render_telegram_msg(

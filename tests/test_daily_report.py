@@ -229,3 +229,17 @@ def test_nan_movers_handling():
     assert len(mov_items) == 2
     assert "GOOD +5.0% (תיק ראשי)" in mov_items[0]
     assert "BADPRC -2.5% (תיק ראשי)" in mov_items[1]
+
+
+def test_one_huge_alert_still_fits_telegram():
+    import datetime as dt
+    import pandas as pd
+    from screener import daily_report
+    from screener.alerts import Fired
+    from screener.home import Morning
+    empty = pd.DataFrame()
+    m = Morning(new_in_screens=empty, movers=empty, earnings=empty)
+    r = daily_report.compose(m, None, [Fired("1", "AAA", "א." * 5000)], dt.date(2026, 10, 23))
+    assert len(r.telegram) <= daily_report.TELEGRAM_LIMIT
+    body = r.telegram.rstrip("…")
+    assert (len(body) - len(body.rstrip("\\"))) % 2 == 0
