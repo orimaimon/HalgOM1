@@ -31,6 +31,7 @@ from screener import portfolio as PF  # noqa: E402
 from screener import presets as P  # noqa: E402
 from screener import theme  # noqa: E402
 from screener.data import FETCH_LOCK, Store, load_universe  # noqa: E402
+from screener.data import download as DL  # noqa: E402
 from screener.data.store import DATA_DIR, market_date, session_date  # noqa: E402
 from screener.data.tradingview import fetch_market, fetch_universe  # noqa: E402
 from screener.derive import add_derived  # noqa: E402
@@ -47,13 +48,16 @@ REFRESH_MIN = dt.timedelta(seconds=60)   # "Refresh data" clicked again sooner: 
 CUSTOM = "— Custom —"
 USER_PREFIX = "★ "
 GRID = 6
-PAGES = ["Screener", "Groups", "Heatmap", "Portfolios", "Guide"]
+PAGES = ["Screener", "Groups", "Heatmap", "Portfolios", "Download", "Guide"]
 GUIDE = Path(__file__).with_name("guide.html")
 # provider columns a cached snapshot must have; an older cache without them is refetched
 REQUIRED = provider_columns()
 # widget keys that must survive while their widget is not on the current page
 PERSIST = ["lang", "preset", "query", "sort_col", "sort_asc", "view", "hide_junk", "only_new", "export_all",
-           "g_by", "g_weight", "g_sector", "g_results", "h_universe", "h_color", "large_text", "pf_name"]
+           "g_by", "g_weight", "g_sector", "g_results", "h_universe", "h_color", "large_text", "pf_name",
+           "dl_src", "dl_text", "dl_list", "dl_mode", "dl_period", "dl_start", "dl_end", "dl_interval",
+           "dl_auto_adjust", "dl_back_adjust", "dl_actions", "dl_prepost", "dl_repair", "dl_keepna", "dl_rounding",
+           "dl_ignore_tz", "dl_group_by", "dl_mli", "dl_threads", "dl_timeout", "dl_xlsx", "dl_csv"]
 
 st.set_page_config(page_title="HalgOM Screener", page_icon="📈", layout="wide")
 ss = st.session_state
@@ -567,7 +571,8 @@ def junk_toggle(container) -> None:
 def nav() -> str:
     st.segmented_control("Page", PAGES, key="page", label_visibility="collapsed", required=True, format_func=t,
                          help="סורק = סריקת מניות, קבוצות = ביצועים לפי סקטור ותעשייה, מפת חום = מפת השוק, "
-                              "תיקים ומעקב = רשימות מעקב ותיקי השקעות שלך, מדריך = הסבר על הסקרינר ועל המונחים")
+                              "תיקים ומעקב = רשימות מעקב ותיקי השקעות שלך, הורדת נתונים = היסטוריית מחירים "
+                              "מ-Yahoo לקובץ, מדריך = הסבר על הסקרינר ועל המונחים")
     return ss.get("page")
 
 
@@ -1312,6 +1317,203 @@ def portfolios_page(df: pd.DataFrame) -> None:
     hebrew_note(t("Lists are saved on this computer only. Prices are from the screener (delayed ~15 min)."))
 
 
+# ─────────────────────────── Download page ─────────────────────────────────
+
+DL_SOURCES = ["Typed tickers", "Screener results", "Portfolio / watchlist"]
+DL_TZ = {"Auto": None, "Yes": True, "No": False}
+DL_XLSX = ["sheets", "long", "wide"]
+DL_CSV = ["long", "wide"]
+DL_LAYOUT = {"sheets": "Sheet per ticker", "long": "Long (row per date and ticker)",
+             "wide": "Wide (column per field and ticker)"}
+
+
+def dl_tickers(res: pd.DataFrame) -> tuple[list[str], str | None]:
+    """The tickers to download from the chosen source, and a note (e.g. list truncated)."""
+    src = ss.get("dl_src")
+    if src == "Screener results":
+        tickers = DL.parse_tickers(" ".join(res["ticker"].astype(str))) if not res.empty else []
+    elif src == "Portfolio / watchlist":
+        plist = PF.load_all().get(ss.get("dl_list"))
+        tickers = DL.parse_tickers(" ".join(r["ticker"] for r in plist.rows)) if plist else []
+    else:
+        tickers = DL.parse_tickers(ss.get("dl_text", ""))
+    if len(tickers) > DL.MAX_TICKERS:
+        return tickers[:DL.MAX_TICKERS], f"{t('Only the first')} {DL.MAX_TICKERS:,} {t('tickers will be downloaded')}"
+    return tickers, None
+
+
+def dl_request(tickers: list[str]) -> DL.Request:
+    end = ss.get("dl_end")
+    return DL.Request(
+        tickers=tickers, use_period=ss.get("dl_mode") == "Period", period=ss.get("dl_period"),
+        start=ss.get("dl_start"), end=end + dt.timedelta(days=1) if end else None,   # yfinance's end is exclusive
+        interval=ss.get("dl_interval"), auto_adjust=ss.get("dl_auto_adjust"), back_adjust=ss.get("dl_back_adjust"),
+        actions=ss.get("dl_actions"), prepost=ss.get("dl_prepost"), repair=ss.get("dl_repair"),
+        keepna=ss.get("dl_keepna"), rounding=ss.get("dl_rounding"), ignore_tz=DL_TZ[ss.get("dl_ignore_tz")],
+        group_by=ss.get("dl_group_by"), multi_level_index=ss.get("dl_mli"), threads=ss.get("dl_threads"),
+        timeout=float(ss.get("dl_timeout")))
+
+
+def dl_defaults() -> None:
+    today = dt.date.today()
+    for k, v in {"dl_src": DL_SOURCES[0], "dl_text": "", "dl_mode": "Dates", "dl_period": "1y",
+                 "dl_start": today - dt.timedelta(days=365), "dl_end": today, "dl_interval": "1d",
+                 "dl_auto_adjust": False, "dl_back_adjust": False, "dl_actions": True, "dl_prepost": False,
+                 "dl_repair": False, "dl_keepna": False, "dl_rounding": False, "dl_ignore_tz": "Auto",
+                 "dl_group_by": "column", "dl_mli": True, "dl_threads": True, "dl_timeout": 10,
+                 "dl_xlsx": "sheets", "dl_csv": "long"}.items():
+        ss.setdefault(k, v)
+
+
+def download_page(res: pd.DataFrame) -> None:
+    dl_defaults()
+    hebrew_note("הורדת נתוני מסחר היסטוריים מ-Yahoo Finance (yfinance) לכל רשימת מניות, מדדים או קרנות סל, "
+                "עם כל האפשרויות של yfinance.download. התוצאה נשמרת כקובץ Excel או CSV.")
+    c1, c2 = st.columns([1.4, 3], vertical_alignment="top")
+    c1.radio(t("Tickers from"), DL_SOURCES, key="dl_src", format_func=t)
+    with c2:
+        if ss.get("dl_src") == "Screener results":
+            hebrew_note(f"{len(res):,} {t('stocks from the current screen (filters and search on the Screener page)')}")
+        elif ss.get("dl_src") == "Portfolio / watchlist":
+            names = list(PF.load_all())
+            if not names:
+                hebrew_note(t("No lists yet. Create one on the Portfolios page."))
+            else:
+                if ss.get("dl_list") not in names:
+                    ss["dl_list"] = names[0]
+                st.selectbox(t("List"), names, key="dl_list")
+        else:
+            st.text_area(t("Tickers"), key="dl_text", height=90,
+                         placeholder="AAPL, MSFT, NVDA, SPY, ^GSPC, BRK.B, TEVA.TA",
+                         help="מופרדים בפסיק, רווח או שורה חדשה. מדדים עם ^ (‎^GSPC, ^VIX), "
+                              "בורסות זרות עם סיומת (TEVA.TA, VOD.L). BRK.B מומר אוטומטית ל-BRK-B")
+    tickers, note = dl_tickers(res)
+    if note:
+        hebrew_note(note)
+
+    c1, c2, c3, c4, c5 = st.columns([1.3, 1.3, 1.3, 1.3, 1.3], vertical_alignment="bottom")
+    c1.segmented_control(t("Range"), ["Dates", "Period"], key="dl_mode", required=True, format_func=t,
+                         help="טווח תאריכים מדויק, או תקופה יחסית להיום (period)")
+    if ss.get("dl_mode") == "Period":
+        c2.selectbox("period", DL.PERIODS, key="dl_period", help="ytd = מתחילת השנה, max = כל ההיסטוריה")
+    else:
+        c2.date_input(t("Start date"), key="dl_start", min_value=dt.date(1950, 1, 1), max_value=dt.date.today(),
+                      format="DD/MM/YYYY")
+        c3.date_input(t("End date (inclusive)"), key="dl_end", min_value=dt.date(1950, 1, 1),
+                      max_value=dt.date.today() + dt.timedelta(days=1), format="DD/MM/YYYY")
+    c4.selectbox("interval", DL.INTERVALS, key="dl_interval",
+                 help="גודל נר. תוך-יומי: ‎1m — רק 30 הימים האחרונים (עד 8 ימים בבקשה), "
+                      "‎2m–90m — 60 הימים האחרונים, ‎1h — שנתיים אחרונות")
+    c5.segmented_control("group_by", DL.GROUP_BY, key="dl_group_by", required=True,
+                         help="column: עמודות לפי שדה ואז מניה (Close AAPL). ticker: לפי מניה ואז שדה (AAPL Close)")
+
+    with st.expander(t("Advanced options (yfinance.download)")):
+        g = st.columns(4)
+        g[0].toggle("auto_adjust", key="dl_auto_adjust",
+                    help="מתאים את Open/High/Low/Close לדיבידנדים ולספליטים (ואז אין עמודת Adj Close). "
+                         "כבוי: מחיר מקורי + Adj Close")
+        g[0].toggle("back_adjust", key="dl_back_adjust",
+                    help="מתאים את Open/High/Low אחורה לפי Adj Close, ו-Close נשאר המחיר המקורי")
+        g[1].toggle("actions", key="dl_actions", help="מוסיף עמודות Dividends ו-Stock Splits")
+        g[1].toggle("prepost", key="dl_prepost", help="כולל מסחר טרום פתיחה ואחרי סגירה (רק בנרות תוך-יומיים)")
+        g[2].toggle("repair", key="dl_repair", help="מתקן שגיאות ידועות של Yahoo (מחיר פי 100, ספליטים חסרים). איטי יותר")
+        g[2].toggle("keepna", key="dl_keepna", help="משאיר שורות ריקות (ימים בלי מסחר) במקום להסיר אותן")
+        g[3].toggle("rounding", key="dl_rounding", help="מעגל מחירים ל-2 ספרות אחרי הנקודה")
+        g[3].toggle("multi_level_index", key="dl_mli",
+                    help="כבוי: למניה בודדת מחזיר עמודות פשוטות (Close) בלי רמת Ticker")
+        h = st.columns(4)
+        h[0].selectbox("ignore_tz", list(DL_TZ), key="dl_ignore_tz", format_func=t,
+                       help="אוטומטי: מתעלם מאזור זמן בנרות יומיים ומעלה ושומר אותו בתוך-יומי. "
+                            "בכמה מניות בנרות תוך-יומיים השעות ב-UTC (מצוין בשם העמודה)")
+        h[1].toggle("threads", key="dl_threads", help="הורדה מקבילית של כמה מניות. כבוי: איטי יותר, פחות חסימות מ-Yahoo")
+        h[2].number_input("timeout", min_value=1, max_value=120, step=1, key="dl_timeout",
+                          help="שניות המתנה מקסימלית לתשובה מ-Yahoo")
+
+    req = dl_request(tickers)
+    errors = DL.validate(req)
+    b1, b2 = st.columns([1.4, 4], vertical_alignment="center")
+    go = b1.button(f"{t('Download data')} ({len(tickers):,})", type="primary", icon=":material/download:",
+                   use_container_width=True, disabled=bool(errors), key="dl_go")
+    with b2:
+        for e in errors:
+            hebrew_note(f"⚠️ {t(e)}")
+    if go:
+        with st.spinner(f"{t('Downloading')} {len(tickers):,} {t('tickers from Yahoo Finance...')}"):
+            try:
+                result = DL.fetch(req)
+                ss["dl_result"] = (result, DL.to_long(result), DL.summary(result))
+                log.info("download page: %d tickers, %d failed", len(tickers), len(result.failed))
+            except Exception as e:                       # network down, Yahoo changed something
+                log.exception("download page failed")
+                ss.pop("dl_result", None)
+                st.error(f"{t('Download failed')}: {e}")
+    if "dl_result" in ss:
+        dl_results(*ss["dl_result"])
+
+
+def dl_results(result: DL.Result, long: pd.DataFrame, summ: pd.DataFrame) -> None:
+    st.divider()
+    m = st.columns(4)
+    m[0].metric(t("Tickers downloaded"), f"{len(result.ok):,} / {len(result.request.tickers):,}")
+    m[1].metric(t("Rows"), f"{len(long):,}")
+    if not long.empty:
+        m[2].metric(t("From"), f"{long.iloc[:, 0].min():%d/%m/%Y}")
+        m[3].metric(t("To"), f"{long.iloc[:, 0].max():%d/%m/%Y}")
+    if result.failed:
+        with st.expander(f"⚠️ {t('No data for')} {len(result.failed)} {t('tickers')}", expanded=len(result.failed) <= 5):
+            st.dataframe(pd.DataFrame(list(result.failed.items()), columns=["Ticker", t("Reason")]),
+                         hide_index=True, use_container_width=True)
+    if long.empty:
+        return
+
+    stem = export.file_stem("prices_" + "_".join(result.ok[:3]) + ("_etc" if len(result.ok) > 3 else ""))
+    c0, c1, c2, c3 = st.columns([1.6, 1, 1.6, 1], vertical_alignment="bottom")
+    c0.selectbox(t("Excel layout"), DL_XLSX, key="dl_xlsx", format_func=lambda k: t(DL_LAYOUT[k]))
+    c2.selectbox(t("CSV layout"), DL_CSV, key="dl_csv", format_func=lambda k: t(DL_LAYOUT[k]))
+    xlsx_layout, csv_layout = ss.get("dl_xlsx"), ss.get("dl_csv")
+    too_big = xlsx_layout != "sheets" and len(long) > DL.EXCEL_MAX_ROWS
+
+    def xlsx() -> bytes:
+        data = DL.to_excel(result, xlsx_layout)
+        export.save_copy(data, f"{stem}.xlsx")
+        return data
+
+    def csv() -> bytes:
+        data = DL.to_csv(result, csv_layout)
+        export.save_copy(data, f"{stem}.csv")
+        return data
+
+    c1.download_button("Excel", xlsx, f"{stem}.xlsx", on_click="ignore", disabled=too_big,
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       icon=":material/table_view:", use_container_width=True, key="dl_btn_xlsx",
+                       help="כולל גיליון Parameters עם כל ההגדרות של ההורדה")
+    c3.download_button("CSV", csv, f"{stem}.csv", mime="text/csv", on_click="ignore", key="dl_btn_csv",
+                       icon=":material/description:", use_container_width=True)
+    if too_big:
+        hebrew_note(t("Too many rows for one Excel sheet. Choose a sheet per ticker, or CSV."))
+    hebrew_note(f"{t('A copy of every downloaded file is also saved in:')} {export.EXPORT_DIR}")
+
+    tab1, tab2, tab3 = st.tabs([t("Summary"), t("Chart"), t("Data preview")])
+    with tab1:
+        st.dataframe(summ, hide_index=True, use_container_width=True,
+                     column_config={"Last close": st.column_config.NumberColumn(format="%.2f")})
+    with tab2:
+        frames = DL.per_ticker(result)
+        price = "Adj Close" if not result.request.auto_adjust else "Close"
+        shown = list(frames)[:10]
+        lines = pd.DataFrame({tk: frames[tk][price] if price in frames[tk] else frames[tk].get("Close")
+                              for tk in shown})
+        if len(shown) > 1:
+            lines = lines / lines.bfill().iloc[0] * 100        # same starting point: compare returns
+            hebrew_note(f"{price}, {t('rebased to 100 at the start')}"
+                        + (f" · {t('first 10 tickers')}" if len(frames) > 10 else ""))
+        st.line_chart(lines)
+    with tab3:
+        st.dataframe(long.head(1000), hide_index=True, use_container_width=True)
+        if len(long) > 1000:
+            hebrew_note(f"{t('Showing the first 1,000 rows of')} {len(long):,}")
+
+
 # ─────────────────────────── page ──────────────────────────────────────────
 
 def goodbye() -> None:
@@ -1379,6 +1581,8 @@ def main() -> None:
         heatmap_page(universe, res)
     elif page == "Portfolios":
         portfolios_page(df)
+    elif page == "Download":
+        download_page(res)
     else:
         results(df, universe, res, snap, prev)
     hebrew_note(t("Data: TradingView (delayed ~15 min). For research purposes only, not investment advice."))

@@ -43,7 +43,8 @@ def make_raw(n: int = 300, seed: int = 7) -> pd.DataFrame:
         if col.kind == "text":
             continue
         if col.kind == "date":
-            data[key] = pd.Timestamp(TODAY) + pd.to_timedelta(rng.integers(-20, 90, n), unit="D")
+            dates = pd.Timestamp(TODAY) + pd.to_timedelta(rng.integers(-20, 90, n), unit="D")
+            data[key] = (dates - pd.Timestamp(0)) // pd.Timedelta(seconds=1)   # epoch seconds, as TradingView sends
         else:
             data[key] = rng.normal(10, 30, n)
     df = pd.DataFrame(data)

@@ -109,6 +109,28 @@ UI: dict[str, str] = {
 "Exported": "יוצא בתאריך", "(custom)": "(מותאם אישית)",
     "(none)": "(אין)", "Source: TradingView scanner (delayed ~15 min). Not investment advice.":
         "מקור: סורק TradingView (בעיכוב של כ-15 דקות). אין לראות בזה ייעוץ השקעות.",
+    # download page (Yahoo Finance history)
+    "Download": "הורדת נתונים", "Tickers from": "סימולים מתוך", "Typed tickers": "הקלדה ידנית",
+    "Portfolio / watchlist": "תיק / רשימת מעקב",
+    "stocks from the current screen (filters and search on the Screener page)": "מניות מהסריקה הנוכחית (הפילטרים והחיפוש בעמוד הסורק)",
+    "No lists yet. Create one on the Portfolios page.": "עוד אין רשימות. אפשר ליצור בעמוד תיקים ומעקב.",
+    "Only the first": "יורדו רק", "tickers will be downloaded": "הסימולים הראשונים",
+    "Range": "טווח", "Dates": "תאריכים", "Period": "תקופה", "Start date": "מתאריך",
+    "End date (inclusive)": "עד תאריך (כולל)", "Advanced options (yfinance.download)": "אפשרויות מתקדמות (yfinance.download)",
+    "Auto": "אוטומטי", "Yes": "כן", "No": "לא",
+    "Download data": "הורד נתונים", "Downloading": "מוריד", "tickers from Yahoo Finance...": "סימולים מ-Yahoo Finance...",
+    "Download failed": "ההורדה נכשלה", "Tickers downloaded": "סימולים שירדו", "Rows": "שורות",
+    "From": "מ-", "To": "עד", "No data for": "אין נתונים ל-", "tickers": "סימולים", "Reason": "סיבה",
+    "Excel layout": "מבנה האקסל", "CSV layout": "מבנה ה-CSV", "Sheet per ticker": "גיליון לכל מניה",
+    "Long (row per date and ticker)": "ארוך (שורה לכל תאריך ומניה)",
+    "Wide (column per field and ticker)": "רחב (עמודה לכל שדה ומניה)",
+    "Too many rows for one Excel sheet. Choose a sheet per ticker, or CSV.": "יותר מדי שורות לגיליון אקסל אחד. בחר גיליון לכל מניה, או CSV.",
+    "Summary": "סיכום", "Chart": "גרף", "Data preview": "תצוגה מקדימה",
+    "rebased to 100 at the start": "מנורמל ל-100 בתחילת התקופה", "first 10 tickers": "10 הסימולים הראשונים",
+    "Showing the first 1,000 rows of": "מוצגות 1,000 השורות הראשונות מתוך",
+    "Enter at least one ticker": "יש להזין לפחות סימול אחד", "Choose a start date": "יש לבחור תאריך התחלה",
+    "Start date must be before end date": "תאריך ההתחלה חייב להיות לפני תאריך הסיום",
+    "Start date is in the future": "תאריך ההתחלה בעתיד",
 }
 
 # ── table headers (short) ──────────────────────────────────────────────────
