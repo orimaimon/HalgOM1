@@ -169,6 +169,12 @@ def update(today: dt.date | None = None) -> bool:
         log.warning("FRED update failed: %s", e)
         return False
 
+    # An answer without data (an empty CSV, or a series missing from it) must not replace a good file.
+    missing = [k for k in SERIES if k not in df.columns or df[k].dropna().empty]
+    if df.empty or missing:
+        log.warning("FRED answer has no data for %s; keeping the previous file", missing or list(SERIES))
+        return False
+
     try:
         _atomic_parquet(df, parquet_path)
         meta_data = {

@@ -206,3 +206,16 @@ def test_latest_and_history_with_data(tmp_path, monkeypatch):
 
     # 3.24 > 3.145 -> True
     assert latest_data["hy_spread_above_sma20"] is True
+
+
+def test_answer_without_data_keeps_the_previous_file(tmp_path, monkeypatch):
+    import pandas as pd
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    good = pd.DataFrame({"vix": [15.0], "hy_spread": [3.1]}, index=[pd.Timestamp("2026-10-22").date()])
+    monkeypatch.setattr(fred.guard, "call", lambda provider, fn, *a, **k: good)
+    assert fred.update(today=pd.Timestamp("2026-10-22").date()) is True
+    # The next day FRED answers with only one of the two series
+    only_vix = pd.DataFrame({"vix": [16.0]}, index=[pd.Timestamp("2026-10-23").date()])
+    monkeypatch.setattr(fred.guard, "call", lambda provider, fn, *a, **k: only_vix)
+    assert fred.update(today=pd.Timestamp("2026-10-23").date()) is False
+    assert fred.latest()["hy_spread"]["value"] == 3.1
