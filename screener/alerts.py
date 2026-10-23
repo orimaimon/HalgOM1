@@ -172,12 +172,10 @@ def evaluate(
         up_by_ticker = {}
         down_by_ticker = {}
 
-    # Map tickers to their first matching row in universe
-    ticker_rows = {}
-    for idx, row in universe.iterrows():
-        t = row.get("ticker")
-        if pd.notna(t) and t not in ticker_rows:
-            ticker_rows[t] = row
+    # The rows of the alerted tickers only (the universe has ~5,000 rows; a few alerts need a few rows)
+    wanted = {a.ticker for a in alert_list}
+    sub = universe[universe["ticker"].isin(wanted)].drop_duplicates("ticker")
+    ticker_rows = {row["ticker"]: row for _, row in sub.iterrows()}
 
     fired_list: list[Fired] = []
 
