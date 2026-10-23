@@ -11,6 +11,9 @@ Limits per provider:
   fred               min_interval=60 s, daily_cap=50
 
 State persisted in _data/guard.json (resolved dynamically at call time from screener.data.store.DATA_DIR).
+Every attempt counts toward the daily cap, failed ones too (the request was sent). After a failure the
+provider waits 2, 5, 15, then 60 minutes; after a block (403/429) 60 minutes straight away.
+Not wired into any provider yet.
 """
 from __future__ import annotations
 
@@ -164,45 +167,27 @@ class Guard:
         limit = LIMITS[provider]
 
         with lock:
-            now_dt = self._get_now(now)
-
-            with _STATE_LOCK:
-                state = _load_state()
-                pstate = state.get(provider, {})
-
-                wait_until_dt = _parse_dt(pstate.get("wait_until"))
-                if wait_until_dt is not None and now_dt < wait_until_dt:
-                    reason = pstate.get("wait_reason") or "backoff"
-                    raise Wait(provider, wait_until_dt, reason)
-
-                ny_today = market_date(now_dt)
-                p_day_str = pstate.get("day")
-                if p_day_str != ny_today.isoformat():
-                    pstate["count_today"] = 0
-                    pstate["day"] = ny_today.isoformat()
-
-                count_today = pstate.get("count_today", 0)
-                if count_today >= limit.daily_cap:
-                    next_ny_day = ny_today + dt.timedelta(days=1)
-                    until = dt.datetime(next_ny_day.year, next_ny_day.month, next_ny_day.day, 0, 0, 0,
-                                        tzinfo=ZoneInfo("America/New_York"))
-                    raise Wait(provider, until, "daily_cap")
-
-                last_call_dt = _parse_dt(pstate.get("last_call"))
-                if last_call_dt is not None:
-                    elapsed = (now_dt - last_call_dt).total_seconds()
-                    remaining = limit.min_interval - elapsed
-                    if remaining > 0:
-                        if remaining > max_sleep:
-                            until = now_dt + dt.timedelta(seconds=remaining)
-                            raise Wait(provider, until, "min_interval")
-                        else:
-                            time.sleep(remaining)
-                            now_dt = self._get_now(now)
-
-                pstate["last_call"] = _format_dt(now_dt)
-                state[provider] = pstate
-                _save_state(state)
+            # The provider lock is held from here on, so only other providers can change the state
+            # between the check and the attempt: sleeping outside _STATE_LOCK is safe.
+            slept = False
+            while True:
+                now_dt = self._get_now(now)
+                with _STATE_LOCK:
+                    state = _load_state()
+                    pstate = state.get(provider, {})
+                    remaining = self._check(provider, pstate, limit, now_dt)
+                    if remaining <= 0 or slept:
+                        # Count the attempt before calling fn: a request that crashes or fails was sent too.
+                        pstate["last_call"] = _format_dt(now_dt)
+                        pstate["count_today"] = pstate.get("count_today", 0) + 1
+                        state[provider] = pstate
+                        _save_state(state)
+                        log.info("guard: %s %d/%d today", provider, pstate["count_today"], limit.daily_cap)
+                        break
+                if remaining > max_sleep:
+                    raise Wait(provider, now_dt + dt.timedelta(seconds=remaining), "min_interval")
+                time.sleep(remaining)
+                slept = True
 
             try:
                 res = fn(*args, **kwargs)
@@ -213,18 +198,15 @@ class Guard:
                     pstate = state.get(provider, {})
                     pstate["last_error"] = str(exc)
 
+                    failures = pstate.get("failures", 0) + 1
+                    pstate["failures"] = failures
                     if _is_block(exc):
-                        until = now_dt_fail + dt.timedelta(minutes=60)
-                        pstate["wait_until"] = _format_dt(until)
+                        until = now_dt_fail + dt.timedelta(minutes=BACKOFF[-1])
                         pstate["wait_reason"] = "block"
                     else:
-                        failures = pstate.get("failures", 0) + 1
-                        pstate["failures"] = failures
-                        idx = min(failures - 1, len(BACKOFF) - 1)
-                        wait_minutes = BACKOFF[idx]
-                        until = now_dt_fail + dt.timedelta(minutes=wait_minutes)
-                        pstate["wait_until"] = _format_dt(until)
+                        until = now_dt_fail + dt.timedelta(minutes=BACKOFF[min(failures - 1, len(BACKOFF) - 1)])
                         pstate["wait_reason"] = "backoff"
+                    pstate["wait_until"] = _format_dt(until)
 
                     state[provider] = pstate
                     _save_state(state)
@@ -235,16 +217,46 @@ class Guard:
             with _STATE_LOCK:
                 state = _load_state()
                 pstate = state.get(provider, {})
-                pstate["count_today"] = pstate.get("count_today", 0) + 1
                 pstate["failures"] = 0
                 pstate["wait_until"] = None
                 pstate["wait_reason"] = None
                 pstate["last_ok"] = _format_dt(now_dt_ok)
                 state[provider] = pstate
                 _save_state(state)
-                log.info("guard: %s ok (%d today)", provider, pstate["count_today"])
 
             return res
+
+    @staticmethod
+    def _check(provider: str, pstate: dict[str, Any], limit: Limits, now_dt: dt.datetime) -> float:
+        """Raise Wait for a backoff or the daily cap; return the seconds left of min_interval (<= 0: go).
+        Updates pstate's day and count when a new New York day starts.
+
+        A clock moved back (Windows clock fix, wrong time zone) must not stall a provider for days: a
+        stored wait longer than the longest backoff is dropped, and a last call "in the future" counts
+        as just now."""
+        wait_until_dt = _parse_dt(pstate.get("wait_until"))
+        if wait_until_dt is not None and now_dt < wait_until_dt:
+            if wait_until_dt - now_dt <= dt.timedelta(minutes=BACKOFF[-1]):
+                raise Wait(provider, wait_until_dt, pstate.get("wait_reason") or "backoff")
+            log.warning("guard: %s wait until %s is beyond the longest backoff (clock moved back?); dropped",
+                        provider, wait_until_dt)
+            pstate["wait_until"] = None
+
+        ny_today = market_date(now_dt)
+        if pstate.get("day") != ny_today.isoformat():
+            pstate["count_today"] = 0
+            pstate["day"] = ny_today.isoformat()
+
+        if pstate.get("count_today", 0) >= limit.daily_cap:
+            nxt = ny_today + dt.timedelta(days=1)
+            raise Wait(provider, dt.datetime(nxt.year, nxt.month, nxt.day, tzinfo=ZoneInfo("America/New_York")),
+                       "daily_cap")
+
+        last_call_dt = _parse_dt(pstate.get("last_call"))
+        if last_call_dt is None:
+            return 0.0
+        elapsed = max((now_dt - last_call_dt).total_seconds(), 0.0)
+        return limit.min_interval - elapsed
 
     def status(self, provider: str, now: Callable[[], dt.datetime] | None = None) -> dict[str, Any]:
         if provider not in LIMITS:
@@ -289,8 +301,11 @@ def status(provider: str, now: Callable[[], dt.datetime] | None = None) -> dict[
 
 def wait_message(w: Wait) -> str:
     time_str = w.until.astimezone().strftime("%H:%M") if w.until.tzinfo else w.until.strftime("%H:%M")
+    disp = DISPLAY_NAMES.get(w.provider, w.provider.title())
     if w.reason == "block":
-        disp = DISPLAY_NAMES.get(w.provider, w.provider.title())
         return f"{disp} חסם זמנית — מוצגים נתונים שמורים. ננסה שוב ב-{time_str}"
-    else:
-        return f"ננסה שוב ב-{time_str}"
+    if w.reason == "daily_cap":
+        return f"הגענו למכסת הבקשות היומית של {disp} — מוצגים נתונים שמורים. ננסה שוב ב-{time_str}"
+    if w.reason == "backoff":
+        return f"{disp} לא זמין כרגע — מוצגים נתונים שמורים. ננסה שוב ב-{time_str}"
+    return f"מוצגים נתונים שמורים. העדכון הבא מ-{disp} ב-{time_str}"

@@ -286,5 +286,91 @@ def test_wait_message():
 
     w_backoff = Wait("sec", block_until, "backoff")
     msg_backoff = wait_message(w_backoff)
-    assert msg_backoff.startswith("ננסה שוב ב-")
+    assert "SEC" in msg_backoff and "ננסה שוב ב-" in msg_backoff
     assert "חסם זמנית" not in msg_backoff
+
+
+def test_failed_attempts_count_toward_daily_cap(tmp_data_dir):
+    clock = FakeClock()
+
+    def failing_fn():
+        raise ValueError("boom")
+
+    with pytest.raises(ValueError):
+        call("fred", failing_fn, now=clock)
+    assert status("fred", now=clock)["count_today"] == 1
+
+
+def test_block_survives_a_new_guard(tmp_data_dir):
+    clock = FakeClock()
+
+    def blocked():
+        raise Exception("429 Too Many Requests")
+
+    with pytest.raises(Exception):
+        Guard(now=clock).call("tradingview", blocked)
+    calls = []
+    with pytest.raises(Wait) as w:
+        Guard(now=clock).call("tradingview", lambda: calls.append(1))
+    assert w.value.reason == "block" and calls == []
+
+
+def test_second_thread_gets_wait_not_a_second_request(tmp_data_dir):
+    started, release = threading.Event(), threading.Event()
+    calls, waits = [], []
+
+    def slow_fn():
+        calls.append(1)
+        started.set()
+        release.wait(5)
+        return "ok"
+
+    def second():
+        try:
+            call("tradingview", slow_fn)
+        except Wait as w:
+            waits.append(w)
+
+    t1 = threading.Thread(target=call, args=("tradingview", slow_fn))
+    t1.start()
+    assert started.wait(5)
+    t2 = threading.Thread(target=second)
+    t2.start()
+    release.set()
+    t1.join()
+    t2.join()
+    assert len(calls) == 1
+    assert len(waits) == 1 and waits[0].reason == "min_interval"
+
+
+def test_sleep_does_not_hold_the_state_lock(tmp_data_dir, monkeypatch):
+    clock = FakeClock()
+    call("sec", lambda: 1, now=clock)
+    held = []
+    monkeypatch.setattr(time, "sleep", lambda s: held.append(guard._STATE_LOCK.locked()))
+    assert call("sec", lambda: 2, now=clock, max_sleep=1.0) == 2
+    assert held == [False]
+
+
+def test_clock_moved_back_does_not_stall(tmp_data_dir):
+    clock = FakeClock()
+    path = tmp_data_dir / "guard.json"
+    future = clock() + dt.timedelta(days=3)
+    path.write_text(json.dumps({"tradingview": {"wait_until": future.isoformat(), "wait_reason": "backoff",
+                                                "day": "2026-10-20", "count_today": 1}}), encoding="utf-8")
+    assert call("tradingview", lambda: "ok", now=clock) == "ok"
+
+    # A last call "in the future": wait at most min_interval, not days
+    path.write_text(json.dumps({"tradingview": {"last_call": future.isoformat()}}), encoding="utf-8")
+    with pytest.raises(Wait) as w:
+        call("tradingview", lambda: "ok", now=clock)
+    assert w.value.until <= clock() + dt.timedelta(seconds=guard.LIMITS["tradingview"].min_interval)
+
+
+def test_wait_message_every_reason():
+    until = dt.datetime(2026, 10, 20, 14, 30, tzinfo=dt.timezone.utc)
+    hhmm = until.astimezone().strftime("%H:%M")
+    for reason, part in [("block", "חסם זמנית"), ("daily_cap", "מכסת הבקשות היומית"),
+                         ("backoff", "לא זמין כרגע"), ("min_interval", "העדכון הבא")]:
+        msg = wait_message(Wait("tradingview", until, reason))
+        assert part in msg and "TradingView" in msg and hhmm in msg and "מוצגים נתונים שמורים" in msg
