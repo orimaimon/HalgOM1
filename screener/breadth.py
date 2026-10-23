@@ -139,7 +139,8 @@ def history(store: Store, days: int = 60, junk: bool = True) -> pd.DataFrame:
 
     data_dir = getattr(store, "root", store_module.DATA_DIR)
     cache_dir = Path(data_dir) / "breadth"
-    cache_file = cache_dir / "daily.json"
+    # Hiding junk changes every number: one cache file per setting
+    cache_file = cache_dir / ("daily.json" if junk else "daily_all.json")
 
     cache = {}
     if cache_file.exists():

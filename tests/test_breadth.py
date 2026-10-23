@@ -242,3 +242,16 @@ def test_speed_benchmark():
 
     assert b["stocks"] == n_stocks
     assert elapsed < 0.2, f"breadth() on 5000 stocks took {elapsed:.4f}s (expected < 0.2s)"
+
+
+def test_history_cache_is_per_junk_setting(tmp_path):
+    store = Store(root=tmp_path)
+    store.snap_dir.mkdir(parents=True, exist_ok=True)
+    day = dt.date(2025, 1, 2)
+    raw = pd.DataFrame([
+        {"ticker": "A", "price": 100.0, "sma50": 90.0, "sma200": 80.0, "change": 1.0, "avg_volume": 100e3, "market_cap": 100e6},
+        {"ticker": "J", "price": 0.5, "sma50": 0.4, "sma200": 0.4, "change": 1.0, "avg_volume": 100e3, "market_cap": 100e6},
+    ])
+    _atomic_parquet(raw, store.snapshot_path(day))
+    assert breadth.history(store, junk=True).loc[day, "advancers"] == 1
+    assert breadth.history(store, junk=False).loc[day, "advancers"] == 2
