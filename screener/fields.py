@@ -112,10 +112,12 @@ COLUMNS: dict[str, Col] = {
 
     # ── Valuation ───────────────────────────────────────────────────────────
     "pe":           Col("P/E", "ratio", "provider", "מכפיל רווח: כמה שנות רווח משלמים על המניה. נמוך = זול יותר"),
+    "pe_vs_industry": Col("P/E vs Ind", "pct", "derived", "כמה המכפיל גבוה (+) או נמוך (−) מהחציון של התעשייה, באחוזים. שלילי = זולה ביחס לתעשייה"),
     "eps_next_fy":  Col("EPS next Y", "price", "provider", "תחזית אנליסטים לרווח למניה בשנה הבאה"),
     "fwd_pe":       Col("Fwd P/E", "ratio", "derived", "מכפיל רווח עתידי: מחיר חלקי תחזית הרווח לשנה הבאה"),
     "peg":          Col("PEG", "ratio", "provider", "מכפיל רווח חלקי קצב הצמיחה. מתחת ל-1 נחשב זול ביחס לצמיחה"),
     "ps":           Col("P/S", "ratio", "provider", "מכפיל מכירות: שווי שוק חלקי ההכנסות"),
+    "ps_vs_industry": Col("P/S vs Ind", "pct", "derived", "כמה מכפיל המכירות גבוה (+) או נמוך (−) מהחציון של התעשייה, באחוזים. שלילי = זולה ביחס לתעשייה"),
     "pb":           Col("P/B", "ratio", "provider", "מכפיל הון: שווי שוק חלקי ההון העצמי"),
     "pocf":         Col("P/OCF", "ratio", "provider", "מחיר חלקי תזרים המזומנים מפעילות שוטפת"),
     "pfcf":         Col("P/FCF", "ratio", "provider", "מחיר חלקי תזרים המזומנים החופשי"),
@@ -125,6 +127,7 @@ COLUMNS: dict[str, Col] = {
     "eps_growth_q": Col("EPS Q/Q", "pct", "provider", "צמיחת הרווח למניה ברבעון האחרון מול אותו רבעון אשתקד"),
     "revenue":      Col("Sales", "money", "provider", "הכנסות ב-12 החודשים האחרונים"),
     "sales_growth": Col("Sales growth", "pct", "provider", "צמיחת ההכנסות ב-12 החודשים האחרונים מול השנה הקודמת"),
+    "sales_growth_vs_sector": Col("Sales gr vs Sec", "pct", "derived", "הפרש צמיחת ההכנסות מהחציון של הסקטור, באחוזי תשואה"),
     "sales_growth_q": Col("Sales Q/Q", "pct", "provider", "צמיחת ההכנסות ברבעון האחרון מול אותו רבעון אשתקד"),
 
     # ── Financial ───────────────────────────────────────────────────────────
