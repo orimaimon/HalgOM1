@@ -39,6 +39,21 @@ FRESH: list[str] = [
     "div_yield",
 ]
 
+# From the last TradingView snapshot: only what changes slowly (descriptive fields and fundamentals).
+# Technical columns (perf_*, rsi, sma20/150, *_prev, 1M/3M/6M highs, candles, gap, ...) stay NaN: next to a
+# fresh price, values from a snapshot days old would fire false signals ("crossed SMA200 today" compares
+# the price with close_prev / sma200_prev).
+SLOW: list[str] = [
+    "company", "exchange", "sector", "industry", "country", "sec_type", "indexes", "employees",
+    "float_shares", "eps_next_fy", "peg", "ps", "pocf", "pfcf", "ev_ebitda", "eps_growth", "eps_growth_q",
+    "revenue", "sales_growth", "sales_growth_q", "roa", "roe", "roic", "curr_ratio", "quick_ratio",
+    "lt_debt_eq", "debt_eq", "gross_margin", "oper_margin", "net_margin", "fcf_margin", "payout",
+    "beta", "recom", "target",
+]
+# For a ticker missing from the snapshot, Nasdaq's own value is better than nothing (Nasdaq sector names
+# differ from TradingView's, so a ticker in the snapshot always keeps the snapshot's).
+NASDAQ_FALLBACK: list[str] = ["company", "sector", "industry", "country", "sec_type"]
+
 
 def combine(
     nasdaq_df: pd.DataFrame,
@@ -95,20 +110,19 @@ def combine(
 
         res_dict[col] = combined
 
-    # 4. Non-FRESH provider columns (excluding ticker): snapshot > Nasdaq fallback > NaN
+    # 4. SLOW provider columns: the snapshot; Nasdaq only for tickers the snapshot does not have
     all_prov = provider_columns()
-    non_fresh = [c for c in all_prov if c not in FRESH and c != "ticker"]
+    non_fresh = [c for c in SLOW if c in all_prov]
+    in_snap = (tickers.isin(snap_indexed.index) if snap_indexed is not None
+               else np.zeros(len(tickers), dtype=bool))
 
     for col in non_fresh:
         if snap_indexed is not None and col in snap_indexed.columns:
             s = snap_indexed[col].reindex(tickers)
         else:
             s = pd.Series(np.nan, index=tickers, dtype=object)
-
-        # Fallback to Nasdaq for sector, industry, country, company, sec_type, etc.
-        if col in nasdaq_indexed.columns:
-            s = s.fillna(nasdaq_indexed[col])
-
+        if col in NASDAQ_FALLBACK and col in nasdaq_indexed.columns:
+            s = s.where(in_snap, nasdaq_indexed[col].reindex(tickers))
         res_dict[col] = s
 
     df = pd.DataFrame(res_dict, index=tickers)
@@ -155,14 +169,11 @@ def fetch_basic(store: Store) -> pd.DataFrame:
     snapshot_df = None
     snapshot_day = None
     if store is not None:
-        dates = store.snapshot_dates()
-        if dates:
-            snapshot_day = dates[-1]
+        for day in reversed(store.snapshot_dates()):      # the newest readable one
             try:
-                snapshot_df = store.load_snapshot(snapshot_day)
+                snapshot_df, snapshot_day = store.load_snapshot(day), day
+                break
             except Exception as e:
-                log.warning("cannot read snapshot for basic mode from %s: %s", snapshot_day, e)
-                snapshot_df = None
-                snapshot_day = None
+                log.warning("cannot read snapshot for basic mode from %s: %s", day, e)
 
     return combine(nasdaq_df, yahoo_df, snapshot_df, snapshot_day)

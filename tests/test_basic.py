@@ -93,8 +93,10 @@ def test_attrs_source_metadata():
     assert meta["provider"] == "basic"
     assert meta["basic"] is True
     assert meta["snapshot_day"] == "2026-10-23"
-    assert "rsi" in meta["stale"]
     assert "sector" in meta["stale"]
+    # A technical column from an old snapshot would fire false signals next to a fresh price: never used
+    assert "rsi" not in meta["stale"] and "rsi" in meta["missing"]
+    assert pd.isna(res.loc[0, "rsi"])
 
     # Missing columns check: e.g. 'sma20' is non-FRESH and not in snapshot or nasdaq
     assert "sma20" in meta["missing"]
@@ -154,3 +156,33 @@ def test_fetch_basic_behavior(monkeypatch, caplog):
     with pytest.raises(guard.Wait) as exc_info:
         basic.fetch_basic(dummy_store)
     assert exc_info.value.provider == "nasdaq"
+
+
+def test_stale_technicals_never_come_from_the_snapshot():
+    nasdaq_df = pd.DataFrame([{"ticker": "AAPL", "price": 210.0, "sector": "Technology"},
+                              {"ticker": "NEWCO", "price": 12.0, "sector": "Technology"}])
+    snap_df = pd.DataFrame([{"ticker": "AAPL", "sector": None, "close_prev": 190.0, "sma200": 200.0,
+                             "sma200_prev": 199.0, "roe": 150.0}])
+    res = basic.combine(nasdaq_df, snapshot=snap_df, snapshot_day=dt.date(2026, 10, 20)).set_index("ticker")
+    assert pd.isna(res.loc["AAPL", "close_prev"]) and pd.isna(res.loc["AAPL", "sma200_prev"])
+    assert res.loc["AAPL", "roe"] == 150.0                     # fundamentals do come from the snapshot
+    assert pd.isna(res.loc["AAPL", "sector"])                  # in the snapshot: never Nasdaq's taxonomy
+    assert res.loc["NEWCO", "sector"] == "Technology"          # not in the snapshot: Nasdaq's value
+
+
+def test_fetch_basic_falls_back_to_an_older_readable_snapshot(monkeypatch):
+    nasdaq_df = pd.DataFrame([{"ticker": "AAPL", "price": 210.0}])
+    monkeypatch.setattr(basic.guard, "call", lambda provider, fn, *a, **k: nasdaq_df if provider == "nasdaq" else None)
+
+    class FakeStore:
+        def snapshot_dates(self):
+            return [dt.date(2026, 10, 20), dt.date(2026, 10, 21)]
+
+        def load_snapshot(self, day):
+            if day == dt.date(2026, 10, 21):
+                raise OSError("damaged")
+            return pd.DataFrame([{"ticker": "AAPL", "sector": "Technology Services"}])
+
+    res = basic.fetch_basic(FakeStore())
+    assert res.attrs["source"]["snapshot_day"] == "2026-10-20"
+    assert res.loc[0, "sector"] == "Technology Services"
