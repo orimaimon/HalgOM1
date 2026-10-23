@@ -397,8 +397,8 @@ def test_no_email_address_in_repo():
     for s_dir in search_dirs:
         for path in s_dir.rglob("*"):
             if path.is_file():
-                # Skip .venv directory if inside screener
-                if ".venv" in path.parts:
+                # Skip the venv and the local data folder (not in the repository)
+                if ".venv" in path.parts or "_data" in path.parts:
                     continue
                 # Skip binary / bytecode files
                 if path.suffix in (".pyc", ".parquet", ".bad", ".tmp", ".so", ".exe"):
@@ -407,7 +407,8 @@ def test_no_email_address_in_repo():
                     text = path.read_text(encoding="utf-8", errors="ignore")
                     matches = email_pattern.findall(text)
                     for m in matches:
-                        if not m.endswith("example.invalid"):
+                        # RFC 2606 reserved domains are placeholders, never a real address
+                        if not m.lower().endswith(("example.invalid", "example.com", "example.org", "example.net", ".test")):
                             found_emails.append((str(path.relative_to(repo_root)), m))
                 except Exception:
                     pass
