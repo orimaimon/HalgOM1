@@ -476,3 +476,116 @@ def test_regime_reasons_translation_below():
     assert I.regime_reason("SPY below SMA200", I.HE) == "SPY מתחת ל-SMA200"
     assert I.regime_reason("HYG below SMA20 (credit risk-off)", I.HE) == "HYG מתחת ל-SMA20 (אשראי risk-off)"
     assert I.regime_reason("SPY below SMA200", I.EN) == "SPY below SMA200"
+
+
+# ── Track Record UI tests ───────────────────────────────────────────────────
+
+def test_track_record_expander_and_warning(app, monkeypatch):
+    import screener.track as track_mod
+    monkeypatch.setattr(track_mod.prices, "ensure", lambda *args, **kwargs: None)
+    monkeypatch.setattr(track_mod.prices, "history", lambda *args, **kwargs: pd.DataFrame())
+
+    mock_summary = {
+        "sessions": 5,
+        "few_sessions": True,
+        "entries": 10,
+        "splits_undone": 0,
+        "horizons": {
+            5: {"entries": 8, "pending": 2, "median": 3.5, "mean": 3.0, "pct_positive": 62.5, "excess": 1.2, "benchmark": "SPY"},
+            20: {"entries": 5, "pending": 5, "median": None, "mean": None, "pct_positive": None, "excess": None, "benchmark": "SPY"},
+            60: {"entries": 0, "pending": 10, "median": None, "mean": None, "pct_positive": None, "excess": None, "benchmark": "universe median"},
+        },
+        "table": pd.DataFrame([
+            {"day": dt.date(2025, 1, 15), "ticker": "AAPL", "ret_5": 3.5, "pending_5": False, "ret_20": None, "pending_20": True, "ret_60": None, "pending_60": True},
+        ])
+    }
+
+    monkeypatch.setattr(track_mod, "track_all_screens", lambda store=None: {"Quality growth": mock_summary})
+
+    app.run()
+    app.selectbox(key="preset").select("Quality growth").run()
+    if app.exception:
+        raise app.exception[0]
+    assert not app.exception, app.exception
+
+    expanders = app.expander
+    exp_labels = [exp.label for exp in expanders]
+    assert "תעודת ביצועים" in exp_labels
+
+    warnings = [w.value for w in app.warning]
+    assert any("מעט נתונים עדיין — המספרים יתייצבו עם הזמן" in w for w in warnings)
+
+    markdowns = [m.value for m in app.markdown]
+    assert any("—" in m for m in markdowns)
+    assert not any("None" in m for m in markdowns)
+    assert not any("nan" in m for m in markdowns)
+
+
+def test_track_record_hidden_for_custom_or_modified(app, monkeypatch):
+    import screener.track as track_mod
+    monkeypatch.setattr(track_mod.prices, "ensure", lambda *args, **kwargs: None)
+    monkeypatch.setattr(track_mod.prices, "history", lambda *args, **kwargs: pd.DataFrame())
+
+    app.run()
+    app.selectbox(key="preset").select("— Custom —").run()
+    assert "תעודת ביצועים" not in [exp.label for exp in app.expander]
+
+    app.selectbox(key="preset").select("Quality growth").run()
+    assert "תעודת ביצועים" in [exp.label for exp in app.expander]
+
+    app.selectbox(key="f_pe").select("Low (<15)").run()
+    assert "תעודת ביצועים" not in [exp.label for exp in app.expander]
+
+
+def test_track_record_groups_page_comparison(app, monkeypatch):
+    import screener.track as track_mod
+    monkeypatch.setattr(track_mod.prices, "ensure", lambda *args, **kwargs: None)
+    monkeypatch.setattr(track_mod.prices, "history", lambda *args, **kwargs: pd.DataFrame())
+
+    mock_all = {
+        "Quality growth": {
+            "entries": 12,
+            "horizons": {20: {"median": 5.0, "pct_positive": 75.0, "excess": 3.0}}
+        },
+        "Value — cheap & profitable": {
+            "entries": 8,
+            "horizons": {20: {"median": 1.0, "pct_positive": 50.0, "excess": None}}
+        }
+    }
+    monkeypatch.setattr(track_mod, "track_all_screens", lambda store=None: mock_all)
+
+    app.run()
+    app.session_state["page"] = "Groups"
+    app.run()
+    if app.exception:
+        raise app.exception[0]
+    assert not app.exception, app.exception
+
+    dfs = [df.value for df in app.dataframe]
+    assert any("עודף 20 יום" in df.columns or "20-day excess" in df.columns for df in dfs if not df.empty)
+
+
+def test_track_record_exception_handling(app, monkeypatch):
+    import screener.track as track_mod
+    monkeypatch.setattr(track_mod, "track_all_screens", lambda store=None: (_ for _ in ()).throw(RuntimeError("track error")))
+
+    app.run()
+    app.selectbox(key="preset").select("Quality growth").run()
+    if app.exception:
+        raise app.exception[0]
+    assert not app.exception, app.exception
+
+    assert any("לא ניתן לחשב תעודת ביצועים כרגע" in h for h in notes(app))
+
+
+def test_track_record_display_error_does_not_break_the_page(monkeypatch):
+    """A summary the panel cannot format (None counts) shows the note, not an exception."""
+    import screener.app as app_mod
+    bad = {"sessions": None, "few_sessions": False, "horizons": {5: {"entries": None, "pending": None}}, "table": None}
+    notes = []
+    monkeypatch.setattr(app_mod, "get_all_track_records", lambda: {"X": bad})
+    monkeypatch.setattr(app_mod, "hebrew_note", lambda text: notes.append(text))
+    monkeypatch.setattr(app_mod.st, "expander", lambda *a, **k: __import__("contextlib").nullcontext())
+    monkeypatch.setattr(app_mod.st, "markdown", lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")))
+    app_mod.track_record_expander("X")
+    assert notes == [app_mod.TRACK_ERROR_NOTE]
