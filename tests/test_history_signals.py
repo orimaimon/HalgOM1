@@ -185,3 +185,16 @@ def test_speed_benchmark():
 
     assert res.shape == (n_tickers, 12)
     assert elapsed < 2.0, f"Execution took {elapsed:.2f} seconds, expected < 2.0s"
+
+
+def test_breakout_needs_a_full_window():
+    import numpy as np
+    import pandas as pd
+    from screener import history_signals as hs
+    idx = pd.bdate_range("2024-01-01", periods=300)
+    old = np.linspace(10, 20, 300)                       # a steady riser: new highs every day
+    young = np.r_[np.full(270, np.nan), np.linspace(5, 8, 30)]   # listed 30 bars ago, also rising
+    res = hs.signals_within(pd.DataFrame({"OLD": old, "NEW": young}, index=idx), days=5)
+    assert res.loc["OLD", "breakout_250"] == True       # noqa: E712
+    assert res.loc["NEW", "breakout_20"] == True        # noqa: E712
+    assert pd.isna(res.loc["NEW", "breakout_250"])

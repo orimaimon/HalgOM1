@@ -131,9 +131,11 @@ def _eval_breakout_within(arr: np.ndarray, w: int, days: int, index: pd.Index) -
         prev_w = sub[idx - w : idx]
         with np.errstate(all="ignore"):
             max_w = np.nanmax(prev_w, axis=0)
+        # A full window only: a stock listed 30 days ago has no 250-day high to break (NA, not True).
+        full = (~np.isnan(prev_w)).sum(axis=0) == w
 
         curr = sub[idx]
-        valid_k = ~np.isnan(curr) & ~np.isnan(max_w)
+        valid_k = ~np.isnan(curr) & full
         bo_k = (curr > max_w) & valid_k
 
         has_event |= bo_k
