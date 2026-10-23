@@ -111,12 +111,16 @@ Rules:
 The full plan (Hebrew, for Ori) is in `ROADMAP.md`: Now / Next / Later, an idea bank and a done log.
 Update it when an item is done or the priorities change. Summary (2026-10-23):
 
-- **Now:** track record UI (#60; engine `track.py` done in #59) → split `app.py` into one module per page
-  (no behavior change; after #60) → portfolios with history (value over time vs SPY/QQQ, splits/dividends
-  after the trade date, ETF prices; on top of `prices.py`).
-- **Next:** "send error report" zip, "what's new" after an update, a home page ("הבוקר שלי"), watchlist alerts,
-  small fixes (pip upgrade on every launch from #57, watchdog when no browser ever connects, SPACs in
-  Hide junk), measure real snapshot disk use.
+- **Now:** track record UI (#60; engine `track.py` done in #59) → **request guard** (`screener/data/guard.py`:
+  server-wide, persisted backoff after failures — 60 min after a 429/403 — min interval, daily cap and request count
+  per provider; today a failed `_fetch_market` is not cached so every rerun retries, and the universe retry wait is
+  per tab) → split `app.py` into one module per page (no behavior change; after #60) → portfolios with history
+  (value over time vs SPY/QQQ, splits/dividends, ETF prices) → fallback provider / basic mode (Nasdaq screener,
+  then Yahoo screener).
+- **Next:** support pack (error-report zip, "what's new", version; pip upgrade on every launch from #57, watchdog when
+  no browser ever connects, SPACs in Hide junk, measure real snapshot disk use) → home page ("הבוקר שלי") + watchlist
+  alerts → full-market history (Massive free key) + "within N days" signals + backtests of technical screens → SEC
+  fundamentals, FRED for the market header.
 - **Later:** daily Telegram report (#27), HalgOM strategy model portfolio (#29; needs the exact
   `topn_focused_v2` definition), "within N days" signals from history, fallback provider, IPO date filter.
 
