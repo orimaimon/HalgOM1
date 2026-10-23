@@ -99,11 +99,17 @@ def adjusted_trades(trades: pd.DataFrame) -> pd.DataFrame:
     factors = []
     adj_quantities = []
     adj_prices = []
+    known: dict[tuple[str, dt.date], float] = {}     # split_factor reads the ticker's parquet file each time
 
     for _, row in out.iterrows():
         ticker = str(row["ticker"]) if pd.notna(row.get("ticker")) else ""
         trade_date = _to_date(row.get("date"))
-        f = prices.split_factor(ticker, trade_date) if ticker and trade_date else 1.0
+        if ticker and trade_date:
+            if (ticker, trade_date) not in known:
+                known[(ticker, trade_date)] = prices.split_factor(ticker, trade_date)
+            f = known[(ticker, trade_date)]
+        else:
+            f = 1.0
         factors.append(f)
 
         qty = float(row["quantity"]) if pd.notna(row.get("quantity")) else 0.0
