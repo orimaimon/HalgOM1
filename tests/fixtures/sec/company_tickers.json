@@ -1,0 +1,27 @@
+{
+  "0": {
+    "cik_str": 320193,
+    "ticker": "AAPL",
+    "title": "Apple Inc."
+  },
+  "1": {
+    "cik_str": 1092014,
+    "ticker": "BRK-B",
+    "title": "Berkshire Hathaway Inc."
+  },
+  "2": {
+    "cik_str": 789019,
+    "ticker": "MSFT",
+    "title": "Microsoft Corp."
+  },
+  "3": {
+    "cik_str": 101010,
+    "ticker": "FAIL",
+    "title": "Missing Quarters Co."
+  },
+  "4": {
+    "cik_str": 202020,
+    "ticker": "NEG",
+    "title": "Negative Revenue Co."
+  }
+}
