@@ -26,6 +26,9 @@ log = logging.getLogger(__name__)
 BASE_URL = "https://api.polygon.io"
 
 COLUMNS = ["ticker", "open", "high", "low", "close", "volume", "vwap", "trades"]
+# An empty answer for a recent day may only mean the data is not published yet: record a day as a holiday
+# (never asked again) only when it is at least this many days old.
+EMPTY_FINAL_DAYS = 3
 
 
 class MassiveError(RuntimeError):
@@ -176,7 +179,10 @@ def fetch_day(
     results = payload.get("results")
 
     if results_count == 0 or not results:
-        _add_empty_day(d_dir, day_str)
+        from screener.data import store
+        ny_today = store.market_date(dt.datetime.now().astimezone())
+        if (ny_today - day).days >= EMPTY_FINAL_DAYS:
+            _add_empty_day(d_dir, day_str)
         return pd.DataFrame(columns=COLUMNS)
 
     parsed_rows = []
@@ -278,7 +284,7 @@ def load_closes(
         try:
             df = pd.read_parquet(path, columns=["ticker", field])
             if not df.empty and "ticker" in df.columns and field in df.columns:
-                data_dict[day] = df.set_index("ticker")[field]
+                data_dict[day] = df.drop_duplicates("ticker", keep="last").set_index("ticker")[field]
         except Exception as e:
             log.warning("Failed to load parquet %s for load_closes: %s", path, e)
 
@@ -286,4 +292,5 @@ def load_closes(
         return pd.DataFrame()
 
     res = pd.DataFrame(data_dict).T
-    return res
+    res.index = pd.DatetimeIndex(pd.to_datetime(res.index), name="date")     # what history_signals expects
+    return res.sort_index()

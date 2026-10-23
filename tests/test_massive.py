@@ -214,11 +214,38 @@ def test_load_closes(tmp_data_dir):
 
     # Full range
     wide = massive.load_closes(data_dir=d_dir)
-    assert list(wide.index) == [dt.date(2024, 1, 2), dt.date(2024, 1, 3), dt.date(2024, 1, 4)]
+    assert [d.date() for d in wide.index] == [dt.date(2024, 1, 2), dt.date(2024, 1, 3), dt.date(2024, 1, 4)]
     assert list(wide.columns) == ["AAPL", "MSFT"]
-    assert wide.loc[dt.date(2024, 1, 2), "AAPL"] == 150.0
-    assert wide.loc[dt.date(2024, 1, 4), "MSFT"] == 405.0
+    assert wide.loc[pd.Timestamp(2024, 1, 2), "AAPL"] == 150.0
+    assert wide.loc[pd.Timestamp(2024, 1, 4), "MSFT"] == 405.0
 
     # With start filter
     wide_start = massive.load_closes(start=dt.date(2024, 1, 3), data_dir=d_dir)
-    assert list(wide_start.index) == [dt.date(2024, 1, 3), dt.date(2024, 1, 4)]
+    assert [d.date() for d in wide_start.index] == [dt.date(2024, 1, 3), dt.date(2024, 1, 4)]
+
+
+def test_recent_empty_day_is_not_recorded_as_a_holiday(tmp_data_dir, key_file, monkeypatch):
+    d_dir = tmp_data_dir / "market_history"
+
+    class Empty:
+        status_code = 200
+
+        def json(self):
+            return {"status": "OK", "resultsCount": 0}
+
+    monkeypatch.setattr("requests.get", lambda url, headers=None, timeout=30: Empty())
+    monkeypatch.setattr(guard, "call", lambda provider, fn, *args, **kwargs: fn())
+    yesterday = dt.date.today() - dt.timedelta(days=1)
+    assert massive.fetch_day(yesterday, data_dir=d_dir, key_path=key_file).empty
+    assert not (d_dir / "empty_days.json").exists()
+
+
+def test_load_closes_index_and_duplicates(tmp_data_dir):
+    import pandas as pd
+    d_dir = tmp_data_dir / "market_history"
+    d_dir.mkdir(parents=True)
+    pd.DataFrame({"ticker": ["A", "A", "B"], "close": [1.0, 2.0, 3.0]}).to_parquet(d_dir / "2024-01-03.parquet")
+    pd.DataFrame({"ticker": ["A", "B"], "close": [4.0, 5.0]}).to_parquet(d_dir / "2024-01-02.parquet")
+    wide = massive.load_closes(data_dir=d_dir)
+    assert isinstance(wide.index, pd.DatetimeIndex) and wide.index.is_monotonic_increasing
+    assert wide.loc["2024-01-03", "A"] == 2.0
