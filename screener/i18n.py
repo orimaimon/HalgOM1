@@ -94,6 +94,7 @@ UI: dict[str, str] = {
     # Hide junk rules (filters.JUNK_RULES)
     "Price under $1": "מחיר מתחת ל-$1", "Avg Volume under 50K": "מחזור ממוצע מתחת ל-50K",
     "Market Cap under $50M": "שווי שוק מתחת ל-$50M",
+    "SPAC (blank-check company)": "חברת רכישה ייעודית (SPAC)",
     # filters / results
     "Filters": "פילטרים", "active": "פעילים", "results": "תוצאות", "Only new": "רק חדשות", "NEW": "חדש",
     "Export all columns": "ייצוא כל העמודות", "TradingView list": "רשימה ל-TradingView", "Tickers": "סימולים",
