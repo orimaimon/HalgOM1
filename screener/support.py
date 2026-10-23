@@ -37,14 +37,33 @@ def get_data_dir() -> Path:
     return store.DATA_DIR
 
 
+def _shell_desktop() -> Path | None:
+    """The Desktop folder Windows actually shows, from the registry. With OneDrive backup it is
+    %USERPROFILE%\\OneDrive\\Desktop (or a localized name) while an empty %USERPROFILE%\\Desktop still
+    exists, so guessing would put the report where the user never sees it."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+            value, _ = winreg.QueryValueEx(key, "Desktop")
+        return Path(os.path.expandvars(value))
+    except Exception:            # not Windows, or no such value
+        return None
+
+
 def desktop_dirs() -> list[Path]:
     userprofile = os.environ.get("USERPROFILE") or os.path.expanduser("~")
     base = Path(userprofile)
-    return [
+    dirs = [
         base / "Desktop",
         base / "OneDrive" / "Desktop",
         base / "OneDrive" / "שולחן העבודה",
     ]
+    shell = _shell_desktop()
+    # Only a desktop inside this USERPROFILE (tests point USERPROFILE at a temp folder).
+    if shell is not None and base in shell.parents:
+        dirs.insert(0, shell)
+    return dirs
 
 
 def get_git_sha(repo_root: Path | None = None) -> str:

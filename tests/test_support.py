@@ -184,3 +184,14 @@ def test_data_usage_and_log_daily_usage(tmp_path: Path, monkeypatch, caplog):
     (data_dir / "usage_logged.txt").write_text("1999-01-01", encoding="utf-8")
     assert support.log_daily_usage() is True
     assert "data usage:" in caplog.text
+
+
+def test_desktop_from_the_registry_comes_first(tmp_path: Path, monkeypatch):
+    fake_home = tmp_path / "home"
+    shown = fake_home / "OneDrive" / "שולחן העבודה"
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+    monkeypatch.setattr(support, "_shell_desktop", lambda: shown)
+    assert support.desktop_dirs()[0] == shown
+    # A registry desktop outside USERPROFILE is ignored
+    monkeypatch.setattr(support, "_shell_desktop", lambda: tmp_path / "elsewhere" / "Desktop")
+    assert support.desktop_dirs()[0] == fake_home / "Desktop"
