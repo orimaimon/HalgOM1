@@ -263,6 +263,23 @@ FILTERS: list[Filter] = [
            _multiple("fwd_pe", 15, 50, (5, 10, 15, 20, 25, 30, 40, 50))),
     Filter("peg", "PEG", "Fundamental", "peg", _multiple("peg", 1, 2, (1, 2, 3))),
     Filter("ps", "P/S", "Fundamental", "ps", _multiple("ps", 1, 10, (1, 2, 3, 4, 5, 10))),
+    Filter("pe_vs_industry", "P/E vs Industry", "Fundamental", "pe_vs_industry", (
+        Option("Below industry median", lambda d: d["pe_vs_industry"] < 0),
+        Option("20%+ below industry", lambda d: d["pe_vs_industry"] <= -20),
+        Option("50%+ below industry", lambda d: d["pe_vs_industry"] <= -50),
+        Option("Above industry median", lambda d: d["pe_vs_industry"] > 0),
+    )),
+    Filter("ps_vs_industry", "P/S vs Industry", "Fundamental", "ps_vs_industry", (
+        Option("Below industry median", lambda d: d["ps_vs_industry"] < 0),
+        Option("20%+ below industry", lambda d: d["ps_vs_industry"] <= -20),
+        Option("50%+ below industry", lambda d: d["ps_vs_industry"] <= -50),
+        Option("Above industry median", lambda d: d["ps_vs_industry"] > 0),
+    )),
+    Filter("sales_growth_vs_sector", "Sales Growth vs Sector", "Fundamental", "sales_growth_vs_sector", (
+        Option("Above sector median", lambda d: d["sales_growth_vs_sector"] > 0),
+        Option("10+ pts above sector", lambda d: d["sales_growth_vs_sector"] >= 10),
+        Option("Below sector median", lambda d: d["sales_growth_vs_sector"] < 0),
+    )),
     Filter("pb", "P/B", "Fundamental", "pb", _multiple("pb", 1, 5, (1, 2, 3, 4, 5, 10))),
     Filter("pfcf", "Price/Free Cash Flow", "Fundamental", "pfcf",
            _multiple("pfcf", 15, 50, (5, 10, 15, 20, 25, 30, 40, 50, 100))),
