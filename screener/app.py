@@ -1303,7 +1303,7 @@ def portfolios_page(df: pd.DataFrame) -> None:
                        on_click="ignore", use_container_width=True, icon=":material/download:",
                        help="קובץ CSV באותו מבנה של הייבוא: גיבוי, עריכה באקסל או העברה למחשב אחר")
     with c4.popover(t("Delete list"), icon=":material/delete:", use_container_width=True):
-        hebrew_note(f"{t('Delete')} “{plist.name}”? {t('This cannot be undone. Consider exporting first.')}")
+        hebrew_note(f"{t('Delete the list')} “{plist.name}”? {t('This cannot be undone. Consider exporting first.')}")
         st.button(t("Delete"), on_click=on_pf_delete, type="primary", key="pf_delete")
     if plist.kind == PF.PORTFOLIO:
         portfolio_view(plist, df)
