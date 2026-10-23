@@ -413,3 +413,56 @@ def test_no_email_address_in_repo():
                     pass
 
     assert found_emails == [], f"Found forbidden email address(es) in repo: {found_emails}"
+
+
+TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
+
+
+def _frame_url(concept: str, period: str) -> str:
+    return f"https://data.sec.gov/api/xbrl/frames/us-gaap/{concept}/USD/{period}.json"
+
+
+def _ua(tmp_path):
+    ua_file = tmp_path / "sec_user_agent.txt"
+    ua_file.write_text("Tester tester@example.invalid\n", encoding="utf-8")
+    return ua_file
+
+
+def test_no_endless_step_back_when_sec_keeps_failing(tmp_path, monkeypatch):
+    monkeypatch.setattr(sec, "_sleep", lambda s: None)
+    tickers = {"0": {"cik_str": 1, "ticker": "AAA", "title": "A"}}
+    session = FakeSession({TICKERS_URL: (200, tickers)})      # every frame: 404
+    assert sec.update(data_dir=tmp_path / "sec", user_agent_path=_ua(tmp_path),
+                      today=dt.date(2026, 10, 23), session=session) is None
+    assert len(session.calls) == 1 + sec.MAX_STEP_BACK
+
+
+def test_blocked_stops_the_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(sec, "_sleep", lambda s: None)
+    tickers = {"0": {"cik_str": 1, "ticker": "AAA", "title": "A"}}
+    session = FakeSession({TICKERS_URL: (200, tickers), _frame_url("Revenues", "CY2026Q3"): (403, "")})
+    with pytest.raises(sec.SecError) as e:
+        sec.update(data_dir=tmp_path / "sec", user_agent_path=_ua(tmp_path),
+                   today=dt.date(2026, 10, 23), session=session)
+    assert e.value.status_code == 403
+    assert len(session.calls) == 2
+
+
+def test_q4_from_the_year_for_the_oldest_quarter_and_share_classes(tmp_path, monkeypatch):
+    # Latest complete quarter CY2025Q2 -> quarters 25Q2..23Q3. 23Q4 (in the previous TTM) has no quarter
+    # frame: it comes from CY2023 - 23Q1 - 23Q2 - 23Q3, and 23Q1/23Q2 are older than the 8 quarters.
+    monkeypatch.setattr(sec, "_sleep", lambda s: None)
+    tickers = {"0": {"cik_str": 7, "ticker": "GOOGL", "title": "G"}, "1": {"cik_str": 7, "ticker": "GOOG", "title": "G"}}
+    rev = {"CY2025Q2": 120, "CY2025Q1": 110, "CY2024Q4": 105, "CY2024Q3": 100,
+           "CY2024Q2": 100, "CY2024Q1": 100, "CY2023Q3": 100, "CY2023Q1": 90, "CY2023Q2": 95, "CY2023": 385}
+    responses = {TICKERS_URL: (200, tickers)}
+    for period, val in rev.items():
+        responses[_frame_url("Revenues", period)] = (200, make_frame_data("Revenues", period, {7: val}, pts=1000))
+    session = FakeSession(responses)
+    sec.update(data_dir=tmp_path / "sec", user_agent_path=_ua(tmp_path), today=dt.date(2025, 8, 15), session=session)
+    df = sec.load(data_dir=tmp_path / "sec").set_index("ticker")
+    assert set(df.index) >= {"GOOG", "GOOGL"}
+    # TTM 120+110+105+100 = 435; previous 100+100+(385-90-95-100=100)+100 = 400 -> +8.75%
+    assert df.loc["GOOGL", "revenue_ttm"] == 435
+    assert df.loc["GOOGL", "revenue_ttm_prev"] == 400
+    assert df.loc["GOOG", "revenue_growth_ttm"] == pytest.approx(8.75)
