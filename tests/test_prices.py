@@ -1,24 +1,33 @@
 import datetime as dt
 import json
+import logging
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pandas as pd
 import pytest
 
-from screener.data import prices
+from screener.data import prices, guard
+
 
 @pytest.fixture
 def mock_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(prices, "PAUSE", 0)
-    with patch("screener.data.prices.DATA_DIR", tmp_path):
-        with patch("screener.data.prices.STATE_FILE", tmp_path / "update_state.json"):
-            yield tmp_path
+    monkeypatch.setattr("screener.data.store.DATA_DIR", tmp_path)
+    monkeypatch.setattr("screener.data.prices.DATA_DIR", tmp_path)
+    monkeypatch.setattr("screener.data.prices.STATE_FILE", tmp_path / "update_state.json")
+
+    def mock_guard_call(provider, fn, *args, max_sleep=0, now=None, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr("screener.data.guard.call", mock_guard_call)
+    yield tmp_path
+
 
 @pytest.fixture
 def mock_yf_download():
     with patch("screener.data.prices.yf.download") as mock_dl:
         yield mock_dl
+
 
 def create_mock_df(dates, close_vals, adj_close_vals, splits=None, tz_aware=False):
     if splits is None:
@@ -40,6 +49,7 @@ def create_mock_df(dates, close_vals, adj_close_vals, splits=None, tz_aware=Fals
     }, index=idx)
     return df
 
+
 def test_first_download(mock_data_dir, mock_yf_download):
     mock_yf_download.return_value = create_mock_df(
         ["2023-01-03", "2023-01-04"],
@@ -56,6 +66,7 @@ def test_first_download(mock_data_dir, mock_yf_download):
     assert not df.empty
     assert list(df.index) == [pd.Timestamp("2023-01-03"), pd.Timestamp("2023-01-04")]
     assert df.iloc[0]["close"] == 100.0
+
 
 def test_incremental_update(mock_data_dir, mock_yf_download):
     # First download
@@ -74,6 +85,7 @@ def test_incremental_update(mock_data_dir, mock_yf_download):
     assert len(df) == 2
     assert df.iloc[-1]["close"] == 101.0
 
+
 def test_already_checked_today(mock_data_dir, mock_yf_download):
     mock_yf_download.return_value = create_mock_df(["2023-01-03"], [100.0], [100.0])
     prices.ensure(["AAPL"], dt.date(2023, 1, 1))
@@ -82,6 +94,7 @@ def test_already_checked_today(mock_data_dir, mock_yf_download):
     # Call again, should be skipped
     prices.ensure(["AAPL"], dt.date(2023, 1, 1))
     assert mock_yf_download.call_count == 1
+
 
 def test_failed_download(mock_data_dir, mock_yf_download):
     # Setup initial data
@@ -104,6 +117,7 @@ def test_failed_download(mock_data_dir, mock_yf_download):
     assert len(df) == 1
     assert df.iloc[0]["close"] == 100.0
 
+
 def test_close_on(mock_data_dir, mock_yf_download):
     mock_yf_download.return_value = create_mock_df(
         ["2023-01-03", "2023-01-04", "2023-01-06"],
@@ -116,6 +130,7 @@ def test_close_on(mock_data_dir, mock_yf_download):
     assert prices.close_on("AAPL", dt.date(2023, 1, 5)) == 101.0 # weekend/holiday fallback
     assert prices.close_on("AAPL", dt.date(2023, 1, 6)) == 103.0
     assert prices.close_on("AAPL", dt.date(2022, 12, 31)) is None
+
 
 def test_split_factor(mock_data_dir, mock_yf_download):
     mock_yf_download.return_value = create_mock_df(
@@ -131,6 +146,7 @@ def test_split_factor(mock_data_dir, mock_yf_download):
     # Purchase on Jan 4, split already happened
     assert prices.split_factor("AAPL", dt.date(2023, 1, 4)) == 1.0
 
+
 def test_ticker_mapping(mock_data_dir, mock_yf_download):
     mock_yf_download.return_value = create_mock_df(["2023-01-03"], [100.0], [100.0])
     prices.ensure(["BRK.B"], dt.date(2023, 1, 1))
@@ -141,6 +157,7 @@ def test_ticker_mapping(mock_data_dir, mock_yf_download):
 
     # Data is saved under BRK.B
     assert (mock_data_dir / "BRK.B.parquet").exists()
+
 
 def test_total_return(mock_data_dir, mock_yf_download):
     mock_yf_download.return_value = create_mock_df(
@@ -155,8 +172,6 @@ def test_total_return(mock_data_dir, mock_yf_download):
     ret = prices.total_return("AAPL", dt.date(2023, 1, 3), dt.date(2023, 1, 5))
     assert pytest.approx(ret) == (26.0 / 25.0) - 1.0
 
-
-# ── review fixes ──────────────────────────────────────────────────────────────
 
 def test_last_stored_bar_is_downloaded_again(mock_data_dir, mock_yf_download):
     """A bar stored during the session is not final: the next update replaces it."""
@@ -188,3 +203,104 @@ def test_empty_first_download_is_a_failure_and_is_retried(mock_data_dir, mock_yf
     assert prices.ensure(["AAPL"], dt.date(2023, 1, 1)) == ([], ["AAPL"])
     mock_yf_download.return_value = create_mock_df(["2023-01-03"], [100.0], [100.0])
     assert prices.ensure(["AAPL"], dt.date(2023, 1, 1)) == (["AAPL"], [])      # same day: not marked done
+
+
+# ── Guard & Rate Limit Tests ──────────────────────────────────────────────────
+
+
+def test_hidden_rate_limit(mock_data_dir):
+    def fake_download(*args, **kwargs):
+        logging.getLogger("yfinance").error("YFRateLimitError('Too Many Requests. Rate limited. Try after a while.')")
+        return pd.DataFrame()
+
+    with patch("screener.data.prices.yf.download", side_effect=fake_download):
+        with pytest.raises(prices.PricesBlocked) as exc_info:
+            prices._download("AAPL", dt.date(2023, 1, 1))
+
+        assert exc_info.value.status_code == 429
+        assert guard._is_block(exc_info.value) is True
+
+
+def test_delisted_ticker(mock_data_dir):
+    def fake_download(ticker, *args, **kwargs):
+        if ticker == "DELISTED":
+            return pd.DataFrame()
+        return create_mock_df(["2023-01-03"], [100.0], [100.0])
+
+    with patch("screener.data.prices.yf.download", side_effect=fake_download):
+        empty_df = prices._download("DELISTED", dt.date(2023, 1, 1))
+        assert empty_df.empty
+
+        updated, failed = prices.ensure(["DELISTED", "AAPL"], dt.date(2023, 1, 1))
+        assert updated == ["AAPL"]
+        assert failed == ["DELISTED"]
+
+
+def test_stop_at_block(mock_data_dir):
+    def fake_download(ticker, *args, **kwargs):
+        if ticker == "T2":
+            logging.getLogger("yfinance").error("YFRateLimitError('Too Many Requests. Rate limited. Try after a while.')")
+            return pd.DataFrame()
+        return create_mock_df(["2023-01-03"], [100.0], [100.0])
+
+    mock_dl = MagicMock(side_effect=fake_download)
+    with patch("screener.data.prices.yf.download", mock_dl):
+        updated, failed = prices.ensure(["T1", "T2", "T3"], dt.date(2023, 1, 1))
+
+        assert updated == ["T1"]
+        assert failed == ["T2", "T3"]
+        assert mock_dl.call_count == 2
+
+        state = json.loads((mock_data_dir / "update_state.json").read_text(encoding="utf-8"))
+        assert "T1" in state
+        assert "T2" not in state
+        assert "T3" not in state
+
+
+def test_guard_wait(mock_data_dir, monkeypatch):
+    fake_wait = guard.Wait("yahoo", dt.datetime.now(), "backoff")
+    monkeypatch.setattr("screener.data.guard.call", MagicMock(side_effect=fake_wait))
+
+    mock_dl = MagicMock()
+    with patch("screener.data.prices.yf.download", mock_dl):
+        updated, failed = prices.ensure(["T1", "T2"], dt.date(2023, 1, 1))
+
+        assert updated == []
+        assert failed == ["T1", "T2"]
+        assert mock_dl.call_count == 0
+
+
+def test_real_guard_integration(tmp_path, monkeypatch):
+    monkeypatch.setattr("screener.data.store.DATA_DIR", tmp_path)
+    monkeypatch.setattr("screener.data.prices.DATA_DIR", tmp_path)
+    monkeypatch.setattr("screener.data.prices.STATE_FILE", tmp_path / "update_state.json")
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    # 1. Two tickers in a row -> second waits through max_sleep instead of raising, both updated.
+    def fake_ok_download(*args, **kwargs):
+        return create_mock_df(["2023-01-03"], [100.0], [100.0])
+
+    mock_dl = MagicMock(side_effect=fake_ok_download)
+    with patch("screener.data.prices.yf.download", mock_dl):
+        updated, failed = prices.ensure(["T1", "T2"], dt.date(2023, 1, 1))
+        assert updated == ["T1", "T2"]
+        assert failed == []
+        assert mock_dl.call_count == 2
+
+    # 2. Trigger PricesBlocked on T3
+    def fake_block_download(*args, **kwargs):
+        logging.getLogger("yfinance").error("YFRateLimitError('Too Many Requests. Rate limited. Try after a while.')")
+        return pd.DataFrame()
+
+    with patch("screener.data.prices.yf.download", side_effect=fake_block_download):
+        updated, failed = prices.ensure(["T3"], dt.date(2023, 1, 1))
+        assert updated == []
+        assert failed == ["T3"]
+
+    # 3. After PricesBlocked, guard is in 60-minute backoff. New ensure call makes no download at all.
+    mock_dl2 = MagicMock(side_effect=fake_ok_download)
+    with patch("screener.data.prices.yf.download", mock_dl2):
+        updated, failed = prices.ensure(["T4"], dt.date(2023, 1, 1))
+        assert updated == []
+        assert failed == ["T4"]
+        assert mock_dl2.call_count == 0
