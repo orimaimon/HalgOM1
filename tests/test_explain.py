@@ -105,7 +105,7 @@ def test_describe_large_profitable_tech_stock():
     assert "חברה ענקית (שווי $250.0B) בסקטור טכנולוגיה אלקטרונית." in desc
     assert "נסחרת במגמת עלייה מעל ממוצע 200 וקרובה לשיא השנתי." in desc
     assert "צמיחה חזקה בהכנסות (25%) ורווחית." in desc
-    assert "מציעה תשואת דיבידנד של 3.5%." in desc
+    assert "מציעה תשואת דיבידנד של 3.5%." in desc  # one decimal
     assert "זולה ביחס לתעשייה (P/E נמוך ב-25% מהחציון)." in desc
     assert "ציון HalgOM גבוה (85)." in desc
 
@@ -153,3 +153,11 @@ def test_every_describe_sentence_contains_hebrew_and_no_nan_none():
             assert HEBREW_RE.search(desc), f"No Hebrew in: {desc}"
             assert "nan" not in desc.lower(), f"'nan' found in: {desc}"
             assert "none" not in desc.lower(), f"'none' found in: {desc}"
+
+
+def test_describe_rounds_real_world_numbers():
+    row = make_test_row(market_cap=15e9, sales_growth=25.123456, net_margin=7.5, div_yield=3.48712,
+                        pe_vs_industry=-31.66666, score=84.6)
+    desc = explain.describe(row)
+    assert "(25%)" in desc and "3.5%" in desc and "ב-32%" in desc and "(85)" in desc
+    assert not re.search(r"\d\.\d{2,}", desc), desc

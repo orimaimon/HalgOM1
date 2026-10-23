@@ -175,25 +175,25 @@ def describe(row: pd.Series) -> str:
             profit_status = "מפסידה"
 
     if has_growth and profit_status:
-        sentences.append(f"צמיחה חזקה בהכנסות ({sales_growth:g}%) ו{profit_status}.")
+        sentences.append(f"צמיחה חזקה בהכנסות ({sales_growth:.0f}%) ו{profit_status}.")
     elif has_growth:
-        sentences.append(f"צמיחה חזקה בהכנסות ({sales_growth:g}%).")
+        sentences.append(f"צמיחה חזקה בהכנסות ({sales_growth:.0f}%).")
     elif profit_status:
         sentences.append(f"החברה {profit_status}.")
 
     # 4. Dividend
     div_yield = row.get("div_yield")
     if div_yield is not None and not pd.isna(div_yield) and div_yield >= 3:
-        sentences.append(f"מציעה תשואת דיבידנד של {div_yield:g}%.")
+        sentences.append(f"מציעה תשואת דיבידנד של {div_yield:.1f}%.")
 
     # 5. pe_vs_industry
     pe_vs_ind = row.get("pe_vs_industry")
     if pe_vs_ind is not None and not pd.isna(pe_vs_ind) and pe_vs_ind <= -20:
-        sentences.append(f"זולה ביחס לתעשייה (P/E נמוך ב-{abs(pe_vs_ind):g}% מהחציון).")
+        sentences.append(f"זולה ביחס לתעשייה (P/E נמוך ב-{abs(pe_vs_ind):.0f}% מהחציון).")
 
     # 6. Score
     score = row.get("score")
     if score is not None and not pd.isna(score) and score >= 80:
-        sentences.append(f"ציון HalgOM גבוה ({score:g}).")
+        sentences.append(f"ציון HalgOM גבוה ({score:.0f}).")
 
     return " ".join(sentences)
