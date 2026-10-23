@@ -330,7 +330,7 @@ OPTIONS_HE: dict[str, str] = {
     "50%+ below industry": "זולה ב-50%+ מהתעשייה",
     "Above industry median": "מעל חציון התעשייה",
     "Above sector median": "מעל חציון הסקטור",
-    "10+ pts above sector": "10%+ מעל הסקטור",
+    "10+ pts above sector": "10+ נקודות אחוז מעל הסקטור",
     "Below sector median": "מתחת לחציון הסקטור",
     "None": "אין",
     **{en: f"{he} ({en})" for en, he in CANDLES_HE.items()},

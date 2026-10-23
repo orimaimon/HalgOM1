@@ -127,7 +127,7 @@ COLUMNS: dict[str, Col] = {
     "eps_growth_q": Col("EPS Q/Q", "pct", "provider", "צמיחת הרווח למניה ברבעון האחרון מול אותו רבעון אשתקד"),
     "revenue":      Col("Sales", "money", "provider", "הכנסות ב-12 החודשים האחרונים"),
     "sales_growth": Col("Sales growth", "pct", "provider", "צמיחת ההכנסות ב-12 החודשים האחרונים מול השנה הקודמת"),
-    "sales_growth_vs_sector": Col("Sales gr vs Sec", "pct", "derived", "הפרש צמיחת ההכנסות מהחציון של הסקטור, באחוזי תשואה"),
+    "sales_growth_vs_sector": Col("Sales gr vs Sec", "pct", "derived", "בכמה נקודות אחוז צמיחת ההכנסות גבוהה (+) או נמוכה (−) מהחציון של הסקטור. למשל +15 = צמיחה של 25% בסקטור שהחציון שלו 10%"),
     "sales_growth_q": Col("Sales Q/Q", "pct", "provider", "צמיחת ההכנסות ברבעון האחרון מול אותו רבעון אשתקד"),
 
     # ── Financial ───────────────────────────────────────────────────────────
