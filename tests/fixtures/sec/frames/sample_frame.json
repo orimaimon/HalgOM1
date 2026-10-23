@@ -1,0 +1,27 @@
+{
+  "taxonomy": "us-gaap",
+  "tag": "Revenues",
+  "ccp": "CY2025Q2",
+  "uom": "USD",
+  "pts": 2,
+  "data": [
+    {
+      "accn": "0000320193-25-000001",
+      "cik": 320193,
+      "entityName": "Apple Inc.",
+      "loc": "US-CA",
+      "start": "2025-04-01",
+      "end": "2025-06-30",
+      "val": 90000000000
+    },
+    {
+      "accn": "0001092014-25-000001",
+      "cik": 1092014,
+      "entityName": "Berkshire Hathaway Inc.",
+      "loc": "US-NE",
+      "start": "2025-04-01",
+      "end": "2025-06-30",
+      "val": 85000000000
+    }
+  ]
+}
