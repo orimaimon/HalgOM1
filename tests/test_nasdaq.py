@@ -201,3 +201,24 @@ def test_request_headers_and_single_call(monkeypatch, nasdaq_fixture_data):
     assert call["headers"]["Accept-Language"] == nasdaq.HEADERS["Accept-Language"]
     assert call["headers"]["Origin"] == nasdaq.HEADERS["Origin"]
     assert call["headers"]["Referer"] == nasdaq.HEADERS["Referer"]
+
+
+def test_preferred_only_as_a_share_class():
+    assert nasdaq.is_excluded_security("PFBC", "Preferred Bank Common Stock") is False
+    assert nasdaq.is_excluded_security("ABCP", "ABC Corp 6.50% Series A Preferred Shares") is True
+    assert nasdaq.is_excluded_security("ABCD", "ABC Corp Depositary Shares, each representing 1/1000th of a Preferred") is True
+    assert nasdaq.is_excluded_security("BABA", "Alibaba Group Holding Limited American Depositary Shares") is False
+
+
+def test_http_error_carries_status_for_the_guard(monkeypatch):
+    from screener.data import guard
+
+    class Mock429:
+        status_code = 429
+        text = "Too Many Requests"
+
+    monkeypatch.setattr(requests, "get", lambda url, headers, timeout: Mock429())
+    with pytest.raises(nasdaq.NasdaqError) as e:
+        nasdaq.fetch_universe()
+    assert e.value.status_code == 429
+    assert guard._is_block(e.value)

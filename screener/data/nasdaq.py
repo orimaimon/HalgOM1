@@ -29,11 +29,21 @@ HEADERS = {
 
 MIN_ROWS = 3000
 
-EXCLUDED_WORDS_RE = re.compile(r"\b(warrant|unit|right|preferred)s?\b", re.IGNORECASE)
+# "Preferred" only as a share class: "Preferred Bank" (PFBC) is a common stock.
+EXCLUDED_WORDS_RE = re.compile(
+    r"\b(?:warrant|unit|right)s?\b"
+    r"|\bpreferred\s+(?:stock|shares?|securities)\b"
+    r"|\bdepositary\s+shares?\b.*\bpreferred\b",
+    re.IGNORECASE,
+)
 
 
 class NasdaqError(RuntimeError):
-    pass
+    """`status_code` is set for an HTTP error, so the request guard sees a 403/429 block."""
+
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def is_excluded_security(symbol: str, name: str) -> bool:
@@ -85,7 +95,7 @@ def fetch_universe(timeout: float = 30) -> pd.DataFrame:
         raise NasdaqError(f"network error: {e}") from e
 
     if resp.status_code != 200:
-        raise NasdaqError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+        raise NasdaqError(f"HTTP {resp.status_code}: {resp.text[:200]}", status_code=resp.status_code)
 
     try:
         payload = resp.json()
