@@ -110,8 +110,11 @@ class Store:
                 pass
         return sorted(out)
 
-    def load_snapshot(self, day: dt.date) -> pd.DataFrame:
-        return pd.read_parquet(self.snap_dir / f"{day.isoformat()}.parquet")
+    def snapshot_path(self, day: dt.date) -> Path:
+        return self.snap_dir / f"{day.isoformat()}.parquet"
+
+    def load_snapshot(self, day: dt.date, columns: list[str] | None = None) -> pd.DataFrame:
+        return pd.read_parquet(self.snapshot_path(day), columns=columns)
 
     def snapshot_meta(self, day: dt.date) -> dict:
         """Metadata of a snapshot; {} for snapshots saved before metadata existed."""

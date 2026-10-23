@@ -1,208 +1,192 @@
-"""Tests for screener/track.py track record engine (offline on synthetic data)."""
+"""screener/track.py: track record of a screen, offline on synthetic snapshots."""
 import datetime as dt
-import json
-from pathlib import Path
-from unittest.mock import patch
+import os
 
-import numpy as np
 import pandas as pd
 import pytest
 
+from screener import presets as P
+from screener import track
 from screener.data.store import Store
-from screener.derive import add_derived
 from screener.fields import COLUMNS
-import screener.track as track
+
+DAY0 = dt.date(2026, 1, 1)
+IN, OUT = 12.0, 30.0                 # P/E inside / outside the test screen
+SCREEN = {"pe": "Under 15"}
 
 
-def _make_snapshot(day: dt.date, tickers: list[str], prices: dict[str, float]) -> pd.DataFrame:
+def make_snapshot(rows: dict[str, tuple[float, float]]) -> pd.DataFrame:
+    """rows: ticker -> (price, pe). Everything else passes Hide junk."""
+    tickers = list(rows)
     n = len(tickers)
-    data = {}
-    for key, col in COLUMNS.items():
-        if col.source != "provider" or col.kind == "text":
-            continue
-        if col.kind == "date":
-            data[key] = [pd.Timestamp(day)] * n
-        else:
-            data[key] = [10.0] * n
-
+    data = {k: [10.0] * n for k, c in COLUMNS.items() if c.source == "provider" and c.kind not in ("text", "date")}
     df = pd.DataFrame(data)
     df["ticker"] = tickers
     df["company"] = [f"Co {t}" for t in tickers]
-    df["exchange"] = "NASDAQ"
-    df["sector"] = "Technology"
-    df["industry"] = "Software"
-    df["country"] = "United States"
-    df["sec_type"] = "stock"
-    df["tv_symbol"] = [f"NASDAQ:{t}" for t in tickers]
-    df["price"] = [prices.get(t, 100.0) for t in tickers]
-    df["market_cap"] = 1e9
-    df["pe"] = 12.0  # passes "Under 15" filter
-    df["avg_volume"] = 1e6
-    df["high52"] = df["price"] * 1.1
-    df["low52"] = df["price"] * 0.9
+    for k, v in {"exchange": "NASDAQ", "sector": "Technology", "industry": "Software",
+                 "country": "United States", "sec_type": "stock"}.items():
+        df[k] = v
+    df["price"] = [rows[t][0] for t in tickers]
+    df["pe"] = [rows[t][1] for t in tickers]
+    df["market_cap"], df["avg_volume"] = 1e9, 1e6
     return df
 
 
-@pytest.fixture
-def mock_no_network(monkeypatch):
-    """Ensure no network calls are made during track testing."""
-    monkeypatch.setattr(track.prices, "ensure", lambda tickers, start: (tickers, []))
-    monkeypatch.setattr(track.prices, "total_return", lambda ticker, start, end: None)
-    monkeypatch.setattr(track.prices, "close_on", lambda ticker, day: None)
-
-
-def test_track_synthetic_30_days(tmp_path, mock_no_network):
-    store = Store(tmp_path)
+def write_day(store: Store, i: int, rows: dict[str, tuple[float, float]]) -> None:
     store.snap_dir.mkdir(parents=True, exist_ok=True)
+    make_snapshot(rows).to_parquet(store.snapshot_path(DAY0 + dt.timedelta(days=i)))
 
-    base_date = dt.date(2026, 1, 1)
-    dates = [base_date + dt.timedelta(days=i) for i in range(30)]
 
-    # Price trajectories:
-    # T001 enters D0 (p=100), D5 (p=110 -> +10%), D20 (p=120 -> +20%)
-    # T002 enters D0 (p=50),  D5 (p=45 -> -10%), D20 (p=60 -> +20%)
-    # SPLT enters D10 (p=100), D15 (p=50 due to 2:1 split -> 0% return adjusted)
-    # T025 enters D25 (p=100), not enough days for +5, +20, +60 -> "not yet"
+def day(i: int) -> dt.date:
+    return DAY0 + dt.timedelta(days=i)
 
-    for i, d in enumerate(dates):
-        tickers = ["T001", "T002"]
-        price_map = {"T001": 100.0, "T002": 50.0}
 
-        if i >= 5:
-            price_map["T001"] = 110.0
-            price_map["T002"] = 45.0
-        if i >= 20:
-            price_map["T001"] = 120.0
-            price_map["T002"] = 60.0
+@pytest.fixture(autouse=True)
+def offline(monkeypatch):
+    """No network: benchmark updates are recorded, and there is no stored price history."""
+    calls = []
+    monkeypatch.setattr(track.prices, "ensure", lambda tickers, start: calls.append(tickers) or ([], tickers))
+    monkeypatch.setattr(track.prices, "history", lambda t: pd.DataFrame())
+    monkeypatch.setattr(track, "_benchmarks_checked", None)
+    return calls
 
-        if i >= 10:
-            tickers.append("SPLT")
-            price_map["SPLT"] = 100.0 if i < 15 else 50.0  # 2:1 split on D15
 
-        if i >= 25:
-            tickers.append("T025")
-            price_map["T025"] = 100.0
+def scenario(i: int) -> dict[str, tuple[float, float]]:
+    rows = {
+        "ALWAYS": (50.0, IN),                                          # in the results from day 0: never an entry
+        "UP": (100.0 if i < 8 else 110.0 if i < 23 else 120.0, IN if i >= 3 else OUT),
+        "SPLIT": (100.0 if i < 5 else 50.0, IN if i >= 3 else OUT),       # 2-for-1 on day 5
+        "DOUBLE": (100.0 + 5 * max(0, i - 3), IN if i >= 3 else OUT),    # +100% in 20 days, never a jump
+        "LATE": (100.0, IN if i >= 27 else OUT),
+        "BACK": (40.0, OUT if 10 <= i < 12 else IN),                     # leaves on day 10, back on day 12
+        "OTHER": (20.0, OUT),
+    }
+    if i >= 15:
+        rows.pop("UP")                                                 # gone: no 20-day return... until it is back
+    if i >= 20:
+        rows["UP"] = (120.0, IN)
+    return rows
 
-        snap = _make_snapshot(d, tickers, price_map)
-        snap.to_parquet(store.snap_dir / f"{d.isoformat()}.parquet")
 
-    filters = {"pe": "Under 15"}
-    res = track.track_screen(filters=filters, screen_name="TestScreen", store=store)
+def test_entries_returns_splits_and_pending(tmp_path):
+    store = Store(tmp_path)
+    for i in range(30):
+        write_day(store, i, scenario(i))
+    res = track.track_screen(SCREEN, "test", store)
+    t = res["table"].set_index(["ticker", "day"])
 
-    assert res["screen_name"] == "TestScreen"
-    entries = res["entries"]
+    assert set(t.index) == {("UP", day(3)), ("SPLIT", day(3)), ("DOUBLE", day(3)), ("LATE", day(27)),
+                            ("BACK", day(12)), ("UP", day(20))}      # never day 0, never ALWAYS
+    assert t.at[("UP", day(3)), "ret_5"] == pytest.approx(10.0)
+    assert t.at[("UP", day(3)), "ret_20"] == pytest.approx(20.0)
+    assert t.at[("SPLIT", day(3)), "ret_5"] == pytest.approx(0.0)       # the split is not a loss
+    assert t.at[("DOUBLE", day(3)), "ret_20"] == pytest.approx(100.0)   # a gradual double is not a split
+    assert t.at[("LATE", day(27)), "pending_5"] and pd.isna(t.at[("LATE", day(27)), "ret_5"])
+    assert t.at[("UP", day(3)), "pending_60"]                           # day 63 does not exist yet
+    assert res["splits_undone"] == 1
 
-    # Entries detected:
-    # D0: T001, T002
-    # D10: SPLT
-    # D25: T025
-    d0_entries = [e for e in entries if e["entry_date"] == dates[0].isoformat()]
-    assert set(e["ticker"] for e in d0_entries) == {"T001", "T002"}
-
-    t001 = next(e for e in entries if e["ticker"] == "T001" and e["entry_date"] == dates[0].isoformat())
-    t002 = next(e for e in entries if e["ticker"] == "T002" and e["entry_date"] == dates[0].isoformat())
-
-    # 5-day and 20-day returns exact:
-    assert t001["returns"]["5"] == 10.0   # +10%
-    assert t001["returns"]["20"] == 20.0  # +20%
-    assert t002["returns"]["5"] == -10.0  # -10%
-    assert t002["returns"]["20"] == 20.0  # +20%
-
-    # Split handling: SPLT enters on D10 at 100, on D15 price drops to 50 due to 2:1 split.
-    # Adjusted exit price = 50 * 2 = 100 => 0.0% return (not -50%)
-    splt = next(e for e in entries if e["ticker"] == "SPLT")
-    assert splt["returns"]["5"] == 0.0
-
-    # "not yet" at the end: T025 enters on D25 (index 25). 25 + 5 = 30 >= 30 days -> "not yet"
-    t025 = next(e for e in entries if e["ticker"] == "T025")
-    assert t025["returns"]["5"] == track.NOT_YET
-    assert t025["returns"]["20"] == track.NOT_YET
-    assert t025["returns"]["60"] == track.NOT_YET
-
-    # Summary checks:
     h5 = res["horizons"][5]
-    assert h5["entries"] == 3  # T001, T002, SPLT
-    assert h5["median_return"] == 0.0  # median(10, -10, 0) == 0.0
-    assert h5["pct_positive"] == pytest.approx(33.3, abs=0.1)  # 1 out of 3 positive (T001)
+    assert h5["entries"] == 5 and h5["pending"] == 1                    # LATE is pending
+    assert res["sessions"] == 30 and not res["few_sessions"]
+    assert res["horizons"][60]["entries"] == 0 and res["horizons"][60]["median"] is None
 
 
-def test_track_incremental_update(tmp_path, mock_no_network):
+def test_a_ticker_gone_at_the_exit_day_has_no_return(tmp_path):
     store = Store(tmp_path)
-    store.snap_dir.mkdir(parents=True, exist_ok=True)
-
-    base_date = dt.date(2026, 1, 1)
-    dates = [base_date + dt.timedelta(days=i) for i in range(25)]
-
-    for d in dates:
-        snap = _make_snapshot(d, ["T001"], {"T001": 100.0})
-        snap.to_parquet(store.snap_dir / f"{d.isoformat()}.parquet")
-
-    filters = {"pe": "Under 15"}
-
-    # Initial run with 25 days
-    res1 = track.track_screen(filters=filters, screen_name="IncrementalTest", store=store)
-    c_path = track._cache_path("IncrementalTest", filters, root_dir=store.root / "track")
-    assert c_path.exists()
-
-    with open(c_path, "r", encoding="utf-8") as f:
-        cache1 = json.load(f)
-    assert len(cache1["daily_results"]) == 25
-
-    # Add 26th day
-    d25 = base_date + dt.timedelta(days=25)
-    snap25 = _make_snapshot(d25, ["T001"], {"T001": 150.0})
-    snap25.to_parquet(store.snap_dir / f"{d25.isoformat()}.parquet")
-
-    processed_snapshots = []
-    orig_load = store.load_snapshot
-
-    def load_snapshot_logging(d):
-        processed_snapshots.append(d)
-        return orig_load(d)
-
-    with patch.object(store, "load_snapshot", side_effect=load_snapshot_logging):
-        res2 = track.track_screen(filters=filters, screen_name="IncrementalTest", store=store)
-
-    # Verify only the new snapshot was loaded during incremental processing
-    assert d25 in processed_snapshots
-    assert len(processed_snapshots) <= 2  # d25 for screening + d25 on demand for snapshot exit price lookup
-
-    with open(c_path, "r", encoding="utf-8") as f:
-        cache2 = json.load(f)
-    assert len(cache2["daily_results"]) == 26
+    for i in range(12):
+        rows = {"A": (10.0, IN if i >= 1 else OUT), "B": (10.0, IN if i >= 1 else OUT)}
+        if i >= 4:
+            rows.pop("B")
+        write_day(store, i, rows)
+    t = track.track_screen(SCREEN, "gone", store)["table"].set_index("ticker")
+    assert t.at["A", "ret_5"] == pytest.approx(0.0)
+    assert pd.isna(t.at["B", "ret_5"]) and not t.at["B", "pending_5"]
 
 
-def test_track_cache_invalidation_on_filter_change(tmp_path, mock_no_network):
+def test_only_new_days_are_computed(tmp_path, monkeypatch):
     store = Store(tmp_path)
-    store.snap_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(25):
+        write_day(store, i, scenario(i))
+    track.track_screen(SCREEN, "inc", store)
 
-    d0 = dt.date(2026, 1, 1)
-    snap = _make_snapshot(d0, ["T001"], {"T001": 100.0})
-    snap.to_parquet(store.snap_dir / f"{d0.isoformat()}.parquet")
+    derived, loads = [], []
+    real_derive, real_load = track.add_derived, store.load_snapshot
+    monkeypatch.setattr(track, "add_derived", lambda raw, today: derived.append(today) or real_derive(raw, today))
+    monkeypatch.setattr(store, "load_snapshot", lambda d, columns=None: loads.append(d) or real_load(d, columns))
+    track.track_screen(SCREEN, "inc", store)
+    assert derived == [] and loads == []                               # nothing new: all from the cache
 
-    filters1 = {"pe": "Under 15"}
-    filters2 = {"pe": "Under 10"}
-
-    res1 = track.track_screen(filters=filters1, screen_name="CacheTest", store=store)
-    path1 = track._cache_path("CacheTest", filters1, root_dir=store.root / "track")
-    assert path1.exists()
-
-    # Change filters -> cache path for new filters differs or invalidates
-    res2 = track.track_screen(filters=filters2, screen_name="CacheTest", store=store)
-    path2 = track._cache_path("CacheTest", filters2, root_dir=store.root / "track")
-    assert path2.exists()
-    assert path1 != path2
+    write_day(store, 25, scenario(25))
+    res = track.track_screen(SCREEN, "inc", store)
+    assert derived == [day(25)] and set(loads) == {day(25)}
+    assert res["sessions"] == 26
 
 
-def test_track_all_screens(tmp_path, mock_no_network):
+def test_a_rewritten_snapshot_is_redone(tmp_path):
     store = Store(tmp_path)
-    store.snap_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(3):
+        write_day(store, i, {"A": (10.0, OUT), "B": (10.0, IN)})
+    assert track.track_screen(SCREEN, "rw", store)["entries"] == 0
+    write_day(store, 2, {"A": (10.0, IN), "B": (10.0, IN)})            # the day's later fetch
+    path = store.snapshot_path(day(2))
+    st = path.stat()
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    t = track.track_screen(SCREEN, "rw", store)["table"]
+    assert list(t["ticker"]) == ["A"]
 
-    d0 = dt.date(2026, 1, 1)
-    snap = _make_snapshot(d0, ["T001"], {"T001": 100.0})
-    snap.to_parquet(store.snap_dir / f"{d0.isoformat()}.parquet")
 
-    all_res = track.track_all_screens(store=store)
-    assert isinstance(all_res, dict)
-    assert "Value — cheap & profitable" in all_res
-    assert "disclaimer" in all_res["Value — cheap & profitable"]
+def test_changed_filters_do_not_use_the_old_cache(tmp_path):
+    store = Store(tmp_path)
+    for i in range(8):
+        write_day(store, i, scenario(i))
+    assert track.track_screen(SCREEN, "same name", store)["entries"] > 0
+    assert track.track_screen({"pe": "Under 10"}, "same name", store)["entries"] == 0
+
+
+def test_spy_is_the_benchmark_when_known(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    for i in range(10):
+        write_day(store, i, {"A": (100.0 * 1.02 ** i, IN if i >= 1 else OUT), "Z": (10.0, OUT)})
+    spy = pd.DataFrame({"close": [100.0 * 1.01 ** i for i in range(-3, 10)]},
+                       index=pd.DatetimeIndex([pd.Timestamp(day(i)) for i in range(-3, 10)]))
+    monkeypatch.setattr(track.prices, "history", lambda t: spy if t == "SPY" else pd.DataFrame())
+    h5 = track.track_screen(SCREEN, "spy", store)["horizons"][5]
+    assert h5["benchmark"] == "SPY"
+    assert h5["excess"] == pytest.approx((1.02 ** 5 - 1.01 ** 5) * 100, abs=0.01)
+
+
+def test_universe_median_without_benchmark_prices(tmp_path, offline):
+    store = Store(tmp_path)
+    for i in range(10):
+        write_day(store, i, {"A": (100.0 * 1.02 ** i, IN if i >= 1 else OUT), "Z": (10.0, OUT)})
+    h5 = track.track_screen(SCREEN, "offline", store)["horizons"][5]
+    assert h5["benchmark"] == track.UNIVERSE
+    assert h5["excess"] == pytest.approx(((1.02 ** 5 - 1) * 100) / 2, abs=0.01)    # median of A and Z (0%)
+    track.track_screen(SCREEN, "offline", store)
+    assert offline == [list(track.BENCHMARKS)]                         # at most one update a day
+
+
+def test_all_screens_includes_saved_screens(tmp_path, monkeypatch):
+    monkeypatch.setattr(P, "PRESETS_PATH", tmp_path / "presets.json")
+    P.save_user("mine", P.Preset(filters=SCREEN))
+    store = Store(tmp_path)
+    for i in range(3):
+        write_day(store, i, scenario(i))
+    res = track.track_all_screens(store)
+    assert set(P.BUILTIN) | {"★ mine"} == set(res)
+    assert res["★ mine"]["sessions"] == 3 and res["★ mine"]["few_sessions"]
+
+
+def test_no_snapshots(tmp_path):
+    res = track.track_screen(SCREEN, "empty", Store(tmp_path))
+    assert res["entries"] == 0 and res["sessions"] == 0 and res["horizons"][5]["median"] is None
+
+
+def test_a_damaged_cache_is_rebuilt(tmp_path):
+    store = Store(tmp_path)
+    for i in range(8):
+        write_day(store, i, scenario(i))
+    first = track.track_screen(SCREEN, "dmg", store)["entries"]
+    for f in (tmp_path / "track").iterdir():
+        f.write_text("{not json" if f.suffix == ".json" else "garbage", encoding="utf-8")
+    assert track.track_screen(SCREEN, "dmg", store)["entries"] == first
