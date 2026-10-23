@@ -194,7 +194,7 @@ FILTERS_HE: dict[str, str] = {
     "exchange": "בורסה", "sector": "סקטור", "industry": "תעשייה", "country": "מדינה", "index": "מדד",
     "market_cap": "שווי שוק", "div_yield": "תשואת דיבידנד", "price": "מחיר", "avg_volume": "מחזור ממוצע",
     "rel_volume": "מחזור יחסי", "volume": "מחזור היום", "dollar_volume": "מחזור בדולרים",
-    "float_shares": "מניות צפות (Float)", "earnings": "תאריך דוח", "recom": "המלצת אנליסטים",
+    "float_shares": "מניות צפות (Float)", "shares_out": "מניות מונפקות", "earnings": "תאריך דוח", "recom": "המלצת אנליסטים",
     "target_upside": "מחיר יעד",
     "pe": "מכפיל רווח (P/E)", "fwd_pe": "מכפיל רווח עתידי (Fwd P/E)", "peg": "מכפיל רווח לצמיחה (PEG)",
     "ps": "מכפיל מכירות (P/S)", "pb": "מכפיל הון (P/B)", "pfcf": "מחיר לתזרים חופשי (P/FCF)",
