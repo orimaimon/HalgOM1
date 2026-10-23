@@ -177,6 +177,7 @@ _vol = N("volume", "K")
 _relv = N("rel_volume")
 _dv = N("dollar_volume", "$B")
 _float = N("float_shares", "K")
+_shares = N("shares_out", "K")
 _earn = N("days_to_earnings")
 _recom = N("recom")
 _tgt = N("target_upside", "%")
@@ -236,6 +237,8 @@ FILTERS: list[Filter] = [
         _dv.over(1e6, 5e6, 10e6, 20e6, 50e6, 100e6, 500e6) + _dv.under(1e6, 5e6))),
     Filter("float_shares", "Float", "Descriptive", "float_shares", tuple(
         _float.under(1e6, 5e6, 10e6, 20e6, 50e6, 100e6) + _float.over(1e6, 10e6, 50e6, 100e6, 500e6, 1e9))),
+    Filter("shares_out", "Shares Outstanding", "Descriptive", "shares_out", tuple(
+        _shares.under(10e6, 50e6, 100e6, 500e6) + _shares.over(10e6, 50e6, 100e6, 500e6) + _shares.opt("Over 1B", lambda s: s > 1e9) + _shares.opt("Over 5B", lambda s: s > 5e9))),
     Filter("earnings", "Earnings Date", "Descriptive", "days_to_earnings", tuple(
         _earn.opt("Today", lambda s: s == 0) + _earn.opt("Tomorrow", lambda s: s == 1)
         + _earn.opt("Next 7 days", lambda s: s.between(0, 7))
