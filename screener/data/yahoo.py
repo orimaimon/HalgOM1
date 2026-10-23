@@ -60,7 +60,8 @@ MAPPING: dict[str, str] = {
 
     # Calendar & Dividends
     "earningsTimestamp": "earnings_date",    # Timestamp (epoch seconds -> datetime64[ns])
-    "dividendYield": "div_yield",            # Percent (%) e.g. 2.31 == 2.31% (if fraction, x100)
+    "dividendYield": "div_yield",            # Percent (%): MSFT 0.75 == 0.75% (checked live 2026-10-23;
+                                             # trailingAnnualDividendYield is the fraction 0.0068, not used)
 }
 
 EXCHANGE_MAP = {
@@ -125,13 +126,6 @@ def clean_quotes(quotes: list[dict[str, Any]]) -> pd.DataFrame:
             continue
         if raw_key in df.columns:
             df[canon_key] = df[raw_key]
-
-    # Unit check & fix for div_yield:
-    # yfinance quotes sometimes provide dividendYield as percentage (e.g. 2.31) or trailingAnnualDividendYield as fraction (0.0231).
-    if "div_yield" in df.columns:
-        df["div_yield"] = pd.to_numeric(df["div_yield"], errors="coerce")
-        mask = df["div_yield"].notna() & (df["div_yield"] > 0) & (df["div_yield"] <= 1.0)
-        df.loc[mask, "div_yield"] = df.loc[mask, "div_yield"] * 100.0
 
     # earnings_date conversion: epoch seconds -> Eastern-normalized datetime64[ns]
     if "earnings_date" in df.columns:

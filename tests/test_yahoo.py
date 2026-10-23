@@ -116,8 +116,8 @@ def test_yahoo_mapping_and_units():
     raw_quotes = [
         # BRK-B ticker conversion, NMS -> NASDAQ exchange, percent yield (2.5)
         make_fake_quote(symbol="BRK-B", long_name="Berkshire Hathaway Inc.", exchange="NMS", div_yield=2.5),
-        # NYQ -> NYSE, fraction yield (0.015 -> 1.5%)
-        make_fake_quote(symbol="JNJ", long_name="Johnson & Johnson", exchange="NYQ", div_yield=0.015),
+        # NYQ -> NYSE, a yield under 1% stays as is (0.75 == 0.75%, like MSFT live)
+        make_fake_quote(symbol="JNJ", long_name="Johnson & Johnson", exchange="NYQ", div_yield=0.75),
         # ASE -> AMEX
         make_fake_quote(symbol="GLD", long_name="SPDR Gold Trust", exchange="ASE", div_yield=0.0),
     ]
@@ -135,10 +135,10 @@ def test_yahoo_mapping_and_units():
     assert exchanges["JNJ"] == "NYSE"
     assert exchanges["GLD"] == "AMEX"
 
-    # Dividend yields (both end up as percent numbers: 2.5 and 1.5)
+    # Dividend yields: Yahoo already gives percent numbers, never multiplied
     yields = dict(zip(df["ticker"], df["div_yield"]))
     assert yields["BRK.B"] == pytest.approx(2.5)
-    assert yields["JNJ"] == pytest.approx(1.5)
+    assert yields["JNJ"] == pytest.approx(0.75)
     assert yields["GLD"] == pytest.approx(0.0)
 
     # earnings_date type
