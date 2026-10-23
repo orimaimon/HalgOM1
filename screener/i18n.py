@@ -129,6 +129,19 @@ UI: dict[str, str] = {
 "Exported": "יוצא בתאריך", "(custom)": "(מותאם אישית)",
     "(none)": "(אין)", "Source: TradingView scanner (delayed ~15 min). Not investment advice.":
         "מקור: סורק TradingView (בעיכוב של כ-15 דקות). אין לראות בזה ייעוץ השקעות.",
+    "Track record": "תעודת ביצועים",
+    "Calculating track record…": "מחשב תעודת ביצועים…",
+    "Past performance only. Does not guarantee future results and is not investment advice.":
+        "ביצועי עבר בלבד. אינם מבטיחים תוצאות בעתיד ואינם ייעוץ השקעות.",
+    "Still few data points — numbers will stabilize over time":
+        "מעט נתונים עדיין — המספרים יתייצבו עם הזמן",
+    "Over SPY": "מעל SPY",
+    "Over market median": "מעל חציון השוק",
+    "Pending": "ממתין",
+    "Entries": "כניסות",
+    "20-day median": "חציון 20 יום",
+    "% positive": "% חיוביות",
+    "20-day excess": "עודף 20 יום",
 }
 
 # ── table headers (short) ──────────────────────────────────────────────────
