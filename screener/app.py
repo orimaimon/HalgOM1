@@ -882,81 +882,100 @@ def _presets_state_key() -> str:
     return hashlib.sha256(json.dumps({k: v.filters for k, v in user_p.items()}, sort_keys=True).encode()).hexdigest()[:12]
 
 
-@st.cache_data(show_spinner="מחשב תעודת ביצועים…")
-def _get_track_all_screens(snapshot_key: tuple, presets_key: str, lang: str) -> dict[str, dict]:
+# Keyed by the snapshot files (day, mtime) and the saved screens; the result is language-independent.
+# A few entries only: each holds the entries table of every screen.
+@st.cache_data(show_spinner="מחשב תעודת ביצועים…", max_entries=3)
+def _get_track_all_screens(snapshot_key: tuple, presets_key: str) -> dict[str, dict]:
     return track.track_all_screens(_store())
 
 
 def get_all_track_records() -> dict[str, dict] | None:
-    store = _store()
-    snap_key = _snapshot_state_key(store)
-    presets_key = _presets_state_key()
     try:
-        return _get_track_all_screens(snap_key, presets_key, L())
+        store = _store()
+        return _get_track_all_screens(_snapshot_state_key(store), _presets_state_key())
     except Exception as e:
         log.exception("track_all_screens failed: %s", e)
         return None
 
 
+TRACK_ERROR_NOTE = "לא ניתן לחשב תעודת ביצועים כרגע."
+
+
 def track_record_expander(preset_key: str) -> None:
     with st.expander(t("Track record"), expanded=False):
-        all_tracks = get_all_track_records()
-        if all_tracks is None or preset_key not in all_tracks:
-            hebrew_note("לא ניתן לחשב תעודת ביצועים כרגע.")
-            return
+        try:
+            _track_record_body(preset_key)
+        except Exception as e:          # the Screener page must never break because of this panel
+            log.exception("track record panel failed: %s", e)
+            hebrew_note(TRACK_ERROR_NOTE)
 
-        summary = all_tracks[preset_key]
-        sessions = summary.get("sessions", 0)
-        few_sessions = summary.get("few_sessions", False)
-        horizons = summary.get("horizons", {})
 
-        if few_sessions:
-            st.warning(f"⚠️ {t('Still few data points — numbers will stabilize over time')} ({sessions} ימי מסחר)")
+def _track_record_body(preset_key: str) -> None:
+    all_tracks = get_all_track_records()
+    if all_tracks is None or preset_key not in all_tracks:
+        hebrew_note(TRACK_ERROR_NOTE)
+        return
 
+    summary = all_tracks[preset_key]
+    sessions = summary.get("sessions", 0)
+    few_sessions = summary.get("few_sessions", False)
+    horizons = summary.get("horizons", {})
+
+    if few_sessions:
+        st.warning(f"⚠️ {t('Still few data points — numbers will stabilize over time')} ({sessions} ימי מסחר)")
+
+    for h in track.HORIZONS:
+        hz = horizons.get(h, {})
+        h_entries = hz.get("entries", 0)
+        pending = hz.get("pending", 0)
+        median = hz.get("median")
+        pct_pos = hz.get("pct_positive")
+        excess = hz.get("excess")
+        bench = hz.get("benchmark")
+
+        bench_text = t("Over market median") if bench == track.UNIVERSE else t("Over SPY")
+        med_str = f"{median:+.2f}%" if median is not None else "—"
+        pos_str = f"{pct_pos:.1f}%" if pct_pos is not None else "—"
+        exc_str = f"{excess:+.2f}% {bench_text}" if excess is not None else "—"
+        pending_str = f" (ממתין: {pending})" if pending > 0 else ""
+
+        st.markdown(f"**אחרי {h} ימי מסחר:** {h_entries} כניסות{pending_str} · "
+                    f"חציון: **{med_str}** · "
+                    f"% חיוביות: **{pos_str}** · "
+                    f"עודף: **{exc_str}**")
+
+    st.caption(t("Past performance only. Does not guarantee future results and is not investment advice."))
+
+    ent_table = summary.get("table")
+    if isinstance(ent_table, pd.DataFrame) and not ent_table.empty:
+        recent = ent_table.sort_values("day", ascending=False).head(20).copy()
+        shown_cols = ["day", "ticker"]
+        col_renames = {"day": t("Date"), "ticker": t("Ticker")}
         for h in track.HORIZONS:
-            hz = horizons.get(h, {})
-            h_entries = hz.get("entries", 0)
-            pending = hz.get("pending", 0)
-            median = hz.get("median")
-            pct_pos = hz.get("pct_positive")
-            excess = hz.get("excess")
-            bench = hz.get("benchmark")
-
-            bench_text = t("Over market median") if bench == track.UNIVERSE else t("Over SPY")
-            med_str = f"{median:+.2f}%" if median is not None else "—"
-            pos_str = f"{pct_pos:.1f}%" if pct_pos is not None else "—"
-            exc_str = f"{excess:+.2f}% {bench_text}" if excess is not None else "—"
-            pending_str = f" (ממתין: {pending})" if pending > 0 else ""
-
-            st.markdown(f"**אחרי {h} ימי מסחר:** {h_entries} כניסות{pending_str} · "
-                        f"חציון: **{med_str}** · "
-                        f"% חיוביות: **{pos_str}** · "
-                        f"עודף: **{exc_str}**")
-
-        st.caption(t("Past performance only. Does not guarantee future results and is not investment advice."))
-
-        ent_table = summary.get("table")
-        if isinstance(ent_table, pd.DataFrame) and not ent_table.empty:
-            recent = ent_table.sort_values("day", ascending=False).head(20).copy()
-            shown_cols = ["day", "ticker"]
-            col_renames = {"day": t("Date"), "ticker": t("Ticker")}
-            for h in track.HORIZONS:
-                ret_col = f"ret_{h}"
-                col_renames[ret_col] = f"{h} ימים"
-                shown_cols.append(ret_col)
-                if ret_col in recent.columns:
-                    recent[ret_col] = recent.apply(
-                        lambda r, h=h: t("Pending") if r.get(f"pending_{h}") else ("—" if pd.isna(r.get(f"ret_{h}")) or r.get(f"ret_{h}") is None else f"{r.get(f'ret_{h}'):+.2f}%"),
-                        axis=1
-                    )
-            recent_disp = recent[shown_cols].rename(columns=col_renames)
-            st.dataframe(recent_disp, hide_index=True, use_container_width=True)
+            ret_col = f"ret_{h}"
+            col_renames[ret_col] = f"{h} ימים"
+            shown_cols.append(ret_col)
+            if ret_col in recent.columns:
+                recent[ret_col] = recent.apply(
+                    lambda r, h=h: t("Pending") if r.get(f"pending_{h}") else ("—" if pd.isna(r.get(f"ret_{h}")) or r.get(f"ret_{h}") is None else f"{r.get(f'ret_{h}'):+.2f}%"),
+                    axis=1
+                )
+        recent_disp = recent[shown_cols].rename(columns=col_renames)
+        st.dataframe(recent_disp, hide_index=True, use_container_width=True)
 
 
 def groups_track_record() -> None:
+    try:
+        _groups_track_record_body()
+    except Exception as e:              # the Groups page must never break because of this tab
+        log.exception("track record comparison failed: %s", e)
+        hebrew_note(TRACK_ERROR_NOTE)
+
+
+def _groups_track_record_body() -> None:
     all_tracks = get_all_track_records()
     if all_tracks is None:
-        hebrew_note("לא ניתן לחשב תעודת ביצועים כרגע.")
+        hebrew_note(TRACK_ERROR_NOTE)
         return
 
     rows = []

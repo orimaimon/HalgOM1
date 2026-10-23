@@ -576,3 +576,16 @@ def test_track_record_exception_handling(app, monkeypatch):
     assert not app.exception, app.exception
 
     assert any("לא ניתן לחשב תעודת ביצועים כרגע" in h for h in notes(app))
+
+
+def test_track_record_display_error_does_not_break_the_page(monkeypatch):
+    """A summary the panel cannot format (None counts) shows the note, not an exception."""
+    import screener.app as app_mod
+    bad = {"sessions": None, "few_sessions": False, "horizons": {5: {"entries": None, "pending": None}}, "table": None}
+    notes = []
+    monkeypatch.setattr(app_mod, "get_all_track_records", lambda: {"X": bad})
+    monkeypatch.setattr(app_mod, "hebrew_note", lambda text: notes.append(text))
+    monkeypatch.setattr(app_mod.st, "expander", lambda *a, **k: __import__("contextlib").nullcontext())
+    monkeypatch.setattr(app_mod.st, "markdown", lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")))
+    app_mod.track_record_expander("X")
+    assert notes == [app_mod.TRACK_ERROR_NOTE]
