@@ -118,68 +118,86 @@ def adjusted_trades(trades: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def dividends_received(plist: PList) -> pd.DataFrame:
-    """Dividends received for a portfolio: date, ticker, per_share, shares, amount.
-
-    Calculated from prices.history(ticker)'s dividends column on days the adjusted position > 0.
-    """
-    cols = ["date", "ticker", "per_share", "shares", "amount"]
+def _trades(plist: PList) -> pd.DataFrame:
+    """The portfolio's dated trades, split-adjusted, one row each: day (Timestamp), ticker, qty (signed:
+    + buy, - sell) and cash (+ in for a buy incl. fees, - out for a sell net of fees)."""
+    cols = ["day", "ticker", "qty", "cash"]
     if plist.kind == WATCHLIST:
         return pd.DataFrame(columns=cols)
-
     trades = plist.frame()
     if trades.empty:
         return pd.DataFrame(columns=cols)
+    tr = sort_trades(adjusted_trades(trades))
+    day = pd.to_datetime(tr["date"].map(_to_date), errors="coerce")
+    qty = pd.to_numeric(tr["quantity"], errors="coerce").fillna(0.0)
+    price = pd.to_numeric(tr["price"], errors="coerce").fillna(0.0)
+    fees = pd.to_numeric(tr["fees"], errors="coerce").fillna(0.0) if "fees" in tr else 0.0
+    buy = tr["side"] == BUY
+    out = pd.DataFrame({
+        "day": day,
+        "ticker": tr["ticker"].astype(str),
+        "qty": qty.where(buy, -qty),
+        "cash": (price * qty + fees).where(buy, -(price * qty - fees)),
+    })
+    return out[out["day"].notna()].reset_index(drop=True)
 
-    adj = adjusted_trades(trades)
-    sorted_df = sort_trades(adj)
 
+def _norm(hist: pd.DataFrame) -> pd.DataFrame:
+    """History with a naive, day-normalized, unique DatetimeIndex."""
+    if hist.empty:
+        return hist
+    h = hist.copy()
+    idx = pd.to_datetime(h.index)
+    if idx.tz is not None:
+        idx = idx.tz_localize(None)
+    h.index = idx.normalize()
+    return h[~h.index.duplicated(keep="last")].sort_index()
+
+
+def _as_of(totals: pd.Series, days: pd.DatetimeIndex) -> pd.Series:
+    """Amounts keyed by day -> their running total as of each of `days`. An amount on a non-trading day
+    (a weekend trade) counts from the next day in `days`."""
+    if totals.empty:
+        return pd.Series(0.0, index=days)
+    run = totals.groupby(level=0).sum().sort_index().cumsum()
+    return run.reindex(run.index.union(days)).ffill().reindex(days).fillna(0.0)
+
+
+def _column_on(hist: pd.DataFrame, col: str, days: pd.DatetimeIndex, limit: int | None = None) -> pd.Series:
+    """`col` on each of `days`, carrying the last value forward (at most `limit` days when given)."""
+    if hist.empty or col not in hist.columns:
+        return pd.Series(np.nan, index=days)
+    s = hist[col].dropna()
+    return s.reindex(s.index.union(days)).ffill(limit=limit).reindex(days)
+
+
+def dividends_received(plist: PList) -> pd.DataFrame:
+    """Dividends received for a portfolio: date, ticker, per_share, shares, amount.
+
+    From prices.history(ticker)'s dividends column (Yahoo dates a dividend by its ex-date): the shares held
+    at the end of the day before the ex-date get it, so a buy on the ex-date does not and a sale on the
+    ex-date still does. Yahoo's per-share dividends are split-adjusted, like the adjusted quantity.
+    """
+    cols = ["date", "ticker", "per_share", "shares", "amount"]
+    tr = _trades(plist)
     records = []
-    for ticker in sorted_df["ticker"].unique():
-        t_str = str(ticker)
-        hist = prices.history(t_str)
+    for ticker, t_tr in tr.groupby("ticker"):
+        hist = _norm(prices.history(ticker))
         if hist.empty or "dividends" not in hist.columns:
             continue
-
-        div_rows = hist[hist["dividends"] > 0]
-        if div_rows.empty:
+        divs = hist.loc[hist["dividends"] > 0, "dividends"]
+        if divs.empty:
             continue
-
-        t_trades = sorted_df[sorted_df["ticker"] == ticker].copy()
-        t_trades["parsed_date"] = t_trades["date"].map(_to_date)
-
-        for idx, row in div_rows.iterrows():
-            div_date = _to_date(idx)
-            if not div_date:
-                continue
-
-            # Position up to and including div_date
-            past_trades = t_trades[t_trades["parsed_date"] <= div_date]
-            pos = 0.0
-            for _, tr in past_trades.iterrows():
-                q = float(tr["quantity"]) if pd.notna(tr.get("quantity")) else 0.0
-                if tr.get("side") == BUY:
-                    pos += q
-                else:
-                    pos -= q
-
-            if pos > 1e-9:
-                per_share = float(row["dividends"])
-                shares = float(pos)
-                amount = per_share * shares
-                records.append({
-                    "date": div_date,
-                    "ticker": t_str,
-                    "per_share": per_share,
-                    "shares": shares,
-                    "amount": amount,
-                })
-
+        held = t_tr.groupby("day")["qty"].sum().sort_index().cumsum()
+        for ex_day, per_share in divs.items():
+            before = held[held.index < ex_day]
+            shares = float(before.iloc[-1]) if not before.empty else 0.0
+            if shares > 1e-9:
+                records.append({"date": ex_day.date(), "ticker": ticker, "per_share": float(per_share),
+                                "shares": shares, "amount": float(per_share) * shares})
     if not records:
         return pd.DataFrame(columns=cols)
-
-    out_df = pd.DataFrame(records, columns=cols)
-    return out_df.sort_values(["date", "ticker"]).reset_index(drop=True)
+    return pd.DataFrame(records, columns=cols).sort_values(["date", "ticker"]).reset_index(drop=True)
 
 
 def latest_prices(tickers: Iterable[str], universe_prices: pd.Series | None = None) -> pd.Series:
@@ -203,209 +221,81 @@ def latest_prices(tickers: Iterable[str], universe_prices: pd.Series | None = No
     return pd.Series(res, dtype=float)
 
 
-def _benchmark_adj_close(hist: pd.DataFrame, target_date: dt.date) -> float | None:
-    """Get benchmark's adj_close on target_date, or closest date on or before it."""
-    if hist.empty or "adj_close" not in hist.columns:
-        return None
-    valid = hist["adj_close"].dropna()
-    if valid.empty:
-        return None
-
-    ts = pd.Timestamp(target_date)
-    past = valid[valid.index <= ts]
-    if not past.empty:
-        return float(past.iloc[-1])
-    return float(valid.iloc[0])
+CARRY_DAYS = 5      # a held ticker with no bar on a day keeps its last close for at most this many days
 
 
 def value_series(plist: PList, end: dt.date | None = None) -> pd.DataFrame:
-    """One row per trading day from the first trade to end.
+    """One row per trading day (index: date) from the first trade to `end` (default: the last day with prices).
 
-    A watchlist returns an empty frame.
-    Attributes:
-      df.attrs["missing"]: list of tickers with no price history.
+    value         holdings at the close: adjusted quantity x Yahoo's split-adjusted close
+    net_invested  cash in (buys incl. fees) minus cash out (sells net of fees), cumulative
+    pnl           value - net_invested
+    dividends     cumulative dividends received (value + dividends is the total)
+    spy, qqq      the same cash flows in the benchmark: each buy amount buys units at that day's adj_close,
+                  each sell amount sells units worth the same; valued by adj_close (dividends included)
+
+    A watchlist returns an empty frame. df.attrs["missing"]: held tickers with no price history (left out
+    of `value`). Vectorized: a few years of daily rows for dozens of tickers take well under a second.
     """
     empty_cols = ["value", "net_invested", "pnl", "dividends", "spy", "qqq"]
-    if plist.kind == WATCHLIST:
+
+    def empty(missing: list[str]) -> pd.DataFrame:
         res = pd.DataFrame(columns=empty_cols)
-        res.attrs["missing"] = []
+        res.attrs["missing"] = missing
         return res
 
-    trades = plist.frame()
-    if trades.empty:
-        res = pd.DataFrame(columns=empty_cols)
-        res.attrs["missing"] = []
-        return res
-
-    adj_tr = adjusted_trades(trades)
-    sorted_tr = sort_trades(adj_tr)
-    sorted_tr["parsed_date"] = sorted_tr["date"].map(_to_date)
-    valid_tr = sorted_tr[sorted_tr["parsed_date"].notna()].copy()
-
-    if valid_tr.empty:
-        res = pd.DataFrame(columns=empty_cols)
-        res.attrs["missing"] = []
-        return res
-
-    first_trade_date = valid_tr["parsed_date"].min()
-    held_tickers = list(valid_tr["ticker"].unique())
+    tr = _trades(plist)
+    if tr.empty:
+        return empty([])
 
     histories: dict[str, pd.DataFrame] = {}
-    missing_tickers: list[str] = []
-    for t in held_tickers:
-        h = prices.history(str(t))
+    missing: list[str] = []
+    for t in tr["ticker"].unique():
+        h = _norm(prices.history(t))
         if h.empty:
-            missing_tickers.append(str(t))
+            missing.append(t)
         else:
-            histories[str(t)] = h
+            histories[t] = h
+    bench = {"spy": _norm(prices.history("SPY")), "qqq": _norm(prices.history("QQQ"))}
 
-    spy_hist = prices.history("SPY")
-    qqq_hist = prices.history("QQQ")
-
-    # Collect trading dates
-    all_trading_dates: set[dt.date] = set()
-    for h in list(histories.values()) + [spy_hist, qqq_hist]:
+    all_days = pd.DatetimeIndex([])
+    for h in [*histories.values(), *bench.values()]:
         if not h.empty:
-            for idx in h.index:
-                d = _to_date(idx)
-                if d:
-                    all_trading_dates.add(d)
+            all_days = all_days.union(h.index)
+    last = pd.Timestamp(end) if end is not None else (all_days.max() if len(all_days) else None)
+    if last is None:
+        return empty(missing)
+    days = all_days[(all_days >= tr["day"].min()) & (all_days <= last)]
+    if days.empty:
+        return empty(missing)
 
-    filtered_dates = [d for d in all_trading_dates if d >= first_trade_date]
-    if end is not None:
-        filtered_dates = [d for d in filtered_dates if d <= end]
-    else:
-        if all_trading_dates:
-            max_hist_date = max(all_trading_dates)
-            filtered_dates = [d for d in filtered_dates if d <= max_hist_date]
-
-    trading_days = sorted(filtered_dates)
-    if not trading_days:
-        res = pd.DataFrame(columns=empty_cols)
-        res.attrs["missing"] = missing_tickers
-        return res
-
-    # Build daily price lookup for each held ticker (with at most 5-day carry forward)
-    price_on_day: dict[str, dict[dt.date, float]] = {}
+    out = pd.DataFrame(index=days)
+    out["net_invested"] = _as_of(tr.set_index("day")["cash"], days)
+    value = pd.Series(0.0, index=days)
     for t, h in histories.items():
-        price_on_day[t] = {}
-        date_to_close = {
-            _to_date(idx): float(row["close"])
-            for idx, row in h.iterrows()
-            if pd.notna(row.get("close"))
-        }
-        last_p = None
-        missing_count = 0
-        for d in trading_days:
-            if d in date_to_close:
-                last_p = date_to_close[d]
-                missing_count = 0
-                price_on_day[t][d] = last_p
-            else:
-                missing_count += 1
-                if last_p is not None and missing_count <= 5:
-                    price_on_day[t][d] = last_p
-                else:
-                    price_on_day[t][d] = np.nan
+        held = _as_of(tr.loc[tr["ticker"] == t].set_index("day")["qty"], days)
+        close = _column_on(h, "close", days, limit=CARRY_DAYS)
+        value += (held.where(held > 1e-9, 0.0) * close).fillna(0.0)
+    out["value"] = value
+    out["pnl"] = out["value"] - out["net_invested"]
 
-    # Benchmark adj_close lookup for trading_days
-    bench_price_on_day: dict[str, dict[dt.date, float]] = {"SPY": {}, "QQQ": {}}
-    for bench_symbol, b_hist in (("SPY", spy_hist), ("QQQ", qqq_hist)):
-        date_to_adj = {
-            _to_date(idx): float(row["adj_close"])
-            for idx, row in b_hist.iterrows()
-            if pd.notna(row.get("adj_close"))
-        }
-        last_p = None
-        for d in trading_days:
-            if d in date_to_adj:
-                last_p = date_to_adj[d]
-                bench_price_on_day[bench_symbol][d] = last_p
-            else:
-                bench_price_on_day[bench_symbol][d] = last_p if last_p is not None else np.nan
+    div = dividends_received(plist)
+    div_by_day = (div.assign(day=pd.to_datetime(div["date"])).set_index("day")["amount"]
+                  if not div.empty else pd.Series(dtype=float))
+    out["dividends"] = _as_of(div_by_day, days)
 
-    # Benchmark cash flows & units
-    bench_units: dict[str, list[tuple[dt.date, float]]] = {"SPY": [], "QQQ": []}
-    for bench_symbol, b_hist in (("SPY", spy_hist), ("QQQ", qqq_hist)):
-        for _, tr in valid_tr.iterrows():
-            tr_date = tr["parsed_date"]
-            price = float(tr["price"]) if pd.notna(tr.get("price")) else 0.0
-            qty = float(tr["quantity"]) if pd.notna(tr.get("quantity")) else 0.0
-            fees = float(tr["fees"]) if pd.notna(tr.get("fees")) else 0.0
+    for name, h in bench.items():
+        if h.empty or "adj_close" not in h.columns:
+            out[name] = np.nan
+            continue
+        adj = h["adj_close"].dropna()
+        # The benchmark price of each trade: that day's adj_close, or the last one before it
+        # (the first one when the trade is older than the benchmark's history).
+        at_trade = adj.reindex(adj.index.union(tr["day"])).ffill().bfill().reindex(tr["day"]).to_numpy()
+        units = pd.Series(np.where(at_trade > 0, tr["cash"].to_numpy() / at_trade, 0.0), index=tr["day"])
+        out[name] = _as_of(units, days) * _column_on(h, "adj_close", days)
 
-            if tr.get("side") == BUY:
-                cf = price * qty + fees
-            else:
-                cf = -(price * qty - fees)
-
-            b_price = _benchmark_adj_close(b_hist, tr_date)
-            if b_price and b_price > 0:
-                units = cf / b_price
-                bench_units[bench_symbol].append((tr_date, units))
-
-    # Calculate cumulative dividends
-    div_df = dividends_received(plist)
-
-    rows = []
-    for d in trading_days:
-        past_trades = valid_tr[valid_tr["parsed_date"] <= d]
-
-        # Net invested
-        cash_in = 0.0
-        cash_out = 0.0
-        for _, tr in past_trades.iterrows():
-            price = float(tr["price"]) if pd.notna(tr.get("price")) else 0.0
-            qty = float(tr["quantity"]) if pd.notna(tr.get("quantity")) else 0.0
-            fees = float(tr["fees"]) if pd.notna(tr.get("fees")) else 0.0
-            if tr.get("side") == BUY:
-                cash_in += price * qty + fees
-            else:
-                cash_out += price * qty - fees
-        net_invested = cash_in - cash_out
-
-        # Portfolio value
-        port_value = 0.0
-        for t, h in histories.items():
-            t_trades = past_trades[past_trades["ticker"] == t]
-            pos = 0.0
-            for _, tr in t_trades.iterrows():
-                q = float(tr["quantity"]) if pd.notna(tr.get("quantity")) else 0.0
-                if tr.get("side") == BUY:
-                    pos += q
-                else:
-                    pos -= q
-            if pos > 1e-9:
-                p = price_on_day[t].get(d)
-                if pd.notna(p):
-                    port_value += pos * p
-
-        pnl = port_value - net_invested
-
-        # Cumulative dividends
-        div_cum = 0.0
-        if not div_df.empty:
-            div_cum = float(div_df[div_df["date"] <= d]["amount"].sum())
-
-        # Benchmark values
-        bench_vals = {}
-        for bench_symbol in ("SPY", "QQQ"):
-            b_units = sum(u for t_d, u in bench_units[bench_symbol] if t_d <= d)
-            b_p = bench_price_on_day[bench_symbol].get(d)
-            if pd.notna(b_p) and b_p is not None:
-                bench_vals[bench_symbol] = b_units * b_p
-            else:
-                bench_vals[bench_symbol] = np.nan
-
-        rows.append({
-            "date": d,
-            "value": port_value,
-            "net_invested": net_invested,
-            "pnl": pnl,
-            "dividends": div_cum,
-            "spy": bench_vals["SPY"],
-            "qqq": bench_vals["QQQ"],
-        })
-
-    out_df = pd.DataFrame(rows).set_index("date")
-    out_df.attrs["missing"] = missing_tickers
-    return out_df
+    out = out[empty_cols]
+    out.index = pd.Index([d.date() for d in days], name="date")
+    out.attrs["missing"] = missing
+    return out

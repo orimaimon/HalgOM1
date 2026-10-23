@@ -259,3 +259,71 @@ def test_latest_prices(monkeypatch):
     assert lp["AAPL"] == 150.0
     assert lp["MY_ETF"] == 55.0
     assert pd.isna(lp["UNKNOWN"])
+
+
+def test_dividend_goes_to_shares_held_before_the_ex_date(monkeypatch):
+    # Buy on the ex-date: no dividend. Sell on the ex-date: the dividend is still received.
+    p = PList("P", PORTFOLIO, [
+        {"ticker": "DIV", "date": "2025-01-03", "price": 100.0, "quantity": 10, "side": "buy"},
+        {"ticker": "DIV", "date": "2025-01-06", "price": 100.0, "quantity": 10, "side": "sell"},
+    ])
+    monkeypatch.setattr(ph.prices, "split_factor", lambda t, d: 1.0)
+    hist = _make_history_df([
+        {"date": "2025-01-03", "close": 100.0, "adj_close": 100.0, "dividends": 1.0},
+        {"date": "2025-01-06", "close": 100.0, "adj_close": 100.0, "dividends": 0.5},
+    ])
+    monkeypatch.setattr(ph.prices, "history", lambda t: hist if t == "DIV" else pd.DataFrame(columns=ph.prices.COLUMNS))
+    divs = ph.dividends_received(p)
+    assert list(divs["date"]) == [dt.date(2025, 1, 6)]
+    assert divs.loc[0, "amount"] == 5.0
+    vs = ph.value_series(p)
+    assert vs.loc[dt.date(2025, 1, 6), "dividends"] == 5.0
+
+
+def test_carry_forward_at_most_five_days(monkeypatch):
+    p = PList("P", PORTFOLIO, [
+        {"ticker": "HELD", "date": "2025-01-01", "price": 10.0, "quantity": 10, "side": "buy"},
+    ])
+    monkeypatch.setattr(ph.prices, "split_factor", lambda t, d: 1.0)
+    days = pd.bdate_range("2025-01-01", periods=10)
+    hist_held = _make_history_df([{"date": days[0], "close": 10.0, "adj_close": 10.0},
+                                  {"date": days[9], "close": 20.0, "adj_close": 20.0}])
+    hist_spy = _make_history_df([{"date": d, "close": 100.0, "adj_close": 100.0} for d in days])
+    monkeypatch.setattr(ph.prices, "history",
+                        lambda t: {"HELD": hist_held, "SPY": hist_spy}.get(t, pd.DataFrame(columns=ph.prices.COLUMNS)))
+    vs = ph.value_series(p)
+    assert list(vs["value"]) == [100.0] * 6 + [0.0] * 3 + [200.0]
+
+
+def test_weekend_trade_counts_from_the_next_trading_day(monkeypatch):
+    p = PList("P", PORTFOLIO, [
+        {"ticker": "ABC", "date": "2025-01-03", "price": 10.0, "quantity": 10, "side": "buy"},
+        {"ticker": "ABC", "date": "2025-01-04", "price": 10.0, "quantity": 5, "side": "buy"},   # a Saturday
+    ])
+    monkeypatch.setattr(ph.prices, "split_factor", lambda t, d: 1.0)
+    hist = _make_history_df([{"date": "2025-01-03", "close": 10.0, "adj_close": 10.0},
+                             {"date": "2025-01-06", "close": 10.0, "adj_close": 10.0}])
+    monkeypatch.setattr(ph.prices, "history", lambda t: hist if t == "ABC" else pd.DataFrame(columns=ph.prices.COLUMNS))
+    vs = ph.value_series(p)
+    assert list(vs["net_invested"]) == [100.0, 150.0]
+    assert list(vs["value"]) == [100.0, 150.0]
+
+
+def test_value_series_is_fast(monkeypatch):
+    import time
+    days = pd.bdate_range("2021-01-01", "2025-12-31")
+    rng = np.random.default_rng(0)
+    tickers = [f"T{i}" for i in range(30)]
+    rows = []
+    for i in range(300):
+        rows.append({"ticker": tickers[i % 30], "date": days[i * 4].date().isoformat(), "price": 50.0,
+                     "quantity": 10, "side": "buy" if i % 5 else "sell", "fees": 1.0})
+    p = PList("P", PORTFOLIO, rows)
+    hist = _make_history_df([{"date": d, "close": c, "adj_close": c}
+                             for d, c in zip(days, 50 + rng.normal(0, 1, len(days)).cumsum())])
+    monkeypatch.setattr(ph.prices, "split_factor", lambda t, d: 1.0)
+    monkeypatch.setattr(ph.prices, "history", lambda t: hist)
+    t0 = time.perf_counter()
+    vs = ph.value_series(p)
+    assert len(vs) == len(days)
+    assert time.perf_counter() - t0 < 3.0
