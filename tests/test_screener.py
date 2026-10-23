@@ -1,4 +1,5 @@
 """Screener tests — run offline on synthetic data (no network)."""
+import ast
 import datetime as dt
 import io
 import json
@@ -911,6 +912,14 @@ def test_columns_views_presets_groups_have_hebrew():
         assert I.ui(name, I.HE) != name, name
     for name in P.BUILTIN:
         assert I.preset(name, I.HE) != name, name
+
+
+def test_every_app_text_has_hebrew():
+    """A t("...") text without a translation shows up in English in the (default) Hebrew interface."""
+    src = (Path(__file__).parent.parent / "screener" / "app.py").read_text(encoding="utf-8")
+    texts = {ast.literal_eval(m) for m in re.findall(r"""\bt\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')""", src)}
+    missing = sorted(s for s in texts if re.search("[A-Za-z]", s) and I.ui(s, I.HE) == s)
+    assert not missing, missing
 
 
 def test_english_mode_is_unchanged():

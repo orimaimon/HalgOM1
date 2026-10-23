@@ -42,6 +42,25 @@ UI: dict[str, str] = {
     "The list was deleted in another window": "הרשימה נמחקה בחלון אחר",
     "is a portfolio, not a watchlist": "הוא תיק, לא רשימת מעקב",
     "Trade added": "העסקה נוספה",
+    "A copy of every downloaded file is also saved in:": "עותק של כל קובץ שמורד נשמר גם בתיקייה:",
+    "Average cost includes fees. Splits and dividends after purchase are not yet calculated.":
+        "עלות ממוצעת כוללת עמלות. ספליטים ודיבידנדים אחרי הקנייה עוד לא מחושבים.",
+    "Closes the screener and the black window. Next time, open again from the desktop shortcut.":
+        "סוגר את הסקרינר ואת החלון השחור. בפעם הבאה פותחים שוב מהקיצור בשולחן העבודה.",
+    "Data: TradingView (delayed ~15 min). For research purposes only, not investment advice.":
+        "נתונים: TradingView (בעיכוב של כ-15 דקות). הכלי לצורכי מחקר בלבד ואינו ייעוץ השקעות.",
+    "Filters have been changed since the screen was selected.": "הפילטרים שונו מאז שנבחרה הסריקה.",
+    "Lists are saved on this computer only. Prices are from the screener (delayed ~15 min).":
+        "הרשימות נשמרות במחשב הזה בלבד. מחירים מהסקרינר (בעיכוב של כ-15 דקות).",
+    "There is already a list named": "כבר יש רשימה בשם",
+    "Saving with a file will replace it.": "שמירה עם קובץ תחליף אותה.",
+    "Showing list": "מוצגת הרשימה", "from Portfolios page": "מדף התיקים",
+    "The list is empty. Add tickers in the box below, or from the \"Add to watchlist\" button in the stock details in the screener.":
+        "הרשימה ריקה. מוסיפים סימולים בתיבה למטה, או מכפתור “הוספה לרשימת מעקב” בפרטי מניה בסורק.",
+    "There are currently no open positions in the portfolio.": "אין כרגע פוזיציות פתוחות בתיק.",
+    "Delete the list": "למחוק את",
+    "This cannot be undone. Consider exporting first.": "אי אפשר לבטל. כדאי לייצא קודם.",
+    "👆 Click a row in the table to open chart and stock details": "👆 לחץ על שורה בטבלה כדי לפתוח גרף ונתונים של המניה",
     "Cannot download data, and there is no saved data from the last time. Check your internet connection and try again.": "לא ניתן להוריד נתונים, ואין נתונים שמורים מהפעם הקודמת. בדוק את החיבור לאינטרנט ונסה שוב.",
 
     # pages, views, filter tabs
