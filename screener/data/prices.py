@@ -220,11 +220,13 @@ def ensure(tickers: list[str], start: dt.date) -> tuple[list[str], list[str]]:
             failed.extend(todo[n:])
             break
         except Exception as e:
-            if isinstance(e, PricesBlocked) or getattr(e, "status_code", None) in (403, 429):
+            # PricesBlocked (the rate limit yfinance hides), a 403/429, or YFRateLimitError raised directly
+            if isinstance(e, PricesBlocked) or guard._is_block(e):
                 log.warning("price history: %s blocked: %s", ticker, e)
                 failed.extend(todo[n:])
                 break
             log.warning("price history: %s not updated: %s", ticker, e)
             failed.append(ticker)
+        _write_state(state)            # after every ticker: a run cut off midway keeps what it did
     _write_state(state)
     return updated, failed

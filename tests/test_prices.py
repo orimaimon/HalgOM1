@@ -304,3 +304,19 @@ def test_real_guard_integration(tmp_path, monkeypatch):
         assert updated == []
         assert failed == ["T4"]
         assert mock_dl2.call_count == 0
+
+
+def test_rate_limit_raised_directly_also_stops(mock_data_dir, mock_yf_download):
+    class YFRateLimitError(Exception):
+        pass
+
+    calls = []
+
+    def blocked(*args, **kwargs):
+        calls.append(args[0])
+        raise YFRateLimitError("Too Many Requests. Rate limited. Try after a while.")
+
+    mock_yf_download.side_effect = blocked
+    updated, failed = prices.ensure(["AAA", "BBB", "CCC"], dt.date(2024, 1, 1))
+    assert updated == [] and failed == ["AAA", "BBB", "CCC"]
+    assert calls == ["AAA"]
