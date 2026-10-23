@@ -50,6 +50,9 @@ screener/.venv/bin/python -m streamlit run screener/app.py
 - `screener/signals.py` — signal definitions shared by the Signals filters and the "Signals" / "# Signals"
   columns (candles, N-month breakouts vs yesterday's high, crosses today, volume spike, consolidation).
 - `screener/history.py` — "New since yesterday": same pipeline on the previous snapshot day.
+- `screener/track.py` — track record of every screen from the daily snapshots: entries (in today's results, not
+  in the previous day's), returns after 5/20/60 snapshot days, split jumps undone, excess over SPY (universe median
+  offline). Incremental cache in `screener/_data/track/`. Snapshots are its data: never delete them.
 - `screener/groups.py` — Groups page (sector/industry averages) and the plotly treemap heatmap.
 - `screener/i18n.py` — display language. Internal values stay English (filter options, preset names, views,
   pages, sector/country values) so saved screens, presets and tests are language-independent; only display
@@ -105,37 +108,23 @@ Rules:
 
 ## Screener roadmap
 
-Phase 1 — done (2026-10-18).
+The full plan (Hebrew, for Ori) is in `ROADMAP.md`: Now / Next / Later, an idea bank and a done log.
+Update it when an item is done or the priorities change. Summary (2026-10-23):
 
-Phase 2 — done (2026-10-18; PRs #2 phase 2, #3 Hebrew UI, then the screener-only cleanup):
-Signals tab + "Signals" column, Index filter, weekly filters, SMA150 + Stage 2 (Minervini) preset,
-"Hide junk" (on by default), "New since yesterday", Groups page, Heatmap (plotly), SPY ADX badge,
-data-source metadata per snapshot.
+- **Now:** track record UI (#60; engine `track.py` done in #59) → split `app.py` into one module per page
+  (no behavior change; after #60) → portfolios with history (value over time vs SPY/QQQ, splits/dividends
+  after the trade date, ETF prices; on top of `prices.py`).
+- **Next:** "send error report" zip, "what's new" after an update, a home page ("הבוקר שלי"), watchlist alerts,
+  small fixes (pip upgrade on every launch from #57, watchdog when no browser ever connects, SPACs in
+  Hide junk), measure real snapshot disk use.
+- **Later:** daily Telegram report (#27), HalgOM strategy model portfolio (#29; needs the exact
+  `topn_focused_v2` definition), "within N days" signals from history, fallback provider, IPO date filter.
 
-Phase 2 leftovers:
-- Remaining Finviz gaps: IPO date, shares-outstanding filter. (No short-float data on TradingView.)
-- SPACs (~$10, tiny range) dominate "Tight 1M" signals; consider excluding them in "Hide junk".
-
-Phase 3:
-- HalgOM strategy presets via a two-stage funnel (TradingView prefilter → yfinance history for ~200 names).
-- **[DONE]** Watchlists (performance since added) and portfolios (Portfolios page). Next: splits/dividends after the
-  trade date and value over time vs SPY/QQQ (needs the price-history layer); prices for ETFs held in a portfolio.
-- Daily email/Telegram report of preset changes.
-- Optional: real-time data via the user's own TradingView `sessionid` cookie (account-flag risk — opt-in only).
-
-Later — less dependence on TradingView (discussed 2026-10-18; add layers, don't replace it; own branch/PR):
-1. **[DONE]** Move the TradingView field mapping out of `fields.COLUMNS` (`Col.tv`) into the provider module, so the
-   registry holds canonical keys only and each provider brings its own mapping. Small, safe first step.
-2. **[DONE]** History layer from yfinance (data layer done, no UI yet): adjusted daily OHLCV stored locally, updated once a day. Enables a real
-   adjusted price history, total return incl. dividends (TradingView has neither — checked live: no
-   adjusted/total-return field, `adjustment` options are ignored), crosses "within N days" (`[5]` offsets
-   are empty on TradingView) and breakouts over any window, computed by us. TradingView stays the fast
-   snapshot source. Costs: storage, daily update, first-run download time, yfinance rate limits.
-3. Fallback provider when TradingView blocks or changes (today the app only falls back to stale cache).
-Coupling to remove along the way: signals use TradingView-computed fields (`Candle.*`, `[1]`, `High.xM`);
-the market header and the chart widget are TradingView too. Candidate sources: yfinance (free, unofficial),
-SEC EDGAR (official fundamentals), paid APIs (FMP, Polygon, EODHD, Tiingo, Alpha Vantage — check current
-pricing/limits before choosing), Finviz (scraping or paid Elite).
+Less dependence on TradingView (discussed 2026-10-18; add layers, don't replace it): the field mapping
+already lives in the provider module and the yfinance history layer exists. Still coupled: signals use
+TradingView-computed fields (`Candle.*`, `[1]`, `High.xM`); the market header and the chart widget are
+TradingView too. Candidate sources: yfinance (free, unofficial), SEC EDGAR (official fundamentals), paid
+APIs (FMP, Polygon, EODHD, Tiingo, Alpha Vantage — check current pricing/limits before choosing).
 
 ## Backtester note (for the Phase 3 strategy presets; the backtester itself is not in this repo)
 
