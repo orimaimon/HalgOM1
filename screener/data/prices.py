@@ -4,7 +4,6 @@ import datetime as dt
 import json
 import logging
 import os
-import time
 import uuid
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -13,11 +12,30 @@ from typing import Any
 import pandas as pd
 import yfinance as yf
 
+from screener.data import guard
+
 log = logging.getLogger(__name__)
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "_data" / "history"
 STATE_FILE = DATA_DIR / "update_state.json"
 NY_TZ = ZoneInfo("America/New_York")
+
+
+class PricesBlocked(Exception):
+    """Raised when Yahoo Finance returns a hidden rate limit error."""
+
+    def __init__(self, message: str, status_code: int = 429):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class _YFLogCapturer(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
 
 
 def _read_state() -> dict[str, str]:
@@ -111,15 +129,31 @@ def total_return(ticker: str, start: dt.date, end: dt.date) -> float | None:
 
 
 COLUMNS = ["open", "high", "low", "close", "adj_close", "volume", "dividends", "splits"]
-PAUSE = 0.5          # seconds between downloads: Yahoo rate-limits, never download in parallel
 
 
 def _download(ticker: str, start: dt.date) -> pd.DataFrame:
     """Daily bars from `start`, in our column names, naive date index. Empty when Yahoo has nothing."""
-    dl = yf.download(_ticker_to_yf(ticker), start=start.isoformat(), actions=True, auto_adjust=False,
-                     threads=False, progress=False)
+    yf_logger = logging.getLogger("yfinance")
+    capturer = _YFLogCapturer()
+    old_level = yf_logger.level
+    yf_logger.addHandler(capturer)
+    if old_level > logging.ERROR or old_level == logging.NOTSET:
+        yf_logger.setLevel(logging.ERROR)
+
+    try:
+        dl = yf.download(_ticker_to_yf(ticker), start=start.isoformat(), actions=True, auto_adjust=False,
+                         threads=False, progress=False)
+    finally:
+        yf_logger.removeHandler(capturer)
+        yf_logger.setLevel(old_level)
+
     if dl is None or dl.empty:
+        for rec in capturer.records:
+            msg = rec.getMessage()
+            if any(term in msg for term in ("YFRateLimitError", "Too Many Requests", "Rate limited")):
+                raise PricesBlocked(msg, status_code=429)
         return pd.DataFrame(columns=COLUMNS)
+
     if isinstance(dl.columns, pd.MultiIndex):             # (field, ticker) even for one ticker
         dl.columns = dl.columns.droplevel(1)
     dl = dl.rename(columns={"Open": "open", "High": "high", "Low": "low", "Close": "close",
@@ -153,8 +187,7 @@ def ensure(tickers: list[str], start: dt.date) -> tuple[list[str], list[str]]:
     - The last stored day is downloaded again: a bar stored during the session was not final.
     - Yahoo's history is back-adjusted: a new dividend or split changes adj_close (and, for a split,
       close) of every earlier day. Then the whole history is downloaded again instead of appended.
-    - One ticker at a time with a pause in between; nothing downloaded for a new ticker is a failure
-      (yfinance returns an empty frame rather than raising when it is rate-limited).
+    - One ticker at a time; nothing downloaded for a new ticker is a failure.
     """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     state = _read_state()
@@ -163,19 +196,17 @@ def ensure(tickers: list[str], start: dt.date) -> tuple[list[str], list[str]]:
     failed: list[str] = []
     todo = [t for t in dict.fromkeys(tickers) if state.get(t) != today_ny]
     for n, ticker in enumerate(todo):
-        if n:
-            time.sleep(PAUSE)
         try:
             old = history(ticker)
             if old.empty:
-                new = _download(ticker, start)
+                new = guard.call("yahoo", _download, ticker, start, max_sleep=2.0)
                 if new.empty:
                     raise ValueError("no data")
             else:
                 last = old.index.max()
-                recent = _download(ticker, last.date())
+                recent = guard.call("yahoo", _download, ticker, last.date(), max_sleep=2.0)
                 if _has_actions(recent[recent.index > last]):
-                    new = _download(ticker, old.index.min().date())
+                    new = guard.call("yahoo", _download, ticker, old.index.min().date(), max_sleep=2.0)
                     if new.empty:
                         raise ValueError("no data on the full re-download")
                 else:
@@ -184,8 +215,18 @@ def ensure(tickers: list[str], start: dt.date) -> tuple[list[str], list[str]]:
             _write(ticker, new)
             state[ticker] = today_ny
             updated.append(ticker)
-        except Exception as e:                           # keep what is stored, try again next time
+        except guard.Wait as w:
+            log.warning("price history: %s", guard.wait_message(w))
+            failed.extend(todo[n:])
+            break
+        except Exception as e:
+            # PricesBlocked (the rate limit yfinance hides), a 403/429, or YFRateLimitError raised directly
+            if isinstance(e, PricesBlocked) or guard._is_block(e):
+                log.warning("price history: %s blocked: %s", ticker, e)
+                failed.extend(todo[n:])
+                break
             log.warning("price history: %s not updated: %s", ticker, e)
             failed.append(ticker)
-        _write_state(state)
+        _write_state(state)            # after every ticker: a run cut off midway keeps what it did
+    _write_state(state)
     return updated, failed

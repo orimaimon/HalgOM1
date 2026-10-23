@@ -71,7 +71,10 @@ def test_performance_equality(drop):
     with warnings.catch_warnings():
         warnings.simplefilter("error", pd.errors.PerformanceWarning)   # the point of the change
         derived = add_derived(df, today)
-    pd.testing.assert_frame_equal(baseline, derived)
+    # Columns added after this reference was frozen are checked in their own tests (test_relative.py);
+    # every column the reference computes must still be identical.
+    newer = ["pe_vs_industry", "ps_vs_industry", "sales_growth_vs_sector"]
+    pd.testing.assert_frame_equal(baseline, derived.drop(columns=newer))
 
 
 def test_derived_columns_replace_existing_ones():
