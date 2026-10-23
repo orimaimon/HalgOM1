@@ -9,6 +9,7 @@ their options from the current data.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -408,11 +409,27 @@ FILTERS: list[Filter] = [
 FILTERS_BY_KEY: dict[str, Filter] = {f.key: f for f in FILTERS}
 GROUPS = ["Descriptive", "Fundamental", "Technical", "Signals", "Scores"]
 
+_SPAC_RE = re.compile(
+    r"\b(?:acquisition|merger)\s+(?:corp|corporation|co|company|holdings|inc|ltd|limited)\b|\bblank\s+check\b",
+    re.IGNORECASE,
+)
+
+
+def _is_spac(d: pd.DataFrame) -> pd.Series:
+    """A blank-check company: the name says so, and it sits in its industry or near its $10 trust value."""
+    if "company" not in d:
+        return pd.Series(False, index=d.index)
+    name_match = d["company"].fillna("").astype(str).str.contains(_SPAC_RE)
+    industry = d["industry"] if "industry" in d else pd.Series(None, index=d.index, dtype=object)
+    return name_match & ((industry == "Financial Conglomerates") | d["price"].between(9, 12))
+
+
 # "Hide junk" toolbar switch (on by default): known-bad values only — a missing value is not junk.
 JUNK_RULES: list[tuple[str, Mask]] = [
     ("Price under $1", lambda d: d["price"] < 1),
     ("Avg Volume under 50K", lambda d: d["avg_volume"] < 50e3),
     ("Market Cap under $50M", lambda d: d["market_cap"] < 50e6),
+    ("SPAC (blank-check company)", _is_spac),
 ]
 
 
