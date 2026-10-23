@@ -47,3 +47,10 @@ def test_spac_i18n():
     assert spac_rule_label == "SPAC (blank-check company)"
     assert spac_rule_label in UI
     assert UI[spac_rule_label] == "חברת רכישה ייעודית (SPAC)"
+
+
+def test_spac_rule_without_company_or_industry_columns():
+    df = pd.DataFrame({"price": [10.0], "avg_volume": [100e3], "market_cap": [100e6]})
+    assert not junk_mask(df).any()
+    df["company"] = ["Foo Acquisition Corp"]
+    assert junk_mask(df).all()          # no industry column: the price branch still works
