@@ -7,10 +7,10 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
-from screener.data.store import DATA_DIR
+from screener.data import store
 
 log = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ def _resolve_whatsnew_path(path: Path | None = None) -> Path:
 
 
 def _resolve_seen_path(path: Path | None = None) -> Path:
-    return path or (DATA_DIR / "whatsnew_seen.json")
+    return path or (store.DATA_DIR / "whatsnew_seen.json")      # resolved at call time (tests)
 
 
 def _resolve_root_dir(root: Path | None = None) -> Path:
@@ -171,7 +171,7 @@ def version_label(whatsnew_path: Path | None = None, root: Path | None = None) -
         with Repo(str(root_path)) as repo:
             head = repo.head()
             commit = repo.get_object(head)
-            dt = datetime.fromtimestamp(commit.commit_time, tz=timezone.utc)
+            dt = datetime.fromtimestamp(commit.commit_time)      # local date, as the user sees it
             commit_date_str = dt.strftime("%d/%m/%Y")
             commit_sha_str = head.decode("ascii")[:7]
             return f"גרסה {version} · {commit_date_str} · {commit_sha_str}"

@@ -146,3 +146,11 @@ def test_real_whatsnew_json_validity():
     # Verify newest first (dates non-increasing)
     for i in range(len(dates) - 1):
         assert dates[i] >= dates[i + 1], f"entries not ordered newest first: {dates[i]} < {dates[i+1]}"
+
+
+def test_seen_file_follows_the_data_dir_at_call_time(tmp_path, monkeypatch):
+    from screener import whatsnew
+    from screener.data import store
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    assert whatsnew.unseen() == []                    # first run
+    assert (tmp_path / "whatsnew_seen.json").exists()
