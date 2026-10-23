@@ -19,6 +19,47 @@ def _pct_from(a: pd.Series, b: pd.Series) -> pd.Series:
     return (a / b.where(b > 0) - 1) * 100
 
 
+def _relative_ratio(df: pd.DataFrame, col: str) -> pd.Series:
+    if col not in df.columns or "industry" not in df.columns or "sector" not in df.columns:
+        return pd.Series(np.nan, index=df.index, dtype=float)
+
+    val = df[col].where(df[col] > 0)
+    ind = df["industry"]
+    sec = df["sector"]
+
+    ind_cnt = val.groupby(ind).transform("count")
+    ind_med = val.groupby(ind).transform("median")
+
+    sec_cnt = val.groupby(sec).transform("count")
+    sec_med = val.groupby(sec).transform("median")
+
+    med = ind_med.where(ind_cnt >= 5, sec_med.where(sec_cnt >= 5))
+    res = (val / med - 1) * 100.0
+    return res.astype(float)
+
+
+def _relative_diff(df: pd.DataFrame, col: str) -> pd.Series:
+    if col not in df.columns or "sector" not in df.columns:
+        return pd.Series(np.nan, index=df.index, dtype=float)
+
+    val = df[col]
+    sec = df["sector"]
+
+    sec_cnt = val.groupby(sec).transform("count")
+    sec_med = val.groupby(sec).transform("median")
+
+    res = val - sec_med.where(sec_cnt >= 5)
+    return res.astype(float)
+
+
+def relative_to_groups(df: pd.DataFrame) -> dict[str, pd.Series]:
+    return {
+        "pe_vs_industry": _relative_ratio(df, "pe"),
+        "ps_vs_industry": _relative_ratio(df, "ps"),
+        "sales_growth_vs_sector": _relative_diff(df, "sales_growth"),
+    }
+
+
 def _with(df: pd.DataFrame, cols: dict) -> pd.DataFrame:
     """df with `cols` set (replacing columns of the same name, like df[k] = v), in one concat."""
     return pd.concat([df.drop(columns=list(cols), errors="ignore"), pd.DataFrame(cols, index=df.index)], axis=1)
@@ -55,6 +96,8 @@ def add_derived(raw: pd.DataFrame, today: dt.date | None = None) -> pd.DataFrame
 
     days = (pd.to_datetime(df.get("earnings_date"), errors="coerce") - pd.Timestamp(today)).dt.days
     der["days_to_earnings"] = days.where(days >= 0).astype(float)
+
+    der.update(relative_to_groups(df))
 
     df = _with(df, der).replace([np.inf, -np.inf], np.nan)
     signals, n_signals = summarize(df)
