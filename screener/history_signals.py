@@ -194,3 +194,63 @@ def signals_within(closes: pd.DataFrame, days: int = 5, prepared: bool = False) 
         res[f"breakout_{window}"] = _eval_breakout_within(arr, window, days, tickers)
 
     return pd.DataFrame(res, index=tickers)
+
+
+def event_matrix(closes: pd.DataFrame, name: str, prepared: bool = False) -> pd.DataFrame:
+    """Compute boolean event matrix for a single technical signal across daily history.
+
+    Returns pd.DataFrame with same shape (index=trading days, columns=tickers) as closes,
+    with True on days the signal fired and False otherwise.
+
+    Raises ValueError if name is not a valid boolean signal.
+    """
+    boolean_signals = {
+        "cross_up_sma50",
+        "cross_down_sma50",
+        "cross_up_sma200",
+        "cross_down_sma200",
+        "golden_cross",
+        "death_cross",
+        "breakout_20",
+        "breakout_60",
+        "breakout_120",
+        "breakout_250",
+    }
+    if name not in boolean_signals:
+        raise ValueError(f"Unknown boolean signal: {name}")
+
+    if not prepared:
+        closes = prepare(closes)
+
+    if closes.empty:
+        return pd.DataFrame(False, index=closes.index, columns=closes.columns, dtype=bool)
+
+    arr = closes.to_numpy(dtype=float)
+
+    if name in {"cross_up_sma50", "cross_down_sma50"}:
+        sma50 = _fast_sma(arr, 50)
+        px_up, px_down, _ = _cross_matrix(arr, sma50)
+        matrix = px_up if name == "cross_up_sma50" else px_down
+        return pd.DataFrame(matrix, index=closes.index, columns=closes.columns, dtype=bool)
+
+    if name in {"cross_up_sma200", "cross_down_sma200"}:
+        sma200 = _fast_sma(arr, 200)
+        px_up, px_down, _ = _cross_matrix(arr, sma200)
+        matrix = px_up if name == "cross_up_sma200" else px_down
+        return pd.DataFrame(matrix, index=closes.index, columns=closes.columns, dtype=bool)
+
+    if name in {"golden_cross", "death_cross"}:
+        sma50 = _fast_sma(arr, 50)
+        sma200 = _fast_sma(arr, 200)
+        golden, death, _ = _cross_matrix(sma50, sma200)
+        matrix = golden if name == "golden_cross" else death
+        return pd.DataFrame(matrix, index=closes.index, columns=closes.columns, dtype=bool)
+
+    # Breakout signals (breakout_20, breakout_60, breakout_120, breakout_250)
+    w = int(name.split("_")[1])
+    shifted = closes.shift(1)
+    rolled_max = shifted.rolling(w, min_periods=w).max()
+    rolled_count = shifted.rolling(w, min_periods=w).count()
+    full = rolled_count == w
+    bo = (closes > rolled_max) & full & closes.notna()
+    return bo.astype(bool)
