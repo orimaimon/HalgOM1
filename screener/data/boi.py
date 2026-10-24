@@ -160,9 +160,10 @@ def update(start: dt.date, today: dt.date | None = None) -> bool:
 
     cached = _load_cache(b_dir)
     fetch_start = start
-    if not cached.empty:
-        last_date = max(cached.index)
-        next_day = last_date + dt.timedelta(days=1)
+    # Only the missing tail, unless `start` is older than the cache (a trade imported later with an older date):
+    # then the whole range again, still one request (a few hundred rows a year).
+    if not cached.empty and start >= min(cached.index):
+        next_day = max(cached.index) + dt.timedelta(days=1)
         if next_day > fetch_start:
             fetch_start = next_day
 

@@ -144,3 +144,19 @@ def test_empty_csv_never_overwrites_cache(monkeypatch, tmp_path):
     assert res is False
     assert len(boi._load_cache(boi_dir)) == 1
     assert boi._load_cache(boi_dir).loc[dt.date(2026, 10, 1)] == 3.08
+
+
+def test_update_fetches_an_older_range_when_start_predates_the_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    cached = pd.Series([3.5, 3.6], index=[dt.date(2026, 1, 5), dt.date(2026, 1, 6)])
+    boi._atomic_parquet(cached, tmp_path / "boi" / "usd_ils.parquet")
+    asked = []
+
+    def fake_fetch(start, end):
+        asked.append((start, end))
+        return pd.Series([3.9, 3.5, 3.6], index=[dt.date(2024, 3, 1), dt.date(2026, 1, 5), dt.date(2026, 1, 6)])
+
+    monkeypatch.setattr(boi, "fetch_rates", fake_fetch)
+    assert boi.update(dt.date(2024, 3, 1), today=dt.date(2026, 1, 7)) is True
+    assert asked == [(dt.date(2024, 3, 1), dt.date(2026, 1, 7))]
+    assert boi.rate_on(dt.date(2024, 3, 2)) == 3.9
