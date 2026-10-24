@@ -112,9 +112,7 @@ def summary(exposure_df: pd.DataFrame, max_position: float = 20.0, max_sector: f
     n_positions = len(exposure_df)
 
     if exposure_df.empty:
-        warnings: list[str] = []
-        if n_positions < 5:
-            warnings.append(f"רק {n_positions} מניות בתיק — פיזור נמוך")
+        warnings: list[str] = []         # no priced position: "only 0 stocks" would be nonsense
         if no_price:
             warnings.append(f"לחלק מהמניות אין מחיר עדכני: {', '.join(no_price)}")
         return {
@@ -154,8 +152,9 @@ def summary(exposure_df: pd.DataFrame, max_position: float = 20.0, max_sector: f
             warnings.append(f"סקטור {sec_he} הוא {round(w)}% מהתיק (מעל {round(max_sector)}%)")
 
     # Low diversification warning
-    if n_positions < 5:
-        warnings.append(f"רק {n_positions} מניות בתיק — פיזור נמוך")
+    if 0 < n_positions < 5:
+        warnings.append("רק מניה אחת בתיק — פיזור נמוך" if n_positions == 1
+                        else f"רק {n_positions} מניות בתיק — פיזור נמוך")
 
     # Missing price warning
     if no_price:

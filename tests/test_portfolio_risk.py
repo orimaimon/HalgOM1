@@ -199,3 +199,11 @@ def test_warnings_hebrew_content_and_no_nan_none():
         assert HEBREW_RE.search(w) is not None, f"Warning missing Hebrew: {w}"
         assert "nan" not in w.lower(), f"Warning contains nan: {w}"
         assert "none" not in w.lower(), f"Warning contains none: {w}"
+
+
+def test_no_diversification_warning_for_an_empty_portfolio_and_singular_for_one():
+    empty = summary(pd.DataFrame(columns=["ticker", "company", "sector", "value", "weight", "beta"]))
+    assert not any("פיזור" in w for w in empty["warnings"])
+    one = pd.DataFrame([{"ticker": "AAPL", "company": "Apple", "sector": "Electronic Technology",
+                         "value": 1000.0, "weight": 100.0, "beta": 1.1}])
+    assert "רק מניה אחת בתיק — פיזור נמוך" in summary(one)["warnings"]
