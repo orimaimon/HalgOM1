@@ -79,6 +79,12 @@ UI: dict[str, str] = {
     "update mode": "מצב עדכון", "delayed ~15 min": "בעיכוב של כ-15 דק'",
     "Refresh data": "רענון נתונים", "Exit": "יציאה", "Close the screener": "סגירת הסקרינר",
     "Large text": "טקסט גדול", "Active filters": "פילטרים פעילים",
+    # portfolio risk view (rk_)
+    "Positions": "פוזיציות",
+    "Top 5 weight": "משקל 5 הגדולות",
+    "Weighted beta": "בטא משוקללת",
+    "No open positions": "אין פוזיציות פתוחות",
+    "Error displaying portfolio risk": "שגיאה בהצגת סיכון התיק",
     "Loading market data from TradingView… (≈15 sec)": "טוען נתוני שוק מ-TradingView… (כ-15 שניות)",
     "Try again": "נסה שוב", "Details": "פרטים",
     # toolbar
