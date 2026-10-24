@@ -16,7 +16,7 @@ import streamlit as st  # noqa: E402
 from screener import i18n as I, theme  # noqa: E402
 from screener.fields import DEFAULT_SORT  # noqa: E402
 from screener.filters import ANY, FILTERS, apply_filters, hide_junk, search  # noqa: E402
-from screener.ui.common import (L, PAGES, _setup_logging, _watchdog, all_presets, get_data, get_previous,  # noqa: E402
+from screener.ui.common import (L, PAGES, setup_logging, start_watchdog, all_presets, get_data, get_previous,  # noqa: E402
     goodbye, header, hebrew_note, keep_widget_state, nav, new_column, preset_modified, selections, ss, t)
 from screener.ui.groups_page import groups_page, heatmap_page  # noqa: E402
 from screener.ui.guide_page import guide_page  # noqa: E402
@@ -26,7 +26,7 @@ from screener.ui.track_record import track_record_expander  # noqa: E402
 
 
 def main() -> None:
-    _setup_logging()
+    setup_logging()
     ss.setdefault("lang", I.HE)
     ss.setdefault("large_text", False)
     css = theme.CSS + (theme.RTL_CSS if L() == I.HE else "") + (theme.LARGE_TEXT_CSS if ss.get("large_text") else "")
@@ -34,7 +34,7 @@ def main() -> None:
     if ss.get("exiting"):
         goodbye()
         return
-    _watchdog()
+    start_watchdog()
     keep_widget_state()
     ss.setdefault("page", PAGES[0])
     ss.setdefault("view", "Overview")
