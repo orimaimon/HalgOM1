@@ -146,6 +146,8 @@ UI: dict[str, str] = {
     "stocks": "מניות", "Stocks": "מניות", "Color by": "צבע לפי",
     "S&P 500": "S&P 500", "Nasdaq 100": "Nasdaq 100", "Screener results": "תוצאות הסריקה",
     "All stocks (top 1,000)": "כל המניות (1,000 הגדולות)",
+    # breadth panel (br_)
+    "By sector": "לפי סקטור", "Over time": "לאורך זמן", "No sector data": "אין נתוני סקטורים",
     # portfolios / watchlists
     "Portfolios": "תיקים ומעקב", "List": "רשימה", "Watchlist": "רשימת מעקב", "Portfolio": "תיק",
     "New list / import a file": "רשימה חדשה / ייבוא קובץ", "List name": "שם הרשימה",
