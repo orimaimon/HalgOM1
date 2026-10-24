@@ -5,7 +5,7 @@ import pandas as pd
 
 from screener.data.store import Snapshot, Store, session_date
 from screener.history import load_previous
-from screener.app import get_previous
+from screener.ui.common import get_previous
 
 
 def test_session_date():
@@ -82,7 +82,7 @@ def test_get_previous_reloads_baseline(monkeypatch, tmp_path):
     store.save(df, ts_thu)
     store.save(df, ts_fri)
 
-    import screener.app as app
+    import screener.ui.common as app
     monkeypatch.setattr(app, "_store", lambda: store)
 
     class MockSessionState(dict):
