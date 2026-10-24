@@ -12,7 +12,7 @@ import streamlit as st
 from screener import i18n as I, presets as P, track
 from screener.data import Store
 
-from screener.ui.common import L, USER_PREFIX, _store, hebrew_note, log, t
+from screener.ui.common import L, USER_PREFIX, get_store, hebrew_note, log, t
 
 
 def _snapshot_state_key(store: Store) -> tuple:
@@ -34,12 +34,12 @@ def _presets_state_key() -> str:
 # A few entries only: each holds the entries table of every screen.
 @st.cache_data(show_spinner="מחשב תעודת ביצועים…", max_entries=3)
 def _get_track_all_screens(snapshot_key: tuple, presets_key: str) -> dict[str, dict]:
-    return track.track_all_screens(_store())
+    return track.track_all_screens(get_store())
 
 
 def get_all_track_records() -> dict[str, dict] | None:
     try:
-        store = _store()
+        store = get_store()
         return _get_track_all_screens(_snapshot_state_key(store), _presets_state_key())
     except Exception as e:
         log.exception("track_all_screens failed: %s", e)

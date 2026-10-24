@@ -78,7 +78,7 @@ def test_range52_bar():
 
 
 def test_find_removed_pill():
-    from screener.ui.common import find_removed_pill
+    from screener.ui.screener_page import find_removed_pill
 
     assert find_removed_pill(["pe", "market_cap"], ["pe"]) == "market_cap"
     assert find_removed_pill(["pe", "market_cap"], ["market_cap"]) == "pe"
@@ -144,7 +144,7 @@ def test_views_price_change_order():
 
 
 def test_escape_markdown_and_clean_str():
-    from screener.ui.common import _clean_str, escape_markdown
+    from screener.ui.screener_page import _clean_str, escape_markdown
 
     assert escape_markdown("Apple $Inc.* _Co_") == "Apple \\$Inc.\\* \\_Co\\_"
     assert escape_markdown(None) == "—"
@@ -387,7 +387,7 @@ def test_regime_reasons_translation():
 
 
 def test_chart_locale(app, monkeypatch):
-    from screener.ui.common import tradingview_chart
+    from screener.ui.screener_page import tradingview_chart
     iframe_args = []
     monkeypatch.setattr(st, "iframe", lambda src, height=None: iframe_args.append(src))
 
