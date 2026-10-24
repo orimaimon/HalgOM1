@@ -118,6 +118,25 @@ UI: dict[str, str] = {
     "Export all columns": "ייצוא כל העמודות", "TradingView list": "רשימה ל-TradingView", "Tickers": "סימולים",
     # detail panel
     "Price": "מחיר", "Valuation & size": "תמחור", "Growth & quality": "צמיחה ואיכות",
+    # home page
+    "My Morning": "הבוקר שלי",
+    "New in screens": "חדשות בסריקות",
+    "Top movers in my lists": "תנועות בולטות ברשימות שלי",
+    "Upcoming earnings": "דוחות בשבועיים הקרובים",
+    "Alerts": "התראות",
+    "Nothing new today": "אין חדש היום",
+    "Daily report text": "טקסט הדוח היומי",
+    "Sending the report via Telegram will be added in a future update.":
+        "שליחת הדוח בטלגרם תתווסף בהמשך.",
+    "Could not load My Morning data right now.":
+        "לא ניתן לטעון את נתוני \"הבוקר שלי\" כרגע.",
+    "Could not load portfolios and watchlists.":
+        "לא ניתן לקרוא את רשימות המעקב והתיקים.",
+    "Some My Morning data is unavailable.":
+        "חלק מנתוני \"הבוקר שלי\" לא זמינים כרגע.",
+    "New": "חדשות",
+    "Total": "סה\"כ",
+    "When": "מועד",
     "52-Week Range": "טווח 52 שבועות",
     "Events & scores": "אירועים וציונים", "Open in TradingView": "פתיחה ב-TradingView",
     # groups / heatmap
