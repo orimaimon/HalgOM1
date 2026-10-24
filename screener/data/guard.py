@@ -50,6 +50,7 @@ LIMITS: dict[str, Limits] = {
     "sec": Limits(min_interval=0.2, daily_cap=2000),
     "massive": Limits(min_interval=13.0, daily_cap=300),
     "fred": Limits(min_interval=60.0, daily_cap=50),
+    "boi": Limits(min_interval=60.0, daily_cap=30),
 }
 
 BACKOFF = [2, 5, 15, 60]  # minutes
@@ -62,6 +63,7 @@ DISPLAY_NAMES: dict[str, str] = {
     "sec": "SEC",
     "massive": "Massive",
     "fred": "FRED",
+    "boi": "בנק ישראל",
 }
 
 
