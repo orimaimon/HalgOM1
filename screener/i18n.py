@@ -20,6 +20,18 @@ LANGS = {HE: "עברית", EN: "English"}
 # ── app texts (buttons, captions, page names) ──────────────────────────────
 UI: dict[str, str] = {
     "No price in screener for:": "אין בסקרינר מחיר ל:",
+    # maintenance panel (screener/ui/maintenance_view.py)
+    "Send problem report": "שליחת דוח תקלה",
+    "Send this file to Ori (email or WhatsApp)": "שלחו את הקובץ הזה לאורי (מייל או וואטסאפ)",
+    "Backup and restore": "גיבוי ושחזור",
+    "Backup": "גיבוי",
+    "Restore backup": "שחזור גיבוי",
+    "Upload backup file (.zip)": "העלאת קובץ גיבוי (.zip)",
+    "Merge": "מיזוג",
+    "Replace": "החלפה",
+    "Confirm restore": "אישור שחזור",
+    "What's new": "מה חדש",
+    "Understood": "הבנתי",
     "(e.g. ETFs). They will be saved, but without current value.": "(למשל קרנות סל). הן יישמרו, אבל בלי שווי נוכחי.",
     "(e.g. ETFs). They are not included in the value and summaries.": "(למשל קרנות סל). הן לא נכללות בשווי ובסיכומים.",
 
