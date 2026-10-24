@@ -193,3 +193,11 @@ def test_summary_line():
     # Empty summary line when nothing competes
     df_empty = compare.summary_line(universe, ["INVALID_1", "INVALID_2"])
     assert df_empty == ""
+
+
+def test_negative_debt_to_equity_never_wins():
+    import pandas as pd
+    from screener import compare
+    uni = pd.DataFrame({"ticker": ["AAA", "BBB", "CCC"], "debt_eq": [-2.0, 0.4, 0.9]})
+    df = compare.compare(uni, ["AAA", "BBB", "CCC"], metrics=[("debt_eq", "low")])
+    assert df.attrs["best"] == {"debt_eq": "BBB"}

@@ -35,6 +35,8 @@ METRICS: list[tuple[str, str]] = [
 ]
 
 POSITIVE_ONLY_METRICS = {"pe", "fwd_pe", "ps", "peg"}
+# Negative debt/equity means negative equity (a warning sign), not "the least debt": only >= 0 competes.
+NON_NEGATIVE_ONLY_METRICS = {"debt_eq"}
 
 
 def compare(
@@ -115,6 +117,9 @@ def compare(
                     num_val = float(val)
                     if key in POSITIVE_ONLY_METRICS:
                         if num_val > 0:
+                            competing_vals.append((t, num_val))
+                    elif key in NON_NEGATIVE_ONLY_METRICS:
+                        if num_val >= 0:
                             competing_vals.append((t, num_val))
                     else:
                         competing_vals.append((t, num_val))
