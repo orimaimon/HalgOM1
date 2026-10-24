@@ -210,3 +210,21 @@ def test_zip_contents_strict(tmp_path, patch_paths):
     with zipfile.ZipFile(zip_path, "r") as zf:
         namelist = zf.namelist()
         assert set(namelist) == {"manifest.json", "presets.json"}
+
+
+def test_restore_changes_nothing_when_the_undo_copy_fails(tmp_path, patch_paths, monkeypatch):
+    import json
+    import shutil
+    from screener import backup
+    patch_paths["presets"].write_text(json.dumps({"Mine": {"filters": {"price": "Over $5"}}}), encoding="utf-8")
+    zip_path = backup.make_backup(tmp_path / "out")
+    patch_paths["presets"].write_text(json.dumps({"Newer": {"filters": {"price": "Over $10"}}}), encoding="utf-8")
+    before = patch_paths["presets"].read_text(encoding="utf-8")
+
+    def broken_copy(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(shutil, "copy2", broken_copy)
+    res = backup.restore(zip_path, mode="replace")
+    assert res["presets.json"]["ok"] is False and "לא שוחזר" in res["presets.json"]["problem"]
+    assert patch_paths["presets"].read_text(encoding="utf-8") == before

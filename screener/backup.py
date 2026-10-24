@@ -28,6 +28,7 @@ MESSAGES: dict[str, str] = {
     "zip_slip": "קובץ הגיבוי מכיל נתיבים לא חוקיים",
     "corrupt_file": "הקובץ {name} לא תקין או מכיל נתונים פגומים",
     "unknown_file": "הקובץ {name} אינו מוכר",
+    "no_undo_copy": "לא ניתן לשמור עותק של {name} לפני השחזור, ולכן לא שוחזר דבר",
 }
 
 ALLOWED_FILES = ("presets.json", "portfolios.json", "alerts.json")
@@ -178,7 +179,9 @@ def restore(zip_path: Path | str, mode: str = "merge") -> dict[str, dict[str, An
                     try:
                         shutil.copy2(target_path, bak_path)
                     except OSError as e:
+                        # Without the copy a wrong restore could not be undone: change nothing.
                         log.warning("Failed to create before-restore backup %s: %s", bak_path, e)
+                        return {name: {"ok": False, "items": 0, "problem": MESSAGES["no_undo_copy"].format(name=name)}}
 
         # Step 2: Perform restore via save_user_file
         for name in ALLOWED_FILES:
