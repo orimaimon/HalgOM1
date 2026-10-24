@@ -1551,4 +1551,7 @@ def main() -> None:
     hebrew_note(t("Data: TradingView (delayed ~15 min). For research purposes only, not investment advice."))
 
 
-main()
+# Streamlit (`streamlit run`, AppTest) runs this file as "__main__". A plain `import screener.app` (tests that use
+# its helpers) must not run the app: that fetched the universe from TradingView and wrote into screener/_data.
+if __name__ == "__main__":
+    main()
