@@ -32,6 +32,12 @@ UI: dict[str, str] = {
     "Confirm restore": "אישור שחזור",
     "What's new": "מה חדש",
     "Understood": "הבנתי",
+    "Fast chart review": "דפדוף מהיר בגרפים",
+    "Previous stock": "מניה קודמת",
+    "Next stock": "מניה הבאה",
+    "Jump to stock": "מעבר למניה",
+    "Trader note": "הערת סוחר",
+    "Could not display fast chart review": "לא ניתן להציג דפדוף מהיר כרגע",
     "(e.g. ETFs). They will be saved, but without current value.": "(למשל קרנות סל). הן יישמרו, אבל בלי שווי נוכחי.",
     "(e.g. ETFs). They are not included in the value and summaries.": "(למשל קרנות סל). הן לא נכללות בשווי ובסיכומים.",
 
