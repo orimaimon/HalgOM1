@@ -32,7 +32,7 @@ RETRY_TIMEOUT = 20                         # seconds, for those retries (a norma
 REFRESH_MIN = dt.timedelta(seconds=60)   # "Refresh data" clicked again sooner: no new request
 CUSTOM = "— Custom —"
 USER_PREFIX = "★ "
-PAGES = ["Screener", "Groups", "Heatmap", "Portfolios", "Guide"]
+PAGES = ["Home", "Screener", "Groups", "Heatmap", "Portfolios", "Guide"]
 # provider columns a cached snapshot must have; an older cache without them is refetched
 REQUIRED = provider_columns()
 # widget keys that must survive while their widget is not on the current page
@@ -395,7 +395,7 @@ def junk_toggle(container) -> None:
 
 def nav() -> str:
     st.segmented_control("Page", PAGES, key="page", label_visibility="collapsed", required=True, format_func=t,
-                         help="סורק = סריקת מניות, קבוצות = ביצועים לפי סקטור ותעשייה, מפת חום = מפת השוק, "
+                         help="הבוקר שלי = ריכוז נתוני בוקר, התראות ודוחות, סורק = סריקת מניות, קבוצות = ביצועים לפי סקטור ותעשייה, מפת חום = מפת השוק, "
                               "תיקים ומעקב = רשימות מעקב ותיקי השקעות שלך, מדריך = הסבר על הסקרינר ועל המונחים")
     return ss.get("page")
 

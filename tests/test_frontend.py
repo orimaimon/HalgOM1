@@ -87,6 +87,7 @@ def test_find_removed_pill():
 
 
 def test_active_filters_pills(app):
+    app.session_state["page"] = "Screener"
     app.run()
     app.selectbox(key="f_pe").select("Low (<15)").run()
     if app.exception:
@@ -157,6 +158,7 @@ def test_escape_markdown_and_clean_str():
 
 
 def test_filter_panel_collapsed_by_default(app):
+    app.session_state["page"] = "Screener"
     app.run()
     if app.exception:
         raise app.exception[0]
@@ -171,6 +173,7 @@ def test_filter_panel_collapsed_by_default(app):
 
 
 def test_save_bookmark_button_label(app):
+    app.session_state["page"] = "Screener"
     app.run()
     if app.exception:
         raise app.exception[0]
@@ -180,6 +183,7 @@ def test_save_bookmark_button_label(app):
 
 
 def test_empty_results_explain_and_clear_everything(app):
+    app.session_state["page"] = "Screener"
     app.run()
     app.selectbox(key="f_pe").select("Low (<15)").run()
     app.text_input(key="query").input("NO-SUCH-STOCK").run()
@@ -322,6 +326,7 @@ def test_show_one_ticker_list_in_screener(app):
 
 
 def test_reset_turns_only_new_off(app):
+    app.session_state["page"] = "Screener"
     app.run()
     app.session_state["only_new"] = True
     app.run()
@@ -333,6 +338,7 @@ def test_reset_turns_only_new_off(app):
 
 
 def test_changed_preset_is_marked_and_can_be_reapplied(app):
+    app.session_state["page"] = "Screener"
     app.run()
     app.selectbox(key="preset").select("Unusual volume").run()
     assert "preset_reapply" not in [b.key for b in app.button]
@@ -354,6 +360,7 @@ def test_results_count_follows_only_new(app, tmp_path):
     snaps = tmp_path / "snapshots"
     snaps.mkdir(exist_ok=True)
     raw.head(250).to_parquet(snaps / f"{store_mod.session_date(dt.datetime.now() - dt.timedelta(days=4))}.parquet")
+    app.session_state["page"] = "Screener"
     app.run()
     app.toggle(key="only_new").set_value(True).run()
     if app.exception:
@@ -398,6 +405,7 @@ def test_chart_locale(app, monkeypatch):
 
 
 def test_save_screen_overwrite_warning(app):
+    app.session_state["page"] = "Screener"
     app.run()
     # Save a user preset for the first time
     P.save_user("MySavedScreen", P.Preset(filters={}, view="Overview", sort="ticker", ascending=True))
@@ -424,6 +432,7 @@ def test_save_screen_overwrite_warning(app):
 
 
 def test_junk_conflict_hint(app):
+    app.session_state["page"] = "Screener"
     app.run()
     assert not any("מתנגשת עם “הסתר זבל”" in h for h in notes(app))
 
@@ -454,6 +463,7 @@ def test_pipeline_cached_on_rerun(app):
 
 
 def test_search_as_removable_pill(app):
+    app.session_state["page"] = "Screener"
     app.run()
     app.text_input(key="query").input("AAPL").run()
     if app.exception:
@@ -502,6 +512,7 @@ def test_track_record_expander_and_warning(app, monkeypatch):
 
     monkeypatch.setattr(track_mod, "track_all_screens", lambda store=None: {"Quality growth": mock_summary})
 
+    app.session_state["page"] = "Screener"
     app.run()
     app.selectbox(key="preset").select("Quality growth").run()
     if app.exception:
@@ -526,6 +537,7 @@ def test_track_record_hidden_for_custom_or_modified(app, monkeypatch):
     monkeypatch.setattr(track_mod.prices, "ensure", lambda *args, **kwargs: None)
     monkeypatch.setattr(track_mod.prices, "history", lambda *args, **kwargs: pd.DataFrame())
 
+    app.session_state["page"] = "Screener"
     app.run()
     app.selectbox(key="preset").select("— Custom —").run()
     assert "תעודת ביצועים" not in [exp.label for exp in app.expander]
@@ -569,6 +581,7 @@ def test_track_record_exception_handling(app, monkeypatch):
     import screener.track as track_mod
     monkeypatch.setattr(track_mod, "track_all_screens", lambda store=None: (_ for _ in ()).throw(RuntimeError("track error")))
 
+    app.session_state["page"] = "Screener"
     app.run()
     app.selectbox(key="preset").select("Quality growth").run()
     if app.exception:

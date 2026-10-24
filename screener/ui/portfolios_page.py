@@ -9,7 +9,8 @@ import pandas as pd
 import streamlit as st
 
 from screener import export, i18n as I, portfolio as PF
-
+from screener.data.store import session_date
+from screener.ui import alerts_view, portfolio_history_view, portfolio_ils_view, portfolio_risk_view
 from screener.ui.common import sign_color, col_label, hebrew_note, log, on_reset, ss, t
 from screener.ui.watchlists import _add_and_report, _by_ticker
 
@@ -238,68 +239,77 @@ def watchlist_view(plist: PF.PList, df: pd.DataFrame) -> None:
 
 
 def portfolio_view(plist: PF.PList, df: pd.DataFrame) -> None:
-    trades = plist.frame()
-    val = PF.valuation(PF.positions(trades), _by_ticker(df))
-    val["company"] = val["ticker"].map(_by_ticker(df, "company"))
-    val["change"] = val["ticker"].map(_by_ticker(df, "change"))
-    held = val[val["quantity"] > 0]
-    priced = held[held["price"].notna()]
-    value, cost = priced["value"].sum(), priced["cost"].sum()
-    today = (priced["value"] * priced["change"] / (100 + priced["change"])).sum()
-    cc = st.column_config
-    m = st.columns(4)
-    m[0].metric(t("Market value"), _money(value), f"{_money(today)} {t('today')}" if len(priced) else None)
-    m[1].metric(t("Cost"), _money(cost))
-    m[2].metric(t("Unrealized P&L"), _money(value - cost),
-                f"{(value - cost) / cost * 100:+.2f}%" if cost > 0 else None)
-    m[3].metric(t("Realized P&L"), _money(val["realized"].sum()))
-    missing = held.loc[held["price"].isna(), "ticker"].tolist()
-    if missing:
-        hebrew_note(f"{t('No price in screener for:')} {', '.join(missing)} {t('(e.g. ETFs). They are not included in the value and summaries.')}")
-    if held.empty:
-        hebrew_note(t("There are currently no open positions in the portfolio."))
-    else:
-        cols = ["ticker", "company", "quantity", "avg_cost", "price", "change", "value", "pnl", "pnl_pct",
-                "weight", "annual_pct", "first_buy"]
-        config = {"ticker": cc.TextColumn(t("Ticker"), pinned=True, width="small"),
-                  "company": cc.TextColumn(col_label("company"), width="medium"),
-                  "quantity": cc.NumberColumn(t("Quantity"), format="localized"),
-                  "avg_cost": cc.NumberColumn(t("Avg cost"), format="%.2f"),
-                  "price": cc.NumberColumn(t("Price"), format="%.2f"),
-                  "change": cc.NumberColumn(col_label("change"), format="%.2f%%"),
-                  "value": cc.NumberColumn(t("Market value"), format="dollar"),
-                  "pnl": cc.NumberColumn(t("P&L"), format="dollar"),
-                  "pnl_pct": cc.NumberColumn(t("P&L %"), format="%.2f%%"),
-                  "weight": cc.ProgressColumn(t("Weight"), min_value=0, max_value=100, format="%.1f%%"),
-                  "annual_pct": cc.NumberColumn(t("Annual return"), format="%.2f%%",
-                                                help="תשואה שנתית ממוצעת לפי תאריך הקנייה הממוצע. מוצגת רק "
-                                                     "אחרי 90 יום, כי לפני כן המספר מטעה"),
-                  "first_buy": cc.DateColumn(t("First buy"), format="DD/MM/YYYY")}
-        st.dataframe(held[cols].style.map(sign_color, subset=["change", "pnl", "pnl_pct", "annual_pct"]),
-                     hide_index=True, column_config=config, placeholder="—", key="pf_positions",
-                     height=min(38 + 35 * len(held), 600))
-    hebrew_note(t("Average cost includes fees. Splits and dividends after purchase are not yet calculated."))
-    with st.expander(f"{t('Trades')} ({len(trades)})"):
-        shown = trades.assign(side=trades["side"].map(t))
-        st.dataframe(shown, hide_index=True, placeholder="—", key="pf_trades", column_config={
-            "ticker": t("Ticker"), "date": cc.DateColumn(t("Date"), format="DD/MM/YYYY"),
-            "price": cc.NumberColumn(t("Price"), format="%.2f"), "quantity": t("Quantity"),
-            "side": t("Side"), "fees": cc.NumberColumn(t("Fees"), format="%.2f"), "note": t("Notes")})
-    with st.popover(t("Add trade"), icon=":material/add:"):
-        with st.form("pf_trade", border=False):
-            c1, c2 = st.columns(2)
-            c1.text_input(t("Ticker"), key="pf_t_ticker")
-            c2.date_input(t("Date"), key="pf_t_date", value=dt.date.today(), max_value=dt.date.today(),
-                          format="DD/MM/YYYY")
-            c1.number_input(t("Price"), key="pf_t_price", min_value=0.0, value=None, step=0.01, format="%.2f")
-            c2.number_input(t("Quantity"), key="pf_t_qty", min_value=0.0, value=None, step=1.0)
-            c1.radio(t("Side"), ["buy", "sell"], key="pf_t_side", format_func=t, horizontal=True)
-            c2.number_input(t("Fees"), key="pf_t_fees", min_value=0.0, value=0.0, step=0.5)
-            st.text_input(t("Notes"), key="pf_t_note")
-            st.form_submit_button(t("Add trade"), on_click=on_pf_trade, type="primary")
-        for e in ss.get("pf_trade_errors") or []:
-            st.error(e)
-
+    tab_pos, tab_hist, tab_risk, tab_ils = st.tabs([t("Positions"), t("History"), t("Risk"), t("Shekels")])
+    with tab_pos:
+        trades = plist.frame()
+        val = PF.valuation(PF.positions(trades), _by_ticker(df))
+        val["company"] = val["ticker"].map(_by_ticker(df, "company"))
+        val["change"] = val["ticker"].map(_by_ticker(df, "change"))
+        held = val[val["quantity"] > 0]
+        priced = held[held["price"].notna()]
+        value, cost = priced["value"].sum(), priced["cost"].sum()
+        today = (priced["value"] * priced["change"] / (100 + priced["change"])).sum()
+        cc = st.column_config
+        m = st.columns(4)
+        m[0].metric(t("Market value"), _money(value), f"{_money(today)} {t('today')}" if len(priced) else None)
+        m[1].metric(t("Cost"), _money(cost))
+        m[2].metric(t("Unrealized P&L"), _money(value - cost),
+                    f"{(value - cost) / cost * 100:+.2f}%" if cost > 0 else None)
+        m[3].metric(t("Realized P&L"), _money(val["realized"].sum()))
+        missing = held.loc[held["price"].isna(), "ticker"].tolist()
+        if missing:
+            hebrew_note(f"{t('No price in screener for:')} {', '.join(missing)} {t('(e.g. ETFs). They are not included in the value and summaries.')}")
+        if held.empty:
+            hebrew_note(t("There are currently no open positions in the portfolio."))
+        else:
+            cols = ["ticker", "company", "quantity", "avg_cost", "price", "change", "value", "pnl", "pnl_pct",
+                    "weight", "annual_pct", "first_buy"]
+            config = {"ticker": cc.TextColumn(t("Ticker"), pinned=True, width="small"),
+                      "company": cc.TextColumn(col_label("company"), width="medium"),
+                      "quantity": cc.NumberColumn(t("Quantity"), format="localized"),
+                      "avg_cost": cc.NumberColumn(t("Avg cost"), format="%.2f"),
+                      "price": cc.NumberColumn(t("Price"), format="%.2f"),
+                      "change": cc.NumberColumn(col_label("change"), format="%.2f%%"),
+                      "value": cc.NumberColumn(t("Market value"), format="dollar"),
+                      "pnl": cc.NumberColumn(t("P&L"), format="dollar"),
+                      "pnl_pct": cc.NumberColumn(t("P&L %"), format="%.2f%%"),
+                      "weight": cc.ProgressColumn(t("Weight"), min_value=0, max_value=100, format="%.1f%%"),
+                      "annual_pct": cc.NumberColumn(t("Annual return"), format="%.2f%%",
+                                                    help="תשואה שנתית ממוצעת לפי תאריך הקנייה הממוצע. מוצגת רק "
+                                                         "אחרי 90 יום, כי לפני כן המספר מטעה"),
+                      "first_buy": cc.DateColumn(t("First buy"), format="DD/MM/YYYY")}
+            st.dataframe(held[cols].style.map(sign_color, subset=["change", "pnl", "pnl_pct", "annual_pct"]),
+                         hide_index=True, column_config=config, placeholder="—", key="pf_positions",
+                         height=min(38 + 35 * len(held), 600))
+        hebrew_note(t("Average cost includes fees. Splits and dividends after purchase are not yet calculated."))
+        with st.expander(f"{t('Trades')} ({len(trades)})"):
+            shown = trades.assign(side=trades["side"].map(t))
+            st.dataframe(shown, hide_index=True, placeholder="—", key="pf_trades", column_config={
+                "ticker": t("Ticker"), "date": cc.DateColumn(t("Date"), format="DD/MM/YYYY"),
+                "price": cc.NumberColumn(t("Price"), format="%.2f"), "quantity": t("Quantity"),
+                "side": t("Side"), "fees": cc.NumberColumn(t("Fees"), format="%.2f"), "note": t("Notes")})
+        with st.popover(t("Add trade"), icon=":material/add:"):
+            with st.form("pf_trade", border=False):
+                c1, c2 = st.columns(2)
+                c1.text_input(t("Ticker"), key="pf_t_ticker")
+                c2.date_input(t("Date"), key="pf_t_date", value=dt.date.today(), max_value=dt.date.today(),
+                              format="DD/MM/YYYY")
+                c1.number_input(t("Price"), key="pf_t_price", min_value=0.0, value=None, step=0.01, format="%.2f")
+                c2.number_input(t("Quantity"), key="pf_t_qty", min_value=0.0, value=None, step=1.0)
+                c1.radio(t("Side"), ["buy", "sell"], key="pf_t_side", format_func=t, horizontal=True)
+                c2.number_input(t("Fees"), key="pf_t_fees", min_value=0.0, value=0.0, step=0.5)
+                st.text_input(t("Notes"), key="pf_t_note")
+                st.form_submit_button(t("Add trade"), on_click=on_pf_trade, type="primary")
+            for e in ss.get("pf_trade_errors") or []:
+                st.error(e)
+    
+    
+    with tab_hist:
+        portfolio_history_view.render(plist)
+    with tab_risk:
+        portfolio_risk_view.render(plist, df)
+    with tab_ils:
+        portfolio_ils_view.render(plist, df)
 
 def portfolios_page(df: pd.DataFrame) -> None:
     lists = PF.load_all()
@@ -307,6 +317,8 @@ def portfolios_page(df: pd.DataFrame) -> None:
     if not lists:
         hebrew_note("עוד אין רשימות. אפשר לייבא קובץ מהברוקר או מאקסל, ליצור רשימת מעקב ריקה, "
                     "או להוסיף מניה מפרטי המניה בסורק.")
+        with st.expander(t("Alerts"), expanded=False):
+            alerts_view.render(df, session_date(dt.datetime.now()))
         return
     names = list(lists)
     if ss.get("pf_name") not in names:
@@ -329,4 +341,6 @@ def portfolios_page(df: pd.DataFrame) -> None:
         portfolio_view(plist, df)
     else:
         watchlist_view(plist, df)
+    with st.expander(t("Alerts"), expanded=False):
+        alerts_view.render(df, session_date(dt.datetime.now()))
     hebrew_note(t("Lists are saved on this computer only. Prices are from the screener (delayed ~15 min)."))
