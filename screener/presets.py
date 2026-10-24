@@ -29,6 +29,31 @@ class Preset:
 
 _LIQUID = {"avg_volume": "Over 500K", "price": "Over $5"}
 
+BUILTIN_ETF: dict[str, Preset] = {
+    "Top AUM": Preset(
+        {"aum": "Over $10B", "avg_volume": "Over 500K"},
+        view="ETF", sort="aum", ascending=False,
+        note="קרנות הסל הגדולות והנזילות ביותר (מעל $10B נכסים מנוהלים)"),
+    "Low expense core": Preset(
+        {"expense_ratio": "Under 0.2%", "aum": "Over $1B", "avg_volume": "Over 200K"},
+        view="ETF", sort="expense_ratio", ascending=True,
+        note="קרנות סל ליבה בדמי ניהול נמוכים במיוחד (מתחת ל-0.2%) עם מעל $1B נכסים"),
+    "Momentum leaders (ETF)": Preset(
+        {"perf_h": "Up 10%+", "sma50": "Price above SMA50", "sma200": "Price above SMA200",
+         "avg_volume": "Over 500K"},
+        view="Performance", sort="perf_h", ascending=False,
+        note="קרנות סל במגמת עלייה חזקה: מעל ממוצע 50 וממוצע 200 עם תשואה של מעל 10% בחצי שנה"),
+    "Dividend — high yield (ETF)": Preset(
+        {"div_yield": "Over 3%", "aum": "Over $1B", "avg_volume": "Over 200K"},
+        view="ETF", sort="div_yield", ascending=False,
+        note="קרנות סל מחלקות דיבידנד מעל 3% עם מעל $1B נכסים מנוהלים"),
+    "Oversold in uptrend (ETF)": Preset(
+        {"rsi": "Oversold (40)", "sma200": "Price above SMA200", "aum": "Over $1B",
+         "avg_volume": "Over 500K"},
+        view="Technical", sort="rsi", ascending=True,
+        note="קרנות סל במגמת עלייה ארוכה (מעל ממוצע 200) שנמצאות במימוש זמני (RSI מתחת ל-40)"),
+}
+
 BUILTIN: dict[str, Preset] = {
     "Value — cheap & profitable": Preset(
         {"pe": "Under 15", "roe": "Over 10%", "debt_eq": "Under 1", "market_cap": "+Small (over $300M)",

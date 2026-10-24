@@ -186,7 +186,8 @@ def new_column(res: pd.DataFrame, prev: history.Previous | None, sel: dict[str, 
 
 
 def all_presets() -> dict[str, P.Preset]:
-    out = dict(P.BUILTIN)
+    builtins = P.BUILTIN_ETF if ss.get("asset_type") == "etfs" else P.BUILTIN
+    out = dict(builtins)
     out.update({USER_PREFIX + n: p for n, p in P.load_user().items()})
     return out
 
