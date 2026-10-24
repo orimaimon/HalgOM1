@@ -167,6 +167,25 @@ UI: dict[str, str] = {
 "Exported": "יוצא בתאריך", "(custom)": "(מותאם אישית)",
     "(none)": "(אין)", "Source: TradingView scanner (delayed ~15 min). Not investment advice.":
         "מקור: סורק TradingView (בעיכוב של כ-15 דקות). אין לראות בזה ייעוץ השקעות.",
+
+    # Shekel P&L view
+    "Update USD/ILS rates from Bank of Israel": "עדכון שערי דולר מבנק ישראל",
+    "Updated": "עודכן",
+    "No new rates": "אין שערים חדשים",
+    "No saved rates yet — click update": "עדיין אין שערים שמורים — לחצו על עדכון",
+    "Realized P&L (ILS)": "רווח/הפסד ממומש (שקלים)",
+    "For assistance only — not a tax calculation": "לעזרה בלבד — אינו חישוב מס",
+    "Failed to calculate shekel P&L": "אירעה שגיאה בחישוב רווח/הפסד בשקלים",
+    "No exchange rates for:": "אין שערי חליפין עבור:",
+    "Total: P&L": "סה״כ: רווח",
+    "of which stock": "מזה מניות",
+    "of which FX": "מזה שער הדולר",
+    "Cost ₪": "עלות ₪",
+    "Value ₪": "שווי ₪",
+    "P&L ₪": "רווח/הפסד ₪",
+    "Stock part ₪": "חלק מניה ₪",
+    "Currency part ₪": "חלק שער ₪",
+    "Proceeds ₪": "תקבולים ₪",
     "Track record": "תעודת ביצועים",
     "Calculating track record…": "מחשב תעודת ביצועים…",
     "Past performance only. Does not guarantee future results and is not investment advice.":
