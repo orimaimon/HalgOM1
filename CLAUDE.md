@@ -73,7 +73,11 @@ screener/.venv/bin/python -m streamlit run screener/app.py
 - `screener/portfolio.py` — watchlists and portfolios: one CSV/Excel import format (one row per trade, Hebrew headers
   allowed; tickers only = watchlist), average-cost positions and P&L from the universe's prices (no extra requests),
   stored per machine in `screener/_data/portfolios.json`. Import problems are `Problem` codes, Hebrew text in i18n.
-- `screener/app.py` — Streamlit UI (pages: Screener / Groups / Heatmap / Portfolios / Guide). Selecting a row embeds the official
+- `screener/app.py` — Streamlit entry point: `main()` and page routing only. The pages live in `screener/ui/`:
+  `common.py` (session state, `t()`/`L()`, data loading, header, navigation, shared helpers), `screener_page.py`,
+  `track_record.py`, `groups_page.py` (Groups + Heatmap), `portfolios_page.py`, `guide_page.py`. The ui modules are
+  imported once (app.py is re-run on every rerun), so they read provider functions and data paths through their
+  modules at call time (`tv.fetch_universe`, `store_mod.DATA_DIR`). Selecting a row embeds the official
   TradingView Advanced Chart widget. Widget state is re-assigned each run (`keep_widget_state`) so filters
   survive a visit to another page.
 
