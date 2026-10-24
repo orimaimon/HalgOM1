@@ -75,6 +75,13 @@ UI: dict[str, str] = {
     "Lists are saved on this computer only. Prices are from the screener (delayed ~15 min).":
         "הרשימות נשמרות במחשב הזה בלבד. מחירים מהסקרינר (בעיכוב של כ-15 דקות).",
     "There is already a list named": "כבר יש רשימה בשם",
+    "Trailing stops & targets": "מעקב סטופ-לוס ויעדים (ATR)",
+    "Trailing stop": "סטופ נגרר",
+    "Distance to stop": "מרחק מסטופ %",
+    "Target (2R)": "יעד (2R)",
+    "Stop status": "סטטוס סטופ",
+    "Create stop alert": "יצירת התראת סטופ",
+    "Error displaying stop tracker": "שגיאה בהצגת מעקב הסטופים",
     "Saving with a file will replace it.": "שמירה עם קובץ תחליף אותה.",
     "Showing list": "מוצגת הרשימה", "from Portfolios page": "מדף התיקים",
     "The list is empty. Add tickers in the box below, or from the \"Add to watchlist\" button in the stock details in the screener.":
