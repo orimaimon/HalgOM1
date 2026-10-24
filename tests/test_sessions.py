@@ -83,7 +83,7 @@ def test_get_previous_reloads_baseline(monkeypatch, tmp_path):
     store.save(df, ts_fri)
 
     import screener.ui.common as app
-    monkeypatch.setattr(app, "_store", lambda: store)
+    monkeypatch.setattr(app, "get_store", lambda: store)
 
     class MockSessionState(dict):
         def __getattr__(self, name):
