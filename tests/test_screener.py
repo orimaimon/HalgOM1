@@ -351,13 +351,13 @@ def test_signals_column_combines_and_counts():
     assert d.loc[1, "signals"] == "BO 52W"            # strongest breakout only, not 52W + 6M + 3M + 1M
     assert d.loc[2, "signals"] == "" and d.loc[2, "n_signals"] == 0   # missing data never signals
 
-    from screener.app import display_values
-    with patch("screener.i18n.HE", "he"), patch("screener.app.L", lambda: "he"):
+    from screener.ui.common import display_values
+    with patch("screener.i18n.HE", "he"), patch("screener.ui.common.L", lambda: "he"):
         disp = display_values(d)
         assert disp.loc[0, "signals"] == "בליעה+, מחזור ×2.8, פריצה חודשית"
         assert disp.loc[1, "signals"] == "פריצה שנתית"
 
-    with patch("screener.i18n.HE", "he"), patch("screener.app.L", lambda: "en"):
+    with patch("screener.i18n.HE", "he"), patch("screener.ui.common.L", lambda: "en"):
         disp = display_values(d)
         assert disp.loc[0, "signals"] == "Engulfing+, Vol 2.8x, BO 1M"
         assert disp.loc[1, "signals"] == "BO 52W"
@@ -610,7 +610,7 @@ def test_regime_rules_unchanged_by_adx():
 # ── app smoke test (Streamlit AppTest, offline) ─────────────────────────────
 
 def test_selection_index():
-    from screener.app import selection_index
+    from screener.ui.common import selection_index
     df = pd.DataFrame({"ticker": ["A", "B", "C", "B"]})
     df.index = [10, 20, 30, 40]
 
@@ -916,7 +916,9 @@ def test_columns_views_presets_groups_have_hebrew():
 
 def test_every_app_text_has_hebrew():
     """A t("...") text without a translation shows up in English in the (default) Hebrew interface."""
-    src = (Path(__file__).parent.parent / "screener" / "app.py").read_text(encoding="utf-8")
+    root = Path(__file__).parent.parent / "screener"
+    # app.py and the page modules it was split into (screener/ui/)
+    src = "\n".join(p.read_text(encoding="utf-8") for p in [root / "app.py", *sorted((root / "ui").glob("*.py"))])
     texts = {ast.literal_eval(m) for m in re.findall(r"""\bt\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')""", src)}
     missing = sorted(s for s in texts if re.search("[A-Za-z]", s) and I.ui(s, I.HE) == s)
     assert not missing, missing

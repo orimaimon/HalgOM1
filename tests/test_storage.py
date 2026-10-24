@@ -12,7 +12,7 @@ import streamlit as st
 
 from screener import presets as P
 from screener import portfolio as PF
-from screener import app as APP
+from screener.ui import screener_page as APP
 
 
 def test_unknown_keys_and_bad_entries_isolated(tmp_path):

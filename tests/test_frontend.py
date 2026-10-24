@@ -42,7 +42,7 @@ def notes(at: AppTest) -> list[str]:
 
 
 def test_column_config():
-    from screener.app import column_config
+    from screener.ui.common import column_config
 
     assert column_config("ticker")["pinned"] is True
     assert column_config("company")["pinned"] is False
@@ -56,7 +56,7 @@ def test_column_config():
         assert column_config(key)["width"] == expected_width
 
 def test_range52_bar():
-    from screener.app import range52_bar
+    from screener.ui.screener_page import range52_bar
     import math
 
     # Valid range, exactly in the middle
@@ -78,7 +78,7 @@ def test_range52_bar():
 
 
 def test_find_removed_pill():
-    from screener.app import find_removed_pill
+    from screener.ui.common import find_removed_pill
 
     assert find_removed_pill(["pe", "market_cap"], ["pe"]) == "market_cap"
     assert find_removed_pill(["pe", "market_cap"], ["market_cap"]) == "pe"
@@ -144,7 +144,7 @@ def test_views_price_change_order():
 
 
 def test_escape_markdown_and_clean_str():
-    from screener.app import _clean_str, escape_markdown
+    from screener.ui.common import _clean_str, escape_markdown
 
     assert escape_markdown("Apple $Inc.* _Co_") == "Apple \\$Inc.\\* \\_Co\\_"
     assert escape_markdown(None) == "—"
@@ -387,7 +387,7 @@ def test_regime_reasons_translation():
 
 
 def test_chart_locale(app, monkeypatch):
-    from screener.app import tradingview_chart
+    from screener.ui.common import tradingview_chart
     iframe_args = []
     monkeypatch.setattr(st, "iframe", lambda src, height=None: iframe_args.append(src))
 
@@ -580,7 +580,7 @@ def test_track_record_exception_handling(app, monkeypatch):
 
 def test_track_record_display_error_does_not_break_the_page(monkeypatch):
     """A summary the panel cannot format (None counts) shows the note, not an exception."""
-    import screener.app as app_mod
+    import screener.ui.track_record as app_mod
     bad = {"sessions": None, "few_sessions": False, "horizons": {5: {"entries": None, "pending": None}}, "table": None}
     notes = []
     monkeypatch.setattr(app_mod, "get_all_track_records", lambda: {"X": bad})

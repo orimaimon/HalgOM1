@@ -124,7 +124,7 @@ def test_unique_temp_file_names(tmp_path):
 
 
 def test_market_fetch_failure_not_cached(monkeypatch):
-    from screener import app as app_module
+    from screener.ui import common as app_module
     from screener.data.tradingview import TradingViewError
 
     calls = 0
@@ -140,7 +140,7 @@ def test_market_fetch_failure_not_cached(monkeypatch):
                             "sma200": [85.0], "adx": [25.0], "di_plus": [20.0], "di_minus": [15.0]},
                            index=["SPY"])
 
-    monkeypatch.setattr(app_module, "fetch_market", mock_fetch_market)
+    monkeypatch.setattr(app_module.tv, "fetch_market", mock_fetch_market)
 
     # Clear market cache before testing
     app_module._market.clear()
