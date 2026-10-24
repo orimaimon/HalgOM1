@@ -17,14 +17,13 @@ import hashlib
 import json
 
 from screener.filters import FILTERS_BY_KEY
-from screener.ui.common import (L, USER_PREFIX, sign_color, all_presets, col_label,
+from screener.ui.common import (CUSTOM, L, USER_PREFIX, sign_color, all_presets, col_label,
     column_config, display_values, hebrew_note,
     junk_toggle, log, on_reset, opt, preset_modified,
     selections, ss, t)
 from screener.ui.watchlists import NEW_WATCHLIST, on_add_to_watchlist
 
 
-CUSTOM = "— Custom —"
 GRID = 6
 
 

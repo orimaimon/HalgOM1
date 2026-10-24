@@ -30,6 +30,7 @@ MAX_AGE = dt.timedelta(minutes=15)       # TradingView data is ~15 min delayed a
 RETRY_AFTER = dt.timedelta(minutes=2)    # when offline, don't hammer the network on every click
 RETRY_TIMEOUT = 20                         # seconds, for those retries (a normal fetch takes ~15 s)
 REFRESH_MIN = dt.timedelta(seconds=60)   # "Refresh data" clicked again sooner: no new request
+CUSTOM = "— Custom —"
 USER_PREFIX = "★ "
 PAGES = ["Screener", "Groups", "Heatmap", "Portfolios", "Guide"]
 # provider columns a cached snapshot must have; an older cache without them is refetched
@@ -188,7 +189,6 @@ def keep_widget_state() -> None:
 def on_reset():
     for f in FILTERS:
         ss[f"f_{f.key}"] = ANY
-    from screener.ui.screener_page import CUSTOM
     ss["preset"] = CUSTOM
     ss["query"] = ""
     ss["only_new"] = False
