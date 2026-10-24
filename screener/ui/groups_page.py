@@ -10,7 +10,7 @@ from screener import groups as G, i18n as I
 from screener.fields import GROUP_COLUMNS
 from screener.filters import in_index
 
-from screener.ui.common import L, _sign_color, col_label, display_values, hebrew_note, junk_toggle, ss, t
+from screener.ui.common import L, sign_color, col_label, display_values, hebrew_note, junk_toggle, ss, t
 from screener.ui.track_record import groups_track_record
 
 
@@ -62,7 +62,7 @@ def groups_page(universe: pd.DataFrame, res: pd.DataFrame) -> None:
                 config[k] = cc.NumberColumn(format="%.2f%%", **gl(k))
             if by == "sector":
                 table = display_values(table)
-            styled = table.style.map(_sign_color, subset=G.PERF)
+            styled = table.style.map(sign_color, subset=G.PERF)
             st.dataframe(styled, hide_index=True, height=min(38 + 35 * len(table), 760), column_config=config,
                          key="groups_table")
             hebrew_note("ביצועים ממוצעים של המניות בכל קבוצה. לחיצה על כותרת עמודה ממיינת. "

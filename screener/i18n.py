@@ -30,6 +30,16 @@ UI: dict[str, str] = {
     "Cannot read file. Save it as CSV or xlsx in Excel and try again.": "לא ניתן לקרוא את הקובץ. שמור אותו באקסל כ-CSV או כ-xlsx ונסה שוב.",
     "Fix errors in the file and load again:": "יש לתקן בקובץ ולטעון שוב:",
     "File is empty": "הקובץ ריק",
+    "Update price history": "עדכון היסטוריית מחירים",
+    "No history yet — click update price history": "עדיין אין היסטוריה — לחצו על עדכון היסטוריית מחירים",
+    "Updated": "עודכנו",
+    "Not updated:": "לא עודכנו:",
+    "No history for:": "אין היסטוריה עבור:",
+    "Dividends received": "דיבידנדים שהתקבלו",
+    "Portfolio:": "התיק:",
+    "Portfolio value": "שווי התיק",
+    "Portfolio + dividends": "תיק + דיבידנדים",
+    "Net invested": "השקעה נטו",
     "No stocks to show - filters or search yielded no results": "אין מניות להצגה — הפילטרים או החיפוש לא החזירו תוצאות",
     "No stocks to show": "אין מניות להצגה",
 
@@ -79,6 +89,12 @@ UI: dict[str, str] = {
     "update mode": "מצב עדכון", "delayed ~15 min": "בעיכוב של כ-15 דק'",
     "Refresh data": "רענון נתונים", "Exit": "יציאה", "Close the screener": "סגירת הסקרינר",
     "Large text": "טקסט גדול", "Active filters": "פילטרים פעילים",
+    # portfolio risk view (rk_)
+    "Positions": "פוזיציות",
+    "Top 5 weight": "משקל 5 הגדולות",
+    "Weighted beta": "בטא משוקללת",
+    "No open positions": "אין פוזיציות פתוחות",
+    "Error displaying portfolio risk": "שגיאה בהצגת סיכון התיק",
     "Loading market data from TradingView… (≈15 sec)": "טוען נתוני שוק מ-TradingView… (כ-15 שניות)",
     "Try again": "נסה שוב", "Details": "פרטים",
     # toolbar
@@ -88,6 +104,8 @@ UI: dict[str, str] = {
     "Clear all filters": "איפוס כל הפילטרים והחיפוש",
     "Save current screen as": "שמירת הסריקה הנוכחית בשם", "Save": "שמירה",
     "Delete saved screen": "מחיקת סריקה שמורה", "Delete": "מחיקה",
+    "Why is this stock in the screen?": "למה המניה בסריקה?",
+    "No active filters — all stocks shown": "אין פילטרים פעילים — כל המניות מוצגות",
     "Saved screen": "הסריקה נשמרה", "Deleted": "נמחקה",
     "A screen with this name already exists. Click save again to overwrite.":
         "סריקה בשם זה כבר קיימת. לחיצה נוספת על שמירה תעדכן אותה.",
@@ -100,6 +118,25 @@ UI: dict[str, str] = {
     "Export all columns": "ייצוא כל העמודות", "TradingView list": "רשימה ל-TradingView", "Tickers": "סימולים",
     # detail panel
     "Price": "מחיר", "Valuation & size": "תמחור", "Growth & quality": "צמיחה ואיכות",
+    # home page
+    "My Morning": "הבוקר שלי",
+    "New in screens": "חדשות בסריקות",
+    "Top movers in my lists": "תנועות בולטות ברשימות שלי",
+    "Upcoming earnings": "דוחות בשבועיים הקרובים",
+    "Alerts": "התראות",
+    "Nothing new today": "אין חדש היום",
+    "Daily report text": "טקסט הדוח היומי",
+    "Sending the report via Telegram will be added in a future update.":
+        "שליחת הדוח בטלגרם תתווסף בהמשך.",
+    "Could not load My Morning data right now.":
+        "לא ניתן לטעון את נתוני \"הבוקר שלי\" כרגע.",
+    "Could not load portfolios and watchlists.":
+        "לא ניתן לקרוא את רשימות המעקב והתיקים.",
+    "Some My Morning data is unavailable.":
+        "חלק מנתוני \"הבוקר שלי\" לא זמינים כרגע.",
+    "New": "חדשות",
+    "Total": "סה\"כ",
+    "When": "מועד",
     "52-Week Range": "טווח 52 שבועות",
     "Events & scores": "אירועים וציונים", "Open in TradingView": "פתיחה ב-TradingView",
     # groups / heatmap
@@ -120,6 +157,7 @@ UI: dict[str, str] = {
     "Remove ticker": "הסרת סימול", "Remove": "הסרה", "Add trade": "הוספת עסקה", "Trades": "עסקאות",
     "Restore screen": "החזרת הסריקה", "Back to all stocks": "חזרה לכל המניות", "(changed)": "(שונה)",
     "Show in screener": "הצגה בסורק", "Export list": "ייצוא הרשימה", "Delete list": "מחיקת הרשימה",
+    "Stock comparison": "השוואת מניות", "Select 2 to 4 stocks": "בחרו 2 עד 4 מניות",
     "Ticker": "סימול", "Date": "תאריך", "Quantity": "כמות", "Side": "פעולה", "buy": "קנייה", "sell": "מכירה",
     "Fees": "עמלות", "Market value": "שווי נוכחי", "Cost": "עלות", "Unrealized P&L": "רווח/הפסד פתוח",
     "Realized P&L": "רווח/הפסד ממומש", "today": "היום", "Avg cost": "עלות ממוצעת", "P&L": "רווח/הפסד",
@@ -131,6 +169,25 @@ UI: dict[str, str] = {
 "Exported": "יוצא בתאריך", "(custom)": "(מותאם אישית)",
     "(none)": "(אין)", "Source: TradingView scanner (delayed ~15 min). Not investment advice.":
         "מקור: סורק TradingView (בעיכוב של כ-15 דקות). אין לראות בזה ייעוץ השקעות.",
+
+    # Shekel P&L view
+    "Update USD/ILS rates from Bank of Israel": "עדכון שערי דולר מבנק ישראל",
+    "Updated": "עודכן",
+    "No new rates": "אין שערים חדשים",
+    "No saved rates yet — click update": "עדיין אין שערים שמורים — לחצו על עדכון",
+    "Realized P&L (ILS)": "רווח/הפסד ממומש (שקלים)",
+    "For assistance only — not a tax calculation": "לעזרה בלבד — אינו חישוב מס",
+    "Failed to calculate shekel P&L": "אירעה שגיאה בחישוב רווח/הפסד בשקלים",
+    "No exchange rates for:": "אין שערי חליפין עבור:",
+    "Total: P&L": "סה״כ: רווח",
+    "of which stock": "מזה מניות",
+    "of which FX": "מזה שער הדולר",
+    "Cost ₪": "עלות ₪",
+    "Value ₪": "שווי ₪",
+    "P&L ₪": "רווח/הפסד ₪",
+    "Stock part ₪": "חלק מניה ₪",
+    "Currency part ₪": "חלק שער ₪",
+    "Proceeds ₪": "תקבולים ₪",
     "Track record": "תעודת ביצועים",
     "Calculating track record…": "מחשב תעודת ביצועים…",
     "Past performance only. Does not guarantee future results and is not investment advice.":

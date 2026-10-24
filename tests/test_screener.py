@@ -610,7 +610,7 @@ def test_regime_rules_unchanged_by_adx():
 # ── app smoke test (Streamlit AppTest, offline) ─────────────────────────────
 
 def test_selection_index():
-    from screener.ui.common import selection_index
+    from screener.ui.screener_page import selection_index
     df = pd.DataFrame({"ticker": ["A", "B", "C", "B"]})
     df.index = [10, 20, 30, 40]
 

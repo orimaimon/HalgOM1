@@ -12,11 +12,161 @@ from screener import export, history, i18n as I, portfolio as PF, presets as P, 
 from screener.fields import COLUMNS, DEFAULT_SORT, VIEWS
 from screener.filters import ANY, FILTERS, GROUPS, active, option_labels
 
-from screener.ui.common import (CUSTOM, GRID, L, USER_PREFIX, _clean_str, _sign_color, all_presets, col_label,
-    column_config, described, display_values, escape_markdown, fmt_value, hebrew_day_str, hebrew_note,
-    junk_conflict_hint, junk_toggle, log, on_remove_pill, on_reset, opt, pills_key, preset_modified, rows_key,
-    selection_index, selections, ss, t, tradingview_chart)
-from screener.ui.portfolios_page import NEW_WATCHLIST, on_add_to_watchlist
+import datetime as dt
+import hashlib
+import json
+
+from screener.filters import FILTERS_BY_KEY
+from screener.ui.common import (CUSTOM, L, USER_PREFIX, sign_color, all_presets, col_label,
+    column_config, display_values, hebrew_note,
+    junk_toggle, log, on_reset, opt, preset_modified,
+    selections, ss, t)
+from screener.ui.watchlists import NEW_WATCHLIST, on_add_to_watchlist
+
+
+GRID = 6
+
+
+def escape_markdown(text: str) -> str:
+    """Escape markdown special characters so company names containing $, *, _, etc. render literally."""
+    if text is None or pd.isna(text):
+        return "—"
+    text = str(text)
+    if text == "—" or text.lower() in ("nan", "none"):
+        return "—"
+    for ch in ("\\", "*", "_", "`", "~", "$", "[", "]"):
+        text = text.replace(ch, "\\" + ch)
+    return text
+
+
+def _clean_str(v) -> str:
+    if v is None or pd.isna(v) or v == "" or str(v).lower() in ("nan", "none"):
+        return "—"
+    return str(v)
+
+
+def rows_key(res: pd.DataFrame) -> str:
+    """Table widget key tied to the rows shown: the selection is a row position, so when the rows change
+    (filters, Hide junk, Only new, sort) the key changes and the old selection is dropped instead of
+    opening the chart of whatever stock now sits in that position."""
+    return "table_" + hashlib.md5("\x1f".join(res["ticker"].astype(str)).encode()).hexdigest()[:12]
+
+
+def selection_index(res: pd.DataFrame, ticker: str | None) -> dict | None:
+    if not ticker or res.empty:
+        return None
+    matches = res.index[res["ticker"] == ticker].tolist()
+    if matches:
+        return {"selection": {"rows": [res.index.get_loc(matches[0])]}}
+    return None
+
+
+JUNK_CONFLICT_OPTIONS = {
+    "market_cap": "Nano (under $50M)",
+    "avg_volume": "Under 50K",
+    "price": "Under $1",
+}
+
+
+def junk_conflict_hint() -> str | None:
+    if not ss.get("hide_junk", True):
+        return None
+    sel = selections()
+    conflicts = []
+    for k, v in JUNK_CONFLICT_OPTIONS.items():
+        if sel.get(k) == v:
+            conflicts.append(f"“{opt(v)}”")
+    if not conflicts:
+        return None
+    c_text = ", ".join(conflicts)                # explanations are Hebrew in both languages
+    return f"⚠️ האפשרות {c_text} מתנגשת עם “הסתר זבל” ולא תוחזר אף מניה. כדי לראות תוצאות, יש לכבות את “הסתר זבל”."
+
+
+def described() -> list[tuple[str, str]]:
+    """(filter, option) of the active filters in the display language — for the chips and the exports."""
+    return [(I.filter_label(k, FILTERS_BY_KEY[k].label, L()), opt(v)) for k, v in active(selections()).items()]
+
+
+def find_removed_pill(active_keys: list[str], selected_pills: list[str]) -> str | None:
+    """Given the old active filters and the new selected pills, return the key that was deselected."""
+    for key in active_keys:
+        if key not in selected_pills:
+            return key
+    return None
+
+
+def pills_key(labels: list[str]) -> str:
+    """A new pills widget for every set of active filters: a kept widget would keep its old selection,
+    and a filter added later would show as an unselected (removed-looking) pill."""
+    return "active_pills_" + hashlib.md5("|".join(labels).encode()).hexdigest()[:10]
+
+
+def on_remove_pill(key: str, filter_of: dict[str, str]):
+    removed = find_removed_pill(list(filter_of), ss.get(key) or [])
+    if removed:
+        target = filter_of[removed]
+        if target == "query":
+            ss["query"] = ""
+        else:
+            ss[f"f_{target}"] = ANY
+
+
+HEBREW_WEEKDAYS = {0: "ב'", 1: "ג'", 2: "ד'", 3: "ה'", 4: "ו'", 5: "ש'", 6: "א'"}   # date.weekday(): Monday = 0
+
+
+def hebrew_day_str(d: dt.date) -> str:
+    """'יום ו' 16/10' — the compared trading day, for the NEW note."""
+    return f"יום {HEBREW_WEEKDAYS[d.weekday()]} {d:%d/%m}"
+
+
+def fmt_value(key: str, v) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)) or v is pd.NaT or v == "":
+        return "—"
+    kind = COLUMNS[key].kind
+    if kind == "pct":
+        return f"{v:+.2f}%" if key in export._SIGNED else f"{v:.2f}%"
+    if kind == "price":
+        return f"${v:,.2f}"
+    if kind in ("money", "count"):
+        prefix = "$" if kind == "money" else ""
+        for div, suf in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+            if abs(v) >= div:
+                return f"{prefix}{v / div:.2f}{suf}"
+        return f"{prefix}{v:,.0f}"
+    if kind == "date":
+        return pd.Timestamp(v).strftime("%Y-%m-%d")
+    if kind in ("days", "score", "int"):
+        return f"{v:,.0f}"
+    if kind == "range":
+        return f"{v:.0%}"
+    if kind == "ratio":
+        return f"{v:,.2f}"
+    if kind == "flag":
+        return ("כן" if v else "לא") if L() == I.HE else ("yes" if v else "no")
+    return str(v)
+
+
+def tradingview_chart(symbol: str, height: int = 560) -> None:
+    locale = "he_IL" if L() == I.HE else "en"
+    config = {
+        "autosize": False, "width": "100%", "height": height - 34, "symbol": symbol, "interval": "D", "timezone": "America/New_York",
+        "theme": "light", "style": "1", "locale": locale, "allow_symbol_change": True,
+        "hide_side_toolbar": False, "details": False, "calendar": False,
+        "studies": ["MASimple@tv-basicstudies", "RSI@tv-basicstudies"],
+        "support_host": "https://www.tradingview.com",
+    }
+    st.iframe(f"""
+<style>html, body {{margin: 0; height: 100%;}}</style>
+<div class="tradingview-widget-container" style="height:{height - 10}px;width:100%">
+  <div class="tradingview-widget-container__widget" style="height:{height - 34}px;width:100%"></div>
+  <div class="tradingview-widget-copyright" style="font:11px sans-serif">
+    <a href="https://www.tradingview.com/" rel="noopener nofollow" target="_blank">Chart by TradingView</a>
+  </div>
+  <script type="text/javascript"
+    src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+  {json.dumps(config)}
+  </script>
+</div>""", height=height)
 
 
 # ─────────────────────────── callbacks ─────────────────────────────────────
@@ -204,7 +354,7 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
         table["signals"] = table["signals"].map(I.rtl_cell)
     signed = [c for c in view_cols if c in export._SIGNED]
     if signed:
-        table = table.style.map(_sign_color, subset=signed)
+        table = table.style.map(sign_color, subset=signed)
 
     sel_ticker = ss.get("selected_ticker")
     sel_default = selection_index(res, sel_ticker)
