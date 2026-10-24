@@ -139,6 +139,13 @@ UI: dict[str, str] = {
     "Over market median": "מעל חציון השוק",
     "Pending": "ממתין",
     "Entries": "כניסות",
+    # alerts (alerts_view.py)
+    "No alerts yet": "אין התראות עדיין",
+    "Alert saved": "ההתראה נשמרה",
+    "Add alert": "הוספת התראה",
+    "Alert type": "סוג התראה",
+    "Threshold": "סף",
+    "Last fired": "הופעל לאחרונה",
     "20-day median": "חציון 20 יום",
     "% positive": "% חיוביות",
     "20-day excess": "עודף 20 יום",
