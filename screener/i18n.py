@@ -86,6 +86,11 @@ UI: dict[str, str] = {
     "Cannot download data, and there is no saved data from the last time. Check your internet connection and try again.": "לא ניתן להוריד נתונים, ואין נתונים שמורים מהפעם הקודמת. בדוק את החיבור לאינטרנט ונסה שוב.",
 
     # pages, views, filter tabs
+    "Home": "הבוקר שלי",
+    "Market breadth": "רוחב שוק",
+    "History": "היסטוריה",
+    "Risk": "סיכון",
+    "Shekels": "שקלים",
     "Screener": "סורק", "Groups": "קבוצות", "Heatmap": "מפת חום", "Guide": "מדריך",
     "Overview": "סקירה", "Valuation": "תמחור", "Financial": "פיננסי", "Performance": "ביצועים",
     "Technical": "טכני", "Signals": "אותות", "Scores": "ציונים",

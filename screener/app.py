@@ -13,11 +13,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import streamlit as st  # noqa: E402
+import datetime as dt  # noqa: E402
 from screener import i18n as I, theme  # noqa: E402
+from screener.data.store import session_date  # noqa: E402
 from screener.fields import DEFAULT_SORT  # noqa: E402
 from screener.filters import ANY, FILTERS, apply_filters, hide_junk, search  # noqa: E402
-from screener.ui.common import (L, PAGES, setup_logging, start_watchdog, all_presets, get_data, get_previous,  # noqa: E402
-    goodbye, header, hebrew_note, keep_widget_state, nav, new_column, preset_modified, selections, ss, t)
+from screener.ui import alerts_view, home_page, maintenance_view  # noqa: E402
+from screener.ui.common import (L, PAGES, _market, setup_logging, start_watchdog, all_presets, get_data, get_previous,  # noqa: E402
+    get_store, goodbye, header, hebrew_note, keep_widget_state, nav, new_column, preset_modified, selections, ss, t)
 from screener.ui.groups_page import groups_page, heatmap_page  # noqa: E402
 from screener.ui.guide_page import guide_page  # noqa: E402
 from screener.ui.portfolios_page import portfolios_page  # noqa: E402
@@ -45,6 +48,7 @@ def main() -> None:
         ss.setdefault(f"f_{f.key}", ANY)
 
     snap, df = get_data()
+    maintenance_view.show_whatsnew()
     header(snap, len(df))
     page = nav()
     if page == "Screener":
@@ -72,7 +76,12 @@ def main() -> None:
         ss["pipeline_universe"] = universe
         ss["pipeline_res"] = res
 
-    if page == "Guide":
+    if page == "Home":
+        m, regime = _market()
+        now_date = session_date(dt.datetime.now())
+        fired = alerts_view.fired_today(universe, now_date)
+        home_page.home_page(universe, get_store(), regime, fired)
+    elif page == "Guide":
         guide_page()
     elif page == "Groups":
         groups_page(universe, res)

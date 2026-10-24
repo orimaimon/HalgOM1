@@ -658,6 +658,8 @@ def test_app_smoke(tmp_path, monkeypatch):
     assert at.session_state["hide_junk"] is True
     # Hebrew is the default; values stay English internally
     assert at.session_state["lang"] == "he"
+    assert at.session_state["page"] == "Home"
+    at.segmented_control(key="page").select("Screener").run()
     assert any("תוצאות" in m.value for m in at.markdown)
     assert any("בעיכוב 15 דק'" in c.value for c in at.caption)
     assert at.selectbox(key="f_pe").options[1] == "נמוך (<15)"          # displayed in Hebrew...
@@ -668,6 +670,7 @@ def test_app_smoke(tmp_path, monkeypatch):
     # the real switch is checked in the browser)
     en = AppTest.from_file(str(ROOT / "screener" / "app.py"), default_timeout=60)
     en.session_state["lang"] = "en"
+    en.session_state["page"] = "Screener"
     en.run()
     assert not en.exception, en.exception
     assert any("results" in m.value for m in en.markdown)
@@ -966,7 +969,7 @@ def test_guide_covers_presets_and_ui_names():
     for name in I.PRESETS_HE.values():
         assert f"<td>{name}</td>" in text, name
     quoted = set(re.findall(r'<span class="ui">([^<]+)</span>', text))
-    for en in ["Screener", "Groups", "Heatmap", "Portfolios", *GROUPS, *VIEWS]:
+    for en in ["Home", "Screener", "Groups", "Heatmap", "Portfolios", *GROUPS, *VIEWS]:
         assert I.ui(en, I.HE) in quoted, en
     known = (set(I.UI.values()) | set(I.FILTERS_HE.values()) | set(I.OPTIONS_HE.values())
              | set(I.LANGS.values()) | {"HalgOM Screener", "Excel", "CSV"})
