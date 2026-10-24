@@ -219,6 +219,11 @@ def rate_on(day: dt.date, rates: pd.Series | None = None) -> float | None:
     return None
 
 
+def load_rates() -> pd.Series:
+    """Return cached USD/ILS exchange rates Series indexed by date."""
+    return _load_cache()
+
+
 def latest_rate() -> tuple[dt.date, float] | None:
     """Return tuple of (latest_date, latest_rate) from cached USD/ILS rates, or None."""
     s = _load_cache()
