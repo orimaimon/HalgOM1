@@ -126,6 +126,7 @@ def test_unique_temp_file_names(tmp_path):
 def test_market_fetch_failure_not_cached(monkeypatch):
     from screener.ui import common as app_module
     from screener.data.tradingview import TradingViewError
+    from screener.data import guard
 
     calls = 0
 
@@ -144,11 +145,17 @@ def test_market_fetch_failure_not_cached(monkeypatch):
 
     # Clear market cache before testing
     app_module._market.clear()
+    app_module._market_holder()["last_df"] = None
 
     # First attempt fails -> returns (None, None)
     m1, r1 = app_module._market()
     assert m1 is None and r1 is None
     assert calls == 1
+
+    # Reset guard backoff so second attempt is allowed to proceed
+    guard._DEFAULT_GUARD = guard.Guard()
+    with guard._STATE_LOCK:
+        guard._save_state({})
 
     # Second attempt succeeds -> must retry fetch instead of serving cached (None, None)
     m2, r2 = app_module._market()
