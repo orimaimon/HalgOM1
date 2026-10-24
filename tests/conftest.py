@@ -18,24 +18,30 @@ def _is_local(address) -> bool:
         return False
 
 
+# Tests never touch the network (CLAUDE.md). Installed when this file loads, so it also covers imports at
+# collection time, before any fixture runs (`from screener import app` at the top of a test file once sent a
+# real TradingView request on every run).
+_real_connect = socket.socket.connect
+
+
+def _offline_connect(self, address):
+    if self.family == getattr(socket, "AF_UNIX", None) or _is_local(address):
+        return _real_connect(self, address)
+    raise OSError(f"tests must not use the network (tried {address!r})")
+
+
+socket.socket.connect = _offline_connect
+
+
 @pytest.fixture(autouse=True)
-def _offline_and_private_data(tmp_path_factory, monkeypatch):
-    """Tests never touch the network or the real _data folder (CLAUDE.md).
+def _private_data(tmp_path_factory, monkeypatch):
+    """Tests never write into the real screener/_data folder.
 
     The app tests render the track record panel, which asks prices.ensure() for SPY/QQQ: without this they
-    downloaded from Yahoo on every run and wrote into screener/_data/history. A test that needs its own data
-    folder still monkeypatches it (the later monkeypatch wins)."""
+    wrote into screener/_data/history. A test that needs its own data folder still monkeypatches it (the
+    later monkeypatch wins)."""
     from screener.data import prices, store
     data = tmp_path_factory.mktemp("data")
     monkeypatch.setattr(store, "DATA_DIR", data)
     monkeypatch.setattr(prices, "DATA_DIR", data / "history")
     monkeypatch.setattr(prices, "STATE_FILE", data / "history" / "update_state.json")
-
-    real_connect = socket.socket.connect
-
-    def connect(self, address):
-        if self.family == getattr(socket, "AF_UNIX", None) or _is_local(address):
-            return real_connect(self, address)
-        raise OSError(f"tests must not use the network (tried {address!r})")
-
-    monkeypatch.setattr(socket.socket, "connect", connect)
