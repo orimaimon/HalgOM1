@@ -2,8 +2,8 @@
 Request guard: single-flight per provider, daily cap, min interval, block & error backoff.
 
 Limits per provider:
-  tradingview        min_interval=60 s, daily_cap=200
-  tradingview_market min_interval=60 s, daily_cap=200
+  tradingview        min_interval=120 s, daily_cap=150
+  tradingview_market min_interval=120 s, daily_cap=150
   nasdaq             min_interval=900 s, daily_cap=40
   yahoo              min_interval=1 s, daily_cap=300
   sec                min_interval=0.2 s, daily_cap=2000
@@ -43,8 +43,8 @@ class Limits:
 
 
 LIMITS: dict[str, Limits] = {
-    "tradingview": Limits(min_interval=60.0, daily_cap=200),
-    "tradingview_market": Limits(min_interval=60.0, daily_cap=200),
+    "tradingview": Limits(min_interval=120.0, daily_cap=150),
+    "tradingview_market": Limits(min_interval=120.0, daily_cap=150),
     "nasdaq": Limits(min_interval=900.0, daily_cap=40),
     "yahoo": Limits(min_interval=1.0, daily_cap=300),
     "sec": Limits(min_interval=0.2, daily_cap=2000),
@@ -275,6 +275,20 @@ class Guard:
             p_day_str = pstate.get("day")
             count_today = pstate.get("count_today", 0) if p_day_str == ny_today.isoformat() else 0
 
+            wait_until_dt = _parse_dt(pstate.get("wait_until"))
+            waiting_until = False
+            if wait_until_dt is not None and now_dt < wait_until_dt:
+                if wait_until_dt - now_dt <= dt.timedelta(minutes=BACKOFF[-1]):
+                    waiting_until = True
+                else:
+                    pstate["wait_until"] = None
+
+            last_call_dt = _parse_dt(pstate.get("last_call"))
+            elapsed = max((now_dt - last_call_dt).total_seconds(), 0.0) if last_call_dt else None
+            min_interval_waiting = elapsed is not None and elapsed < limit.min_interval
+            cap_reached = count_today >= limit.daily_cap
+            waiting = waiting_until or min_interval_waiting or cap_reached
+
             return {
                 "provider": provider,
                 "count_today": count_today,
@@ -284,9 +298,27 @@ class Guard:
                 "failures": pstate.get("failures", 0),
                 "wait_until": pstate.get("wait_until"),
                 "wait_reason": pstate.get("wait_reason"),
+                "last_call": pstate.get("last_call"),
                 "last_ok": pstate.get("last_ok"),
                 "last_error": pstate.get("last_error"),
+                "waiting": waiting,
             }
+
+    def check_wait(self, provider: str, now: Callable[[], dt.datetime] | None = None) -> Wait | None:
+        if provider not in LIMITS:
+            raise KeyError(provider)
+        limit = LIMITS[provider]
+        now_dt = self._get_now(now)
+        with _STATE_LOCK:
+            state = _load_state()
+            pstate = state.get(provider, {})
+            try:
+                rem = self._check(provider, pstate, limit, now_dt)
+                if rem > 0:
+                    return Wait(provider, now_dt + dt.timedelta(seconds=rem), "min_interval")
+                return None
+            except Wait as w:
+                return w
 
 
 _DEFAULT_GUARD = Guard()
@@ -299,6 +331,10 @@ def call(provider: str, fn: Callable[..., T], *args: Any, max_sleep: float = 0,
 
 def status(provider: str, now: Callable[[], dt.datetime] | None = None) -> dict[str, Any]:
     return _DEFAULT_GUARD.status(provider, now=now)
+
+
+def check_wait(provider: str, now: Callable[[], dt.datetime] | None = None) -> Wait | None:
+    return _DEFAULT_GUARD.check_wait(provider, now=now)
 
 
 def wait_message(w: Wait) -> str:

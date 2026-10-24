@@ -13,7 +13,7 @@ import pandas as pd
 import streamlit as st
 
 from screener import history, i18n as I, lifecycle, presets as P, theme
-from screener.data import FETCH_LOCK, Store, load_universe
+from screener.data import FETCH_LOCK, Store, guard, load_universe
 # The provider functions and the data folder are read through their modules at call time (store.DATA_DIR,
 # tv.fetch_universe): this module is imported once, while app.py used to be re-executed on every rerun, and
 # tests point them elsewhere (CLAUDE.md: paths resolved at call time).
@@ -90,37 +90,68 @@ def get_store() -> Store:
     return Store(store_mod.DATA_DIR)
 
 
+@st.cache_resource
+def _market_holder() -> dict[str, pd.DataFrame | None]:
+    return {"last_df": None}
+
+
 @st.cache_data(ttl=MAX_AGE, show_spinner=False)
 def _fetch_market():
     with FETCH_LOCK:
-        return tv.fetch_market()
+        return guard.call("tradingview_market", tv.fetch_market)
 
 
 def _market():
+    holder = _market_holder()
     try:
         m = _fetch_market()
+        if m is not None:
+            holder["last_df"] = m
         return m, compute_regime(m)
+    except guard.Wait:
+        last = holder.get("last_df")
+        if last is not None:
+            return last, compute_regime(last)
+        return None, None
     except Exception:
         log.exception("market fetch failed")
+        last = holder.get("last_df")
+        if last is not None:
+            return last, compute_regime(last)
         return None, None
 
 
 _market.clear = _fetch_market.clear
 
 
+def _fetch_universe(**kwargs):
+    fn = tv.fetch_universe
+    try:
+        return guard.call("tradingview", fn, **kwargs)
+    except TypeError:
+        if kwargs:
+            return guard.call("tradingview", fn)
+        raise
+
+
 def get_data(force: bool = False):
-    now = dt.datetime.now()
     snap = ss.get("snap")
+    st_tv = guard.status("tradingview")
+    waiting = st_tv.get("waiting", False)
     due = (force or snap is None
-           or (snap.source == "stale" and now - ss.get("last_attempt", now) > RETRY_AFTER)
+           or (snap.source == "stale" and not waiting)
            or (snap.source != "stale" and not dt.timedelta(0) <= snap.age <= MAX_AGE))   # < 0: clock went back
     if due:
-        ss["last_attempt"] = now
         with st.spinner(t("Loading market data from TradingView… (≈15 sec)")):
             try:
                 retry = snap is not None and snap.source == "stale"     # offline: don't block a click for 60 s
-                snap = load_universe(get_store(), tv.fetch_universe, MAX_AGE, force=force, required=REQUIRED,
+                snap = load_universe(get_store(), _fetch_universe, MAX_AGE, force=force, required=REQUIRED,
                                      timeout=RETRY_TIMEOUT if retry else None)
+            except guard.Wait as w:
+                st.error(guard.wait_message(w))
+                if st.button(t("Try again"), type="primary"):
+                    st.rerun()
+                st.stop()
             except Exception as e:
                 log.exception("no data available")
                 st.error("לא ניתן להוריד נתונים, ואין נתונים שמורים מהפעם הקודמת. "
@@ -314,15 +345,30 @@ def _header(snap, n_universe: int) -> None:
             if snap.source != "stale" and snap.age < REFRESH_MIN:      # every click is a TradingView request
                 st.toast(f"{t('Data was updated')} {max(0, int(snap.age.total_seconds()))} {t('seconds ago')}", icon="ℹ️")
             else:
-                get_data(force=True)
-                _market.clear()
-                st.rerun()
+                if snap.fetched_at is not None:
+                    with guard._STATE_LOCK:
+                        st_data = guard._load_state()
+                        pstate = st_data.get("tradingview", {})
+                        lc = guard._parse_dt(pstate.get("last_call"))
+                        s_dt = snap.fetched_at.astimezone() if snap.fetched_at.tzinfo else snap.fetched_at.astimezone()
+                        if lc is not None and s_dt < lc:
+                            pstate["last_call"] = guard._format_dt(s_dt)
+                            st_data["tradingview"] = pstate
+                            guard._save_state(st_data)
+                w = guard.check_wait("tradingview")
+                if w is not None:
+                    st.toast(guard.wait_message(w), icon="⚠️")
+                else:
+                    get_data(force=True)
+                    _fetch_market.clear()
+                    st.rerun()
         with r2.popover(t("Exit"), icon=":material/power_settings_new:", use_container_width=True,
                         help="סגירת הסקרינר"):
             hebrew_note(t("Closes the screener and the black window. Next time, open again from the desktop shortcut."))
             st.button(t("Close the screener"), key="exit", type="primary", on_click=on_exit)
     if snap.source == "stale":
-        st.warning(f"⚠️ {t('Cannot connect to TradingView right now - showing saved data from')} {snap.fetched_at:%d/%m/%Y} {t('at')} {snap.fetched_at:%H:%M}. {t('Will try again automatically in a few minutes.')}")
+        msg = snap.error or f"{t('Cannot connect to TradingView right now - showing saved data from')} {snap.fetched_at:%d/%m/%Y} {t('at')} {snap.fetched_at:%H:%M}. {t('Will try again automatically in a few minutes.')}"
+        st.warning(f"⚠️ {msg}")
 
 
 def source_text(meta: dict | None) -> str:

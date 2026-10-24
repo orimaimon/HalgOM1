@@ -211,6 +211,8 @@ def _local(iso: str) -> dt.datetime:
 def load_universe(store: Store, fetch: Callable[..., pd.DataFrame], max_age: dt.timedelta,
                   force: bool = False, required: Iterable[str] = (), timeout: float | None = None) -> Snapshot:
     """`timeout` (seconds) is passed to fetch() when given: the app shortens it for retries while offline."""
+    from screener.data import guard
+
     def fresh(cached) -> bool:
         complete = cached is not None and set(required) <= set(cached[0].columns)
         if not complete or force:
@@ -230,10 +232,16 @@ def load_universe(store: Store, fetch: Callable[..., pd.DataFrame], max_age: dt.
             df = fetch() if timeout is None else fetch(timeout=timeout)
             if cached is not None and len(df) < 0.5 * len(cached[0]):
                 raise ValueError(f"universe shrank to {len(df)} rows from {len(cached[0])}")
+        except guard.Wait as w:
+            if cached is None:
+                raise
+            return Snapshot(cached[0], cached[1], "stale", error=guard.wait_message(w), meta=cached[2])
         except Exception as e:
             log.exception("fetch failed")
             if cached is None:
                 raise
-            return Snapshot(cached[0], cached[1], "stale", str(e), meta=cached[2])
+            w = guard.check_wait("tradingview")
+            err_msg = guard.wait_message(w) if w else str(e)
+            return Snapshot(cached[0], cached[1], "stale", error=err_msg, meta=cached[2])
         store.save(df, now)
         return Snapshot(df, now, "live", meta=df.attrs.get("source") or {})
