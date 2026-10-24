@@ -118,6 +118,7 @@ UI: dict[str, str] = {
     "Remove ticker": "הסרת סימול", "Remove": "הסרה", "Add trade": "הוספת עסקה", "Trades": "עסקאות",
     "Restore screen": "החזרת הסריקה", "Back to all stocks": "חזרה לכל המניות", "(changed)": "(שונה)",
     "Show in screener": "הצגה בסורק", "Export list": "ייצוא הרשימה", "Delete list": "מחיקת הרשימה",
+    "Stock comparison": "השוואת מניות", "Select 2 to 4 stocks": "בחרו 2 עד 4 מניות",
     "Ticker": "סימול", "Date": "תאריך", "Quantity": "כמות", "Side": "פעולה", "buy": "קנייה", "sell": "מכירה",
     "Fees": "עמלות", "Market value": "שווי נוכחי", "Cost": "עלות", "Unrealized P&L": "רווח/הפסד פתוח",
     "Realized P&L": "רווח/הפסד ממומש", "today": "היום", "Avg cost": "עלות ממוצעת", "P&L": "רווח/הפסד",
