@@ -88,6 +88,8 @@ UI: dict[str, str] = {
     "Clear all filters": "איפוס כל הפילטרים והחיפוש",
     "Save current screen as": "שמירת הסריקה הנוכחית בשם", "Save": "שמירה",
     "Delete saved screen": "מחיקת סריקה שמורה", "Delete": "מחיקה",
+    "Why is this stock in the screen?": "למה המניה בסריקה?",
+    "No active filters — all stocks shown": "אין פילטרים פעילים — כל המניות מוצגות",
     "Saved screen": "הסריקה נשמרה", "Deleted": "נמחקה",
     "A screen with this name already exists. Click save again to overwrite.":
         "סריקה בשם זה כבר קיימת. לחיצה נוספת על שמירה תעדכן אותה.",
