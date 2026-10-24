@@ -4,24 +4,17 @@ Moved verbatim from screener/app.py; behavior unchanged."""
 from __future__ import annotations
 
 import datetime as dt
-import re
 
 import pandas as pd
 import streamlit as st
 
 from screener import export, i18n as I, portfolio as PF
 
-from screener.ui.common import _sign_color, col_label, hebrew_note, log, on_reset, ss, t
+from screener.ui.common import sign_color, col_label, hebrew_note, log, on_reset, ss, t
+from screener.ui.watchlists import _add_and_report, _by_ticker
 
 
 # ─────────────────────────── Portfolios page ───────────────────────────────
-
-NEW_WATCHLIST = "— New watchlist —"
-
-
-def _by_ticker(df: pd.DataFrame, col: str = "price") -> pd.Series:
-    """ticker -> a universe column (prices come from the screener's data: no extra requests)."""
-    return df.drop_duplicates("ticker").set_index("ticker")[col]
 
 
 def _money(v: float) -> str:
@@ -62,31 +55,6 @@ def on_pf_new_watchlist():
     ss["pf_name"], ss["pf_new_name"] = name, ""
 
 
-def add_tickers(plist: PF.PList, text: str, prices: pd.Series) -> tuple[list[str], list[str]]:
-    """'aapl, msft nvda' -> (added, not in the screener). Tickers already in the list are skipped."""
-    added, unknown = [], []
-    for tk in filter(None, (PF.normalize_ticker(x) for x in re.split(r"[,;\s]+", text))):
-        if tk not in prices.index:
-            unknown.append(tk)
-        elif PF.add_to_watchlist(plist, tk, prices[tk]):
-            added.append(tk)
-    return added, unknown
-
-
-def _add_and_report(plist: PF.PList, text: str) -> None:
-    added, unknown = add_tickers(plist, text, _by_ticker(ss.get("df")))
-    try:
-        PF.save(plist)
-    except Exception as e:
-        log.warning("cannot save list %r: %s", plist.name, e)
-        st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
-        return
-    if added:
-        st.toast(f"{t('Added to')} “{plist.name}”: {', '.join(added)}", icon="✅")
-    if unknown:
-        st.toast(f"{t('Not found in screener')}: {', '.join(unknown)}", icon="⚠️")
-
-
 def on_pf_add_tickers():
     try:
         lists = PF.load_all()
@@ -102,27 +70,6 @@ def on_pf_add_tickers():
     if plist is not None:
         _add_and_report(plist, ss.get("pf_add") or "")
     ss["pf_add"] = ""
-
-
-def on_add_to_watchlist(ticker: str):
-    """From the stock details panel."""
-    name = ss.get("add_wl")
-    if name == NEW_WATCHLIST:
-        name = (ss.get("add_wl_name") or "").strip()
-        if not name:
-            return
-    try:
-        lists = PF.load_all()
-    except Exception as e:
-        log.warning("cannot load lists: %s", e)
-        st.toast(t("Cannot save right now, please try again later"), icon="⚠️")
-        return
-    plist = lists.get(name) or PF.PList(name, PF.WATCHLIST)
-    if plist.kind != PF.WATCHLIST:
-        st.toast(f"“{name}” {t('is a portfolio, not a watchlist')}", icon="⚠️")
-        return
-    _add_and_report(plist, ticker)
-    ss["add_wl"], ss["add_wl_name"] = name, ""
 
 
 def on_pf_remove():
@@ -279,7 +226,7 @@ def watchlist_view(plist: PF.PList, df: pd.DataFrame) -> None:
                   "change": cc.NumberColumn(col_label("change"), format="%.2f%%"),
                   "since_added_pct": cc.NumberColumn(t("Since added"), format="%.2f%%"),
                   "note": cc.TextColumn(t("Notes"))}
-        st.dataframe(w[cols].style.map(_sign_color, subset=["change", "since_added_pct"]), hide_index=True,
+        st.dataframe(w[cols].style.map(sign_color, subset=["change", "since_added_pct"]), hide_index=True,
                      column_config=config, placeholder="—", key="pf_watch_table", height=min(38 + 35 * len(w), 600))
     c1, c2, c3 = st.columns([2.4, 1, 1.4], vertical_alignment="bottom")
     c1.text_input(t("Add tickers"), key="pf_add", placeholder="AAPL, MSFT")
@@ -328,7 +275,7 @@ def portfolio_view(plist: PF.PList, df: pd.DataFrame) -> None:
                                                 help="תשואה שנתית ממוצעת לפי תאריך הקנייה הממוצע. מוצגת רק "
                                                      "אחרי 90 יום, כי לפני כן המספר מטעה"),
                   "first_buy": cc.DateColumn(t("First buy"), format="DD/MM/YYYY")}
-        st.dataframe(held[cols].style.map(_sign_color, subset=["change", "pnl", "pnl_pct", "annual_pct"]),
+        st.dataframe(held[cols].style.map(sign_color, subset=["change", "pnl", "pnl_pct", "annual_pct"]),
                      hide_index=True, column_config=config, placeholder="—", key="pf_positions",
                      height=min(38 + 35 * len(held), 600))
     hebrew_note(t("Average cost includes fees. Splits and dividends after purchase are not yet calculated."))
