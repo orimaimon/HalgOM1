@@ -8,6 +8,7 @@ from __future__ import annotations
 import duckdb
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 
 from screener import track
 
@@ -57,35 +58,34 @@ def signals_within(closes: pd.DataFrame, days: int = 5, prepared: bool = False) 
                 df_out[col] = pd.Series(dtype="boolean")
         return df_out
 
+    # For SMAs and breakouts within the last `days` bars, we need at most 250 + days + 5 bars
     lookback = min(len(closes), 250 + days + 5)
     closes_slice = closes.iloc[-lookback:]
 
     df_wide = closes_slice.reset_index().rename(columns={closes_slice.index.name or "index": "date"})
+    df_wide["bar_idx"] = np.arange(len(df_wide), dtype=int)
+    total_bars_val = len(df_wide)
+
+    pa_table = pa.Table.from_pandas(df_wide)
 
     con = duckdb.connect()
-    con.register("df_wide", df_wide)
+    con.register("df_wide", pa_table)
 
     sql = f"""
     WITH unpivoted AS (
         UNPIVOT df_wide
-        ON COLUMNS(* EXCLUDE (date))
+        ON COLUMNS(* EXCLUDE (date, bar_idx))
         INTO NAME ticker VALUE close
     ),
-    ordered AS (
-        SELECT ticker, date, close,
-               ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date) - 1 AS bar_idx,
-               COUNT(*) OVER (PARTITION BY ticker) AS total_bars
-        FROM unpivoted
-    ),
     smas AS (
-        SELECT ticker, date, close, bar_idx, total_bars,
+        SELECT ticker, close, bar_idx,
                CASE WHEN COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) = 50
                     THEN AVG(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 49 PRECEDING AND CURRENT ROW)
                     ELSE NULL END AS sma50,
                CASE WHEN COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) = 200
                     THEN AVG(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 199 PRECEDING AND CURRENT ROW)
                     ELSE NULL END AS sma200
-        FROM ordered
+        FROM unpivoted
     ),
     lags AS (
         SELECT *,
@@ -95,7 +95,7 @@ def signals_within(closes: pd.DataFrame, days: int = 5, prepared: bool = False) 
         FROM smas
     ),
     crosses AS (
-        SELECT ticker, bar_idx, total_bars,
+        SELECT ticker, bar_idx,
                (close IS NOT NULL AND sma50 IS NOT NULL AND prev_close IS NOT NULL AND prev_sma50 IS NOT NULL) AS valid_px_50,
                ((close IS NOT NULL AND sma50 IS NOT NULL AND prev_close IS NOT NULL AND prev_sma50 IS NOT NULL) AND (close > sma50) AND (prev_close <= prev_sma50)) AS cross_up_sma50,
                ((close IS NOT NULL AND sma50 IS NOT NULL AND prev_close IS NOT NULL AND prev_sma50 IS NOT NULL) AND (close < sma50) AND (prev_close >= prev_sma50)) AS cross_down_sma50,
@@ -106,9 +106,25 @@ def signals_within(closes: pd.DataFrame, days: int = 5, prepared: bool = False) 
 
                (sma50 IS NOT NULL AND sma200 IS NOT NULL AND prev_sma50 IS NOT NULL AND prev_sma200 IS NOT NULL) AS valid_sma_sma,
                ((sma50 IS NOT NULL AND sma200 IS NOT NULL AND prev_sma50 IS NOT NULL AND prev_sma200 IS NOT NULL) AND (sma50 > sma200) AND (prev_sma50 <= prev_sma200)) AS golden_cross,
-               ((sma50 IS NOT NULL AND sma200 IS NOT NULL AND prev_sma50 IS NOT NULL AND prev_sma200 IS NOT NULL) AND (sma50 < sma200) AND (prev_sma50 >= prev_sma200)) AS death_cross,
+               ((sma50 IS NOT NULL AND sma200 IS NOT NULL AND prev_sma50 IS NOT NULL AND prev_sma200 IS NOT NULL) AND (sma50 < sma200) AND (prev_sma50 >= prev_sma200)) AS death_cross
+        FROM lags
+    ),
+    agg_crosses AS (
+        SELECT ticker,
+               CASE WHEN BOOL_OR(cross_up_sma50) FILTER (WHERE bar_idx >= {total_bars_val} - {days}) THEN TRUE WHEN BOOL_OR(valid_px_50) FILTER (WHERE bar_idx >= {total_bars_val} - {days}) THEN FALSE ELSE NULL END AS cross_up_sma50,
+               CASE WHEN BOOL_OR(cross_down_sma50) FILTER (WHERE bar_idx >= {total_bars_val} - {days}) THEN TRUE WHEN BOOL_OR(valid_px_50) FILTER (WHERE bar_idx >= {total_bars_val} - {days}) THEN FALSE ELSE NULL END AS cross_down_sma50,
+               CASE WHEN BOOL_OR(cross_up_sma200) FILTER (WHERE bar_idx >= {total_bars_val} - {days}) THEN TRUE WHEN BOOL_OR(valid_px_200) FILTER (WHERE bar_idx >= {total_bars_val} - {days}) THEN FALSE ELSE NULL END AS cross_up_sma200,
+               CASE WHEN BOOL_OR(cross_down_sma200) FILTER (WHERE bar_idx >= {total_bars_val} - {days}) THEN TRUE WHEN BOOL_OR(valid_px_200) FILTER (WHERE bar_idx >= {total_bars_val} - {days}) THEN FALSE ELSE NULL END AS cross_down_sma200,
+               CASE WHEN BOOL_OR(golden_cross) FILTER (WHERE bar_idx >= {total_bars_val} - {days}) THEN TRUE WHEN BOOL_OR(valid_sma_sma) FILTER (WHERE bar_idx >= {total_bars_val} - {days}) THEN FALSE ELSE NULL END AS golden_cross,
+               CASE WHEN BOOL_OR(death_cross) FILTER (WHERE bar_idx >= {total_bars_val} - {days}) THEN TRUE WHEN BOOL_OR(valid_sma_sma) FILTER (WHERE bar_idx >= {total_bars_val} - {days}) THEN FALSE ELSE NULL END AS death_cross,
 
-               -- Breakouts
+               CASE WHEN MAX(bar_idx) FILTER (WHERE cross_up_sma200) IS NOT NULL THEN ({total_bars_val} - 1) - MAX(bar_idx) FILTER (WHERE cross_up_sma200) ELSE NULL END AS days_since_cross_up_sma200,
+               CASE WHEN MAX(bar_idx) FILTER (WHERE cross_down_sma200) IS NOT NULL THEN ({total_bars_val} - 1) - MAX(bar_idx) FILTER (WHERE cross_down_sma200) ELSE NULL END AS days_since_cross_down_sma200
+        FROM crosses
+        GROUP BY ticker
+    ),
+    recent_breakouts AS (
+        SELECT ticker,
                (close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING) = 20) AS valid_bo_20,
                ((close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING) = 20) AND close > MAX(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING)) AS breakout_20,
 
@@ -120,25 +136,20 @@ def signals_within(closes: pd.DataFrame, days: int = 5, prepared: bool = False) 
 
                (close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 250 PRECEDING AND 1 PRECEDING) = 250) AS valid_bo_250,
                ((close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 250 PRECEDING AND 1 PRECEDING) = 250) AND close > MAX(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 250 PRECEDING AND 1 PRECEDING)) AS breakout_250
-        FROM lags
+        FROM unpivoted
+        WHERE bar_idx >= {total_bars_val} - {days}
+    ),
+    agg_breakouts AS (
+        SELECT ticker,
+               CASE WHEN BOOL_OR(breakout_20) THEN TRUE WHEN BOOL_OR(valid_bo_20) THEN FALSE ELSE NULL END AS breakout_20,
+               CASE WHEN BOOL_OR(breakout_60) THEN TRUE WHEN BOOL_OR(valid_bo_60) THEN FALSE ELSE NULL END AS breakout_60,
+               CASE WHEN BOOL_OR(breakout_120) THEN TRUE WHEN BOOL_OR(valid_bo_120) THEN FALSE ELSE NULL END AS breakout_120,
+               CASE WHEN BOOL_OR(breakout_250) THEN TRUE WHEN BOOL_OR(valid_bo_250) THEN FALSE ELSE NULL END AS breakout_250
+        FROM recent_breakouts
+        GROUP BY ticker
     )
-    SELECT ticker,
-           CASE WHEN BOOL_OR(cross_up_sma50) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_px_50) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS cross_up_sma50,
-           CASE WHEN BOOL_OR(cross_down_sma50) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_px_50) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS cross_down_sma50,
-           CASE WHEN BOOL_OR(cross_up_sma200) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_px_200) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS cross_up_sma200,
-           CASE WHEN BOOL_OR(cross_down_sma200) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_px_200) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS cross_down_sma200,
-           CASE WHEN BOOL_OR(golden_cross) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_sma_sma) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS golden_cross,
-           CASE WHEN BOOL_OR(death_cross) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_sma_sma) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS death_cross,
-
-           CASE WHEN MAX(bar_idx) FILTER (WHERE cross_up_sma200) IS NOT NULL THEN (MAX(total_bars) - 1) - MAX(bar_idx) FILTER (WHERE cross_up_sma200) ELSE NULL END AS days_since_cross_up_sma200,
-           CASE WHEN MAX(bar_idx) FILTER (WHERE cross_down_sma200) IS NOT NULL THEN (MAX(total_bars) - 1) - MAX(bar_idx) FILTER (WHERE cross_down_sma200) ELSE NULL END AS days_since_cross_down_sma200,
-
-           CASE WHEN BOOL_OR(breakout_20) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_bo_20) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS breakout_20,
-           CASE WHEN BOOL_OR(breakout_60) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_bo_60) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS breakout_60,
-           CASE WHEN BOOL_OR(breakout_120) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_bo_120) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS breakout_120,
-           CASE WHEN BOOL_OR(breakout_250) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_bo_250) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS breakout_250
-    FROM crosses
-    GROUP BY ticker
+    SELECT c.*, b.breakout_20, b.breakout_60, b.breakout_120, b.breakout_250
+    FROM agg_crosses c JOIN agg_breakouts b USING (ticker)
     """
     raw_res = con.execute(sql).df().set_index("ticker").reindex(tickers)
     con.close()
@@ -184,9 +195,12 @@ def event_matrix(closes: pd.DataFrame, name: str, prepared: bool = False) -> pd.
 
     n_days, n_tickers = closes.shape
     df_wide = closes.reset_index().rename(columns={closes.index.name or "index": "date"})
+    df_wide["bar_idx"] = np.arange(len(df_wide), dtype=int)
+
+    pa_table = pa.Table.from_pandas(df_wide)
 
     con = duckdb.connect()
-    con.register("df_wide", df_wide)
+    con.register("df_wide", pa_table)
 
     if name in {"cross_up_sma50", "cross_down_sma50"}:
         event_expr = f"""
@@ -195,11 +209,11 @@ def event_matrix(closes: pd.DataFrame, name: str, prepared: bool = False) -> pd.
         """
         smas_cte = """
             smas AS (
-                SELECT ticker, date, close, bar_idx,
+                SELECT ticker, close, bar_idx,
                        CASE WHEN COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) = 50
                             THEN AVG(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 49 PRECEDING AND CURRENT ROW)
                             ELSE NULL END AS sma50
-                FROM ordered
+                FROM unpivoted
             ),
             lags AS (
                 SELECT *,
@@ -216,11 +230,11 @@ def event_matrix(closes: pd.DataFrame, name: str, prepared: bool = False) -> pd.
         """
         smas_cte = """
             smas AS (
-                SELECT ticker, date, close, bar_idx,
+                SELECT ticker, close, bar_idx,
                        CASE WHEN COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) = 200
                             THEN AVG(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 199 PRECEDING AND CURRENT ROW)
                             ELSE NULL END AS sma200
-                FROM ordered
+                FROM unpivoted
             ),
             lags AS (
                 SELECT *,
@@ -237,14 +251,14 @@ def event_matrix(closes: pd.DataFrame, name: str, prepared: bool = False) -> pd.
         """
         smas_cte = """
             smas AS (
-                SELECT ticker, date, close, bar_idx,
+                SELECT ticker, close, bar_idx,
                        CASE WHEN COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) = 50
                             THEN AVG(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 49 PRECEDING AND CURRENT ROW)
                             ELSE NULL END AS sma50,
                        CASE WHEN COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) = 200
                             THEN AVG(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 199 PRECEDING AND CURRENT ROW)
                             ELSE NULL END AS sma200
-                FROM ordered
+                FROM unpivoted
             ),
             lags AS (
                 SELECT *,
@@ -261,28 +275,23 @@ def event_matrix(closes: pd.DataFrame, name: str, prepared: bool = False) -> pd.
             AND close > MAX(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN {w} PRECEDING AND 1 PRECEDING)
         """
         smas_cte = ""
-        from_cte = "ordered"
+        from_cte = "unpivoted"
 
     smas_prefix = (smas_cte + ",") if smas_cte else ""
 
     sql = f"""
     WITH unpivoted AS (
         UNPIVOT df_wide
-        ON COLUMNS(* EXCLUDE (date))
+        ON COLUMNS(* EXCLUDE (date, bar_idx))
         INTO NAME ticker VALUE close
-    ),
-    ordered AS (
-        SELECT ticker, date, close,
-               ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date) - 1 AS bar_idx
-        FROM unpivoted
     ),
     {smas_prefix}
     events AS (
-        SELECT ticker, date,
+        SELECT ticker, bar_idx,
                ({event_expr}) AS fired
         FROM {from_cte}
     )
-    SELECT COALESCE(fired, FALSE) AS fired FROM events ORDER BY date, ticker
+    SELECT COALESCE(fired, FALSE) AS fired FROM events ORDER BY bar_idx, ticker
     """
     raw_arr = con.execute(sql).df()["fired"].to_numpy(dtype=bool)
     con.close()
