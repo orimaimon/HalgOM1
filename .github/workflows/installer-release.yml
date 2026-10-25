@@ -1,0 +1,33 @@
+name: Installer release
+
+# Publishes install_screener.bat as a download at a fixed link (the "installer" release):
+#   https://github.com/orimaimon/HalgOM1/releases/download/installer/install_screener.bat
+# A release asset downloads as a file; a raw link opens as text in the browser. The installer itself
+# downloads the latest main, so it only needs re-uploading when the installer file changes.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - install_screener.bat
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Upload install_screener.bat
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4      # .gitattributes gives the .bat its CRLF line endings
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view installer >/dev/null 2>&1 || gh release create installer \
+            --title "HalgOM Screener installer" \
+            --notes "Download install_screener.bat and double-click it. It installs the latest screener."
+          gh release upload installer install_screener.bat --clobber
