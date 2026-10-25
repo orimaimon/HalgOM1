@@ -1,10 +1,11 @@
 """Pure functions for history-based signals ("within the last N days").
 
 Calculates crosses of SMA50/SMA200 and breakouts over multiple windows
-from wide daily price history (index=trading days, columns=tickers).
+from wide daily price history (index=trading days, columns=tickers) using DuckDB SQL.
 """
 from __future__ import annotations
 
+import duckdb
 import numpy as np
 import pandas as pd
 
@@ -37,117 +38,6 @@ def prepare(closes: pd.DataFrame) -> pd.DataFrame:
     return adj.ffill(limit=5)
 
 
-def _fast_sma(arr: np.ndarray, w: int) -> np.ndarray:
-    """Fast rolling simple moving average over 2D numpy array (axis=0).
-
-    Requires min_periods = w (all w bars in window must be non-NaN).
-    """
-    n_bars, n_tickers = arr.shape
-    sma = np.full_like(arr, np.nan, dtype=float)
-    if n_bars < w:
-        return sma
-
-    nan_mask = np.isnan(arr)
-    valid_count = np.cumsum(~nan_mask, axis=0)
-    window_valid = valid_count[w - 1:] - np.vstack([np.zeros((1, n_tickers), dtype=int), valid_count[:-w]])
-
-    filled = np.nan_to_num(arr, nan=0.0)
-    cs = np.cumsum(filled, axis=0)
-    window_sum = cs[w - 1:] - np.vstack([np.zeros((1, n_tickers), dtype=float), cs[:-w]])
-
-    sma[w - 1:] = np.where(window_valid == w, window_sum / w, np.nan)
-    return sma
-
-
-def _cross_matrix(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Compute (cross_up, cross_down, valid) boolean 2D matrices."""
-    a_prev = np.vstack([np.full((1, a.shape[1]), np.nan), a[:-1]])
-    b_prev = np.vstack([np.full((1, b.shape[1]), np.nan), b[:-1]])
-
-    valid = ~np.isnan(a) & ~np.isnan(b) & ~np.isnan(a_prev) & ~np.isnan(b_prev)
-
-    cross_up = (a > b) & (a_prev <= b_prev) & valid
-    cross_down = (a < b) & (a_prev >= b_prev) & valid
-
-    return cross_up, cross_down, valid
-
-
-def _eval_within_matrix(events: np.ndarray, valid: np.ndarray, days: int, index: pd.Index) -> pd.Series:
-    """Evaluate event within last `days` bars for 2D matrices.
-
-    Returns pd.Series with 'boolean' dtype (True / False / pd.NA).
-    """
-    n_bars, n_tickers = events.shape
-    if n_bars == 0 or n_tickers == 0:
-        return pd.Series(pd.NA, index=index, dtype="boolean")
-
-    w_events = events[-days:]
-    w_valid = valid[-days:]
-
-    has_event = np.any(w_events, axis=0)
-    has_valid = np.any(w_valid, axis=0)
-
-    arr = np.full(n_tickers, pd.NA, dtype=object)
-    arr[has_valid] = False
-    arr[has_event] = True
-
-    return pd.Series(arr, index=index, dtype="boolean")
-
-
-def _days_since_matrix(events: np.ndarray, index: pd.Index) -> pd.Series:
-    """Calculate bars since most recent True event across history."""
-    n_bars, n_tickers = events.shape
-    if n_bars == 0 or n_tickers == 0:
-        return pd.Series(np.nan, index=index, dtype=float)
-
-    indices = np.arange(n_bars)[:, None]
-    match = np.where(events, indices, -1)
-    last_idx = np.max(match, axis=0)
-
-    days_since = np.where(last_idx >= 0, (n_bars - 1) - last_idx, np.nan)
-    return pd.Series(days_since, index=index, dtype=float)
-
-
-def _eval_breakout_within(arr: np.ndarray, w: int, days: int, index: pd.Index) -> pd.Series:
-    """Evaluate breakout over window `w` within last `days` bars directly."""
-    n_bars, n_tickers = arr.shape
-    if n_bars == 0 or n_tickers == 0:
-        return pd.Series(pd.NA, index=index, dtype="boolean")
-
-    # We need sub-array starting from bar -days - w
-    start = max(0, n_bars - days - w)
-    sub = arr[start:]
-    sub_bars = len(sub)
-
-    has_event = np.zeros(n_tickers, dtype=bool)
-    has_valid = np.zeros(n_tickers, dtype=bool)
-
-    # For each bar k in the last `days` bars (relative to end of sub)
-    lookback_bars = min(days, sub_bars)
-    for offset in range(lookback_bars, 0, -1):
-        idx = sub_bars - offset
-        if idx - w < 0:
-            continue
-        prev_w = sub[idx - w : idx]
-        with np.errstate(all="ignore"):
-            max_w = np.nanmax(prev_w, axis=0)
-        # A full window only: a stock listed 30 days ago has no 250-day high to break (NA, not True).
-        full = (~np.isnan(prev_w)).sum(axis=0) == w
-
-        curr = sub[idx]
-        valid_k = ~np.isnan(curr) & full
-        bo_k = (curr > max_w) & valid_k
-
-        has_event |= bo_k
-        has_valid |= valid_k
-
-    res_arr = np.full(n_tickers, pd.NA, dtype=object)
-    res_arr[has_valid] = False
-    res_arr[has_event] = True
-
-    return pd.Series(res_arr, index=index, dtype="boolean")
-
-
 def signals_within(closes: pd.DataFrame, days: int = 5, prepared: bool = False) -> pd.DataFrame:
     """Compute 'within last N days' signals from wide daily price closes.
 
@@ -167,33 +57,95 @@ def signals_within(closes: pd.DataFrame, days: int = 5, prepared: bool = False) 
                 df_out[col] = pd.Series(dtype="boolean")
         return df_out
 
-    arr = closes.to_numpy(dtype=float)
+    df_long = closes.reset_index().rename(columns={closes.index.name or "index": "date"})
 
-    # Rolling SMAs
-    sma50 = _fast_sma(arr, 50)
-    sma200 = _fast_sma(arr, 200)
+    con = duckdb.connect()
+    sql = f"""
+    WITH unpivoted AS (
+        UNPIVOT df_long
+        ON COLUMNS(* EXCLUDE (date))
+        INTO NAME ticker VALUE close
+    ),
+    ordered AS (
+        SELECT ticker, date, close,
+               ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date) - 1 AS bar_idx,
+               COUNT(*) OVER (PARTITION BY ticker) AS total_bars
+        FROM unpivoted
+    ),
+    smas AS (
+        SELECT *,
+               CASE WHEN COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) = 50
+                    THEN AVG(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 49 PRECEDING AND CURRENT ROW)
+                    ELSE NULL END AS sma50,
+               CASE WHEN COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) = 200
+                    THEN AVG(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 199 PRECEDING AND CURRENT ROW)
+                    ELSE NULL END AS sma200
+        FROM ordered
+    ),
+    lags AS (
+        SELECT *,
+               LAG(close) OVER (PARTITION BY ticker ORDER BY bar_idx) AS prev_close,
+               LAG(sma50) OVER (PARTITION BY ticker ORDER BY bar_idx) AS prev_sma50,
+               LAG(sma200) OVER (PARTITION BY ticker ORDER BY bar_idx) AS prev_sma200
+        FROM smas
+    ),
+    events AS (
+        SELECT *,
+               (close IS NOT NULL AND sma50 IS NOT NULL AND prev_close IS NOT NULL AND prev_sma50 IS NOT NULL) AS valid_px_50,
+               ((close IS NOT NULL AND sma50 IS NOT NULL AND prev_close IS NOT NULL AND prev_sma50 IS NOT NULL) AND (close > sma50) AND (prev_close <= prev_sma50)) AS cross_up_sma50,
+               ((close IS NOT NULL AND sma50 IS NOT NULL AND prev_close IS NOT NULL AND prev_sma50 IS NOT NULL) AND (close < sma50) AND (prev_close >= prev_sma50)) AS cross_down_sma50,
 
-    # Crosses
-    px_up_50, px_down_50, valid_px_50 = _cross_matrix(arr, sma50)
-    px_up_200, px_down_200, valid_px_200 = _cross_matrix(arr, sma200)
-    golden, death, valid_sma_sma = _cross_matrix(sma50, sma200)
+               (close IS NOT NULL AND sma200 IS NOT NULL AND prev_close IS NOT NULL AND prev_sma200 IS NOT NULL) AS valid_px_200,
+               ((close IS NOT NULL AND sma200 IS NOT NULL AND prev_close IS NOT NULL AND prev_sma200 IS NOT NULL) AND (close > sma200) AND (prev_close <= prev_sma200)) AS cross_up_sma200,
+               ((close IS NOT NULL AND sma200 IS NOT NULL AND prev_close IS NOT NULL AND prev_sma200 IS NOT NULL) AND (close < sma200) AND (prev_close >= prev_sma200)) AS cross_down_sma200,
 
-    res = {
-        "cross_up_sma50": _eval_within_matrix(px_up_50, valid_px_50, days, tickers),
-        "cross_down_sma50": _eval_within_matrix(px_down_50, valid_px_50, days, tickers),
-        "cross_up_sma200": _eval_within_matrix(px_up_200, valid_px_200, days, tickers),
-        "cross_down_sma200": _eval_within_matrix(px_down_200, valid_px_200, days, tickers),
-        "golden_cross": _eval_within_matrix(golden, valid_sma_sma, days, tickers),
-        "death_cross": _eval_within_matrix(death, valid_sma_sma, days, tickers),
-        "days_since_cross_up_sma200": _days_since_matrix(px_up_200, tickers),
-        "days_since_cross_down_sma200": _days_since_matrix(px_down_200, tickers),
-    }
+               (sma50 IS NOT NULL AND sma200 IS NOT NULL AND prev_sma50 IS NOT NULL AND prev_sma200 IS NOT NULL) AS valid_sma_sma,
+               ((sma50 IS NOT NULL AND sma200 IS NOT NULL AND prev_sma50 IS NOT NULL AND prev_sma200 IS NOT NULL) AND (sma50 > sma200) AND (prev_sma50 <= prev_sma200)) AS golden_cross,
+               ((sma50 IS NOT NULL AND sma200 IS NOT NULL AND prev_sma50 IS NOT NULL AND prev_sma200 IS NOT NULL) AND (sma50 < sma200) AND (prev_sma50 >= prev_sma200)) AS death_cross,
 
-    # Breakouts
-    for window in (20, 60, 120, 250):
-        res[f"breakout_{window}"] = _eval_breakout_within(arr, window, days, tickers)
+               -- Breakouts
+               (close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING) = 20) AS valid_bo_20,
+               ((close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING) = 20) AND close > MAX(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING)) AS breakout_20,
 
-    return pd.DataFrame(res, index=tickers)
+               (close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING) = 60) AS valid_bo_60,
+               ((close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING) = 60) AND close > MAX(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING)) AS breakout_60,
+
+               (close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 120 PRECEDING AND 1 PRECEDING) = 120) AS valid_bo_120,
+               ((close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 120 PRECEDING AND 1 PRECEDING) = 120) AND close > MAX(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 120 PRECEDING AND 1 PRECEDING)) AS breakout_120,
+
+               (close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 250 PRECEDING AND 1 PRECEDING) = 250) AS valid_bo_250,
+               ((close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 250 PRECEDING AND 1 PRECEDING) = 250) AND close > MAX(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 250 PRECEDING AND 1 PRECEDING)) AS breakout_250
+        FROM lags
+    )
+    SELECT ticker,
+           CASE WHEN BOOL_OR(cross_up_sma50) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_px_50) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS cross_up_sma50,
+           CASE WHEN BOOL_OR(cross_down_sma50) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_px_50) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS cross_down_sma50,
+           CASE WHEN BOOL_OR(cross_up_sma200) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_px_200) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS cross_up_sma200,
+           CASE WHEN BOOL_OR(cross_down_sma200) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_px_200) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS cross_down_sma200,
+           CASE WHEN BOOL_OR(golden_cross) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_sma_sma) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS golden_cross,
+           CASE WHEN BOOL_OR(death_cross) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_sma_sma) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS death_cross,
+
+           CASE WHEN MAX(bar_idx) FILTER (WHERE cross_up_sma200) IS NOT NULL THEN (MAX(total_bars) - 1) - MAX(bar_idx) FILTER (WHERE cross_up_sma200) ELSE NULL END AS days_since_cross_up_sma200,
+           CASE WHEN MAX(bar_idx) FILTER (WHERE cross_down_sma200) IS NOT NULL THEN (MAX(total_bars) - 1) - MAX(bar_idx) FILTER (WHERE cross_down_sma200) ELSE NULL END AS days_since_cross_down_sma200,
+
+           CASE WHEN BOOL_OR(breakout_20) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_bo_20) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS breakout_20,
+           CASE WHEN BOOL_OR(breakout_60) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_bo_60) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS breakout_60,
+           CASE WHEN BOOL_OR(breakout_120) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_bo_120) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS breakout_120,
+           CASE WHEN BOOL_OR(breakout_250) FILTER (WHERE bar_idx >= total_bars - {days}) THEN TRUE WHEN BOOL_OR(valid_bo_250) FILTER (WHERE bar_idx >= total_bars - {days}) THEN FALSE ELSE NULL END AS breakout_250
+    FROM events
+    GROUP BY ticker
+    """
+    raw_res = con.execute(sql).df().set_index("ticker").reindex(tickers)
+    con.close()
+
+    df_out = pd.DataFrame(index=tickers)
+    for col in SIGNAL_LABELS:
+        if col.startswith("days_since_"):
+            df_out[col] = raw_res[col].astype(float)
+        else:
+            df_out[col] = raw_res[col].astype("boolean")
+
+    return df_out
 
 
 def event_matrix(closes: pd.DataFrame, name: str, prepared: bool = False) -> pd.DataFrame:
@@ -225,32 +177,59 @@ def event_matrix(closes: pd.DataFrame, name: str, prepared: bool = False) -> pd.
     if closes.empty:
         return pd.DataFrame(False, index=closes.index, columns=closes.columns, dtype=bool)
 
-    arr = closes.to_numpy(dtype=float)
+    df_long = closes.reset_index().rename(columns={closes.index.name or "index": "date"})
 
-    if name in {"cross_up_sma50", "cross_down_sma50"}:
-        sma50 = _fast_sma(arr, 50)
-        px_up, px_down, _ = _cross_matrix(arr, sma50)
-        matrix = px_up if name == "cross_up_sma50" else px_down
-        return pd.DataFrame(matrix, index=closes.index, columns=closes.columns, dtype=bool)
+    con = duckdb.connect()
+    sql = f"""
+    WITH unpivoted AS (
+        UNPIVOT df_long
+        ON COLUMNS(* EXCLUDE (date))
+        INTO NAME ticker VALUE close
+    ),
+    ordered AS (
+        SELECT ticker, date, close,
+               ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date) - 1 AS bar_idx
+        FROM unpivoted
+    ),
+    smas AS (
+        SELECT *,
+               CASE WHEN COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) = 50
+                    THEN AVG(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 49 PRECEDING AND CURRENT ROW)
+                    ELSE NULL END AS sma50,
+               CASE WHEN COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) = 200
+                    THEN AVG(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 199 PRECEDING AND CURRENT ROW)
+                    ELSE NULL END AS sma200
+        FROM ordered
+    ),
+    lags AS (
+        SELECT *,
+               LAG(close) OVER (PARTITION BY ticker ORDER BY bar_idx) AS prev_close,
+               LAG(sma50) OVER (PARTITION BY ticker ORDER BY bar_idx) AS prev_sma50,
+               LAG(sma200) OVER (PARTITION BY ticker ORDER BY bar_idx) AS prev_sma200
+        FROM smas
+    ),
+    events AS (
+        SELECT ticker, date,
+               ((close IS NOT NULL AND sma50 IS NOT NULL AND prev_close IS NOT NULL AND prev_sma50 IS NOT NULL) AND (close > sma50) AND (prev_close <= prev_sma50)) AS cross_up_sma50,
+               ((close IS NOT NULL AND sma50 IS NOT NULL AND prev_close IS NOT NULL AND prev_sma50 IS NOT NULL) AND (close < sma50) AND (prev_close >= prev_sma50)) AS cross_down_sma50,
 
-    if name in {"cross_up_sma200", "cross_down_sma200"}:
-        sma200 = _fast_sma(arr, 200)
-        px_up, px_down, _ = _cross_matrix(arr, sma200)
-        matrix = px_up if name == "cross_up_sma200" else px_down
-        return pd.DataFrame(matrix, index=closes.index, columns=closes.columns, dtype=bool)
+               ((close IS NOT NULL AND sma200 IS NOT NULL AND prev_close IS NOT NULL AND prev_sma200 IS NOT NULL) AND (close > sma200) AND (prev_close <= prev_sma200)) AS cross_up_sma200,
+               ((close IS NOT NULL AND sma200 IS NOT NULL AND prev_close IS NOT NULL AND prev_sma200 IS NOT NULL) AND (close < sma200) AND (prev_close >= prev_sma200)) AS cross_down_sma200,
 
-    if name in {"golden_cross", "death_cross"}:
-        sma50 = _fast_sma(arr, 50)
-        sma200 = _fast_sma(arr, 200)
-        golden, death, _ = _cross_matrix(sma50, sma200)
-        matrix = golden if name == "golden_cross" else death
-        return pd.DataFrame(matrix, index=closes.index, columns=closes.columns, dtype=bool)
+               ((sma50 IS NOT NULL AND sma200 IS NOT NULL AND prev_sma50 IS NOT NULL AND prev_sma200 IS NOT NULL) AND (sma50 > sma200) AND (prev_sma50 <= prev_sma200)) AS golden_cross,
+               ((sma50 IS NOT NULL AND sma200 IS NOT NULL AND prev_sma50 IS NOT NULL AND prev_sma200 IS NOT NULL) AND (sma50 < sma200) AND (prev_sma50 >= prev_sma200)) AS death_cross,
 
-    # Breakout signals (breakout_20, breakout_60, breakout_120, breakout_250)
-    w = int(name.split("_")[1])
-    shifted = closes.shift(1)
-    rolled_max = shifted.rolling(w, min_periods=w).max()
-    rolled_count = shifted.rolling(w, min_periods=w).count()
-    full = rolled_count == w
-    bo = (closes > rolled_max) & full & closes.notna()
-    return bo.astype(bool)
+               -- Breakouts
+               ((close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING) = 20) AND close > MAX(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING)) AS breakout_20,
+               ((close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING) = 60) AND close > MAX(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 60 PRECEDING AND 1 PRECEDING)) AS breakout_60,
+               ((close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 120 PRECEDING AND 1 PRECEDING) = 120) AND close > MAX(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 120 PRECEDING AND 1 PRECEDING)) AS breakout_120,
+               ((close IS NOT NULL AND COUNT(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 250 PRECEDING AND 1 PRECEDING) = 250) AND close > MAX(close) OVER (PARTITION BY ticker ORDER BY bar_idx ROWS BETWEEN 250 PRECEDING AND 1 PRECEDING)) AS breakout_250
+        FROM lags
+    )
+    SELECT date, ticker, COALESCE({name}, FALSE) AS fired FROM events
+    """
+    raw_df = con.execute(sql).df()
+    con.close()
+
+    pivoted = raw_df.pivot(index="date", columns="ticker", values="fired").fillna(False).astype(bool)
+    return pivoted.reindex(index=closes.index, columns=closes.columns, fill_value=False)
