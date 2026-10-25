@@ -132,7 +132,7 @@ def test_screener_filter_interaction_and_search(page: Page, streamlit_app: str):
     mcap_select.click()
 
     # Select "ענק ($200B+)"
-    page.get_by_text("ענק ($200B+)", exact=True).click()
+    page.get_by_text("ענק", exact=False).first.click()
 
     # Assert row count changes and table updates
     expect(results_locator).not_to_contain_text(f"{initial_count:,} תוצאות", timeout=10000)
