@@ -217,3 +217,91 @@ def test_labels_dict():
     assert backtest.LABELS["disclaimer"] == "תוצאות עבר על נתוני היסטוריה; אינן מבטיחות תוצאות בעתיד ואינן ייעוץ השקעות."
     for k in ("signal", "events", "tickers", "first_day", "last_day", "n", "pending", "median", "mean", "pct_positive", "excess"):
         assert k in backtest.LABELS
+
+
+def test_duckdb_compute_returns_parity():
+    """Verify compute_returns DuckDB implementation exact match with Pandas logic."""
+    prices_list = [100.0, 105.0, 102.0, 108.0, 95.0, 90.0, 100.0, 110.0]
+    p_series = pd.Series(prices_list, index=pd.date_range("2024-01-01", periods=8))
+
+    # Test forward returns
+    for h in (1, 2, 3):
+        # Pandas expected
+        exp_fwd = (p_series.shift(-h) / p_series - 1.0) * 100.0
+        res_fwd = backtest.compute_returns(p_series, horizon=h, kind="forward")
+        pd.testing.assert_series_equal(res_fwd, exp_fwd)
+
+        # Test trailing returns
+        exp_trail = (p_series / p_series.shift(h) - 1.0) * 100.0
+        res_trail = backtest.compute_returns(p_series, horizon=h, kind="trailing")
+        pd.testing.assert_series_equal(res_trail, exp_trail)
+
+    # DataFrame test
+    df_prices = pd.DataFrame({"AAPL": p_series, "MSFT": p_series * 1.5})
+    res_df = backtest.compute_returns(df_prices, horizon=2, kind="forward")
+    exp_df = (df_prices.shift(-2) / df_prices - 1.0) * 100.0
+    pd.testing.assert_frame_equal(res_df, exp_df)
+
+    # Numpy array test
+    arr_prices = np.array(prices_list)
+    res_arr = backtest.compute_returns(arr_prices, horizon=1, kind="forward")
+    exp_arr = ((np.roll(arr_prices, -1) / arr_prices - 1.0) * 100.0)
+    exp_arr[-1] = np.nan
+    np.testing.assert_allclose(res_arr[:-1], exp_arr[:-1])
+    assert np.isnan(res_arr[-1])
+
+    # Exception checks
+    with pytest.raises(ValueError, match="Horizon must be a positive integer"):
+        backtest.compute_returns(p_series, horizon=0)
+    with pytest.raises(ValueError, match="Unknown kind"):
+        backtest.compute_returns(p_series, kind="invalid")
+
+
+def test_duckdb_compute_sharpe_parity():
+    """Verify compute_sharpe DuckDB implementation exact match with Pandas logic."""
+    np.random.seed(42)
+    rets = np.random.normal(0.001, 0.02, 100)
+
+    # Pandas baseline Sharpe
+    s_series = pd.Series(rets)
+    rf = 0.0001
+    excess = s_series - rf
+    exp_sharpe = float(excess.mean() / excess.std(ddof=1))
+    exp_sharpe_ann = exp_sharpe * np.sqrt(252)
+
+    res_sharpe = backtest.compute_sharpe(rets, rf=rf)
+    assert res_sharpe is not None
+    assert np.isclose(res_sharpe, exp_sharpe)
+
+    res_sharpe_ann = backtest.compute_sharpe(rets, rf=rf, annualize=True, period_factor=252)
+    assert res_sharpe_ann is not None
+    assert np.isclose(res_sharpe_ann, exp_sharpe_ann)
+
+    # Edge cases
+    assert backtest.compute_sharpe([]) is None
+    assert backtest.compute_sharpe([1.0]) is None
+    assert backtest.compute_sharpe([2.0, 2.0, 2.0]) is None  # zero std
+    assert backtest.compute_sharpe([np.nan, np.nan]) is None
+
+
+def test_duckdb_compute_drawdown_parity():
+    """Verify compute_drawdown DuckDB implementation exact match with Pandas logic."""
+    prices_list = [100.0, 105.0, 102.0, 108.0, 95.0, 90.0, 100.0, 110.0]
+    p_series = pd.Series(prices_list)
+
+    # Pandas baseline drawdown
+    peak = p_series.cummax()
+    exp_dd = float(((p_series - peak) / peak * 100.0).min())
+
+    res_dd = backtest.compute_drawdown(p_series)
+    assert res_dd is not None
+    assert np.isclose(res_dd, exp_dd)
+
+    # List input
+    res_dd_list = backtest.compute_drawdown(prices_list)
+    assert res_dd_list is not None
+    assert np.isclose(res_dd_list, exp_dd)
+
+    # Edge cases
+    assert backtest.compute_drawdown([]) is None
+    assert backtest.compute_drawdown([np.nan, np.nan]) is None
