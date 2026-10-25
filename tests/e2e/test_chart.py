@@ -7,7 +7,9 @@ import sys
 import time
 import urllib.request
 import pytest
-from playwright.sync_api import Page
+
+pytest.importorskip("playwright")
+from playwright.sync_api import Page  # noqa: E402
 
 
 def find_free_port() -> int:
