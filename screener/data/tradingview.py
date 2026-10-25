@@ -161,8 +161,11 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
         if key not in df.columns:
             continue
         if col.kind == "date":
-            df[key] = pd.to_datetime(pd.to_numeric(df[key], errors="coerce"), unit="s", utc=True)
-            df[key] = df[key].dt.tz_convert("America/New_York").dt.tz_localize(None).dt.normalize()
+            if not pd.api.types.is_datetime64_any_dtype(df[key]):
+                df[key] = pd.to_datetime(pd.to_numeric(df[key], errors="coerce"), unit="s", utc=True)
+            if df[key].dt.tz is not None:
+                df[key] = df[key].dt.tz_convert("America/New_York").dt.tz_localize(None)
+            df[key] = df[key].dt.normalize()
         elif col.kind != "text":
             df[key] = pd.to_numeric(df[key], errors="coerce").astype(float)
 
