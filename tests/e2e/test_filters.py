@@ -50,7 +50,7 @@ import screener.export as export
 import screener.data.tradingview as tv
 import pandas as pd
 
-data_dir = Path('{data_dir}')
+data_dir = Path(r"{data_dir}")
 store_mod.DATA_DIR = data_dir
 P.PRESETS_PATH = data_dir / 'presets.json'
 PF.PORTFOLIOS_PATH = data_dir / 'portfolios.json'
