@@ -8,7 +8,7 @@ import streamlit as st
 
 from screener import explain, i18n, portfolio
 from screener.theme import GAIN, LOSS
-from screener.ui import explain_panel
+from screener.ui import explain_panel, sizing_panel
 from screener.ui.common import L, col_label, hebrew_note, ss, t
 from screener.ui.screener_page import tradingview_chart
 
@@ -166,8 +166,10 @@ def render(res: pd.DataFrame, selections: dict[str, str] | None = None) -> None:
             portfolio.save(plist)
             st.toast(f"{t('Added to')} {target_name}: {ticker}", icon="✅")
 
-        # Explain Panel
-        explain_panel.render(row, selections or {})
+        # Explain Panel & Position Sizer (skip if detail() already rendered them on this page)
+        if not ss.get("selected_ticker"):
+            explain_panel.render(row, selections or {})
+            sizing_panel.render(row)
 
     except Exception:
         log.exception("Error rendering fast chart review")
