@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+
+pytest.importorskip("playwright")
 from playwright.sync_api import Page, expect
 
 from screener.data.store import Store
