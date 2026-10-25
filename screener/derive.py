@@ -9,9 +9,100 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 
+from pathlib import Path
+from typing import Any
+
+import duckdb
+
 from screener.fields import COLUMNS
 from screener.scores import add_scores
 from screener.signals import summarize
+
+
+def _build_where_clause(where: str | list[str] | dict[str, Any] | None) -> tuple[str, list[Any]]:
+    """Convert where specification into a SQL WHERE clause and positional parameter list."""
+    if not where:
+        return "", []
+    if isinstance(where, str):
+        w = where.strip()
+        return (f" WHERE {w}", []) if w else ("", [])
+    if isinstance(where, (list, tuple)):
+        parts = [p.strip() for p in where if isinstance(p, str) and p.strip()]
+        return (f" WHERE {' AND '.join(parts)}", []) if parts else ("", [])
+    if isinstance(where, dict):
+        clauses = []
+        params = []
+        for k, v in where.items():
+            col_name = k
+            if k.startswith("min_"):
+                col_name = k[4:]
+                clauses.append(f'"{col_name}" >= ?')
+                params.append(v)
+            elif k.startswith("max_"):
+                col_name = k[4:]
+                clauses.append(f'"{col_name}" <= ?')
+                params.append(v)
+            elif isinstance(v, (tuple, list)):
+                if len(v) == 2 and isinstance(v[0], str) and v[0].upper() in (">", ">=", "<", "<=", "=", "!=", "LIKE", "ILIKE"):
+                    clauses.append(f'"{col_name}" {v[0]} ?')
+                    params.append(v[1])
+                elif len(v) == 2 and isinstance(v[0], (int, float)) and isinstance(v[1], (int, float)):
+                    clauses.append(f'"{col_name}" BETWEEN ? AND ?')
+                    params.extend([v[0], v[1]])
+                elif v and all(isinstance(x, (str, int, float)) for x in v):
+                    placeholders = ", ".join(["?"] * len(v))
+                    clauses.append(f'"{col_name}" IN ({placeholders})')
+                    params.extend(v)
+            elif v is None:
+                clauses.append(f'"{col_name}" IS NULL')
+            else:
+                clauses.append(f'"{col_name}" = ?')
+                params.append(v)
+        return (f" WHERE {' AND '.join(clauses)}", params) if clauses else ("", [])
+    raise ValueError(f"Unsupported where clause type: {type(where)}")
+
+
+def load_filtered_universe(
+    path: str | Path,
+    where: str | list[str] | dict[str, Any] | None = None,
+    columns: list[str] | None = None,
+    add_derived_cols: bool = False,
+    today: dt.date | None = None,
+) -> pd.DataFrame:
+    """Load stock universe from Parquet using DuckDB predicate pushdown.
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to the Parquet file.
+    where : str, list of str, dict, or None
+        SQL WHERE predicate(s) or dictionary of column constraints for filtering.
+    columns : list of str, optional
+        Specific columns to select. If None, selects all columns (*).
+    add_derived_cols : bool, default False
+        If True, runs add_derived() on the loaded filtered DataFrame.
+    today : dt.date, optional
+        Reference date passed to add_derived() if add_derived_cols is True.
+
+    Returns
+    -------
+    pd.DataFrame
+        Filtered stock universe DataFrame with 100% numerical parity with Pandas loader.
+    """
+    path_str = str(Path(path).resolve())
+    cols_sql = ", ".join(f'"{c}"' for c in columns) if columns else "*"
+    where_sql, params = _build_where_clause(where)
+
+    query = f"SELECT {cols_sql} FROM read_parquet(?){where_sql}"
+    all_params = [path_str] + params
+
+    with duckdb.connect() as con:
+        df = con.execute(query, all_params).df()
+
+    if add_derived_cols:
+        df = add_derived(df, today=today)
+
+    return df
 
 
 def _pct_from(a: pd.Series, b: pd.Series) -> pd.Series:
