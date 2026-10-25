@@ -162,10 +162,10 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
             continue
         if col.kind == "date":
             if pd.api.types.is_datetime64_any_dtype(df[key]):
-                dt_series = pd.to_datetime(df[key], utc=True)
+                df[key] = pd.to_datetime(df[key], utc=True)
             else:
-                dt_series = pd.to_datetime(pd.to_numeric(df[key], errors="coerce"), unit="s", utc=True)
-            df[key] = dt_series.dt.tz_convert("America/New_York").dt.tz_localize(None).dt.normalize()
+                df[key] = pd.to_datetime(pd.to_numeric(df[key], errors="coerce"), unit="s", utc=True)
+            df[key] = df[key].dt.tz_convert("America/New_York").dt.tz_localize(None).dt.normalize()
         elif col.kind != "text":
             df[key] = pd.to_numeric(df[key], errors="coerce").astype(float)
 
