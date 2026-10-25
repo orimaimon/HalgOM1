@@ -1,10 +1,16 @@
+import datetime as dt
 import os
 import socket
 import subprocess
 import sys
 import time
 import urllib.request
+
 import pytest
+
+from screener.data.store import Store
+from screener.data.tradingview import clean
+from tests.test_screener import make_raw
 
 
 def find_free_port() -> int:
@@ -14,57 +20,58 @@ def find_free_port() -> int:
 
 
 @pytest.fixture(scope="session")
-def streamlit_app():
-    port = find_free_port()
-    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    app_path = os.path.join(repo_root, "screener", "app.py")
+def streamlit_app(tmp_path_factory):
+    """Start Streamlit server in headless mode with offline synthetic data."""
+    data_dir = tmp_path_factory.mktemp("e2e_data")
 
+    # Populate synthetic snapshot so app loads offline immediately
+    raw = clean(make_raw(300).assign(is_primary=True, currency="USD"))
+    raw.attrs["source"] = {"provider": "tradingview", "update_mode": "delayed", "delay_min": 15}
+    store = Store(data_dir)
+    store.save(raw, dt.datetime.now().astimezone())
+
+    port = find_free_port()
     env = os.environ.copy()
-    env["PYTHONPATH"] = repo_root
+    env["HALGOM_DATA_DIR"] = str(data_dir)
+    env["STREAMLIT_SERVER_HEADLESS"] = "true"
+    env["SCREENER_NO_BROWSER"] = "1"
+    env["SCREENER_NO_UPDATE"] = "1"
 
     cmd = [
         sys.executable,
         "-m",
         "streamlit",
         "run",
-        app_path,
-        f"--server.port={port}",
-        "--server.headless=true",
+        "screener/app.py",
+        "--server.port",
+        str(port),
+        "--server.headless",
+        "true",
     ]
 
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=env,
-        cwd=repo_root,
-    )
+    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     url = f"http://127.0.0.1:{port}"
-    timeout = 30
+    health_url = f"{url}/_stcore/health"
     start_time = time.time()
-    started = False
-
-    while time.time() - start_time < timeout:
-        if proc.poll() is not None:
-            stdout, stderr = proc.communicate()
-            raise RuntimeError(
-                f"Streamlit process exited prematurely with code {proc.returncode}.\n"
-                f"stdout: {stdout.decode()}\n"
-                f"stderr: {stderr.decode()}"
-            )
+    up = False
+    while time.time() - start_time < 30:
         try:
-            with urllib.request.urlopen(url, timeout=1) as response:
-                if response.status == 200:
-                    started = True
+            with urllib.request.urlopen(health_url, timeout=2) as resp:
+                if resp.read().decode("utf-8").strip() == "ok":
+                    up = True
                     break
         except Exception:
-            time.sleep(0.5)
+            pass
+        if proc.poll() is not None:
+            stdout, stderr = proc.communicate()
+            raise RuntimeError(f"Streamlit process exited prematurely:\n{stderr.decode('utf-8')}")
+        time.sleep(0.5)
 
-    if not started:
+    if not up:
         proc.kill()
-        proc.wait()
-        raise TimeoutError(f"Streamlit failed to boot on {url} within {timeout} seconds.")
+        stdout, stderr = proc.communicate()
+        raise RuntimeError(f"Streamlit server did not become healthy in 30s:\n{stderr.decode('utf-8')}")
 
     yield url
 
@@ -73,4 +80,3 @@ def streamlit_app():
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
-        proc.wait()
