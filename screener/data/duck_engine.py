@@ -1,7 +1,8 @@
 """
 DuckDB Engine & Storage Parity Engine.
 
-Provides DuckDB connection management (enforcing read-only access mode),
+Provides lightweight DuckDB SQL querying over Parquet files returning pandas DataFrames,
+DuckDB connection management (enforcing read-only access mode),
 Parquet file integrity verification, Parquet schema verification, storage parity comparison against Pandas,
 and health check capabilities for local Parquet files in screener/_data/.
 """
@@ -9,12 +10,100 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable, Sequence
 
 import duckdb
 import pandas as pd
 
 log = logging.getLogger(__name__)
+
+
+def _is_sql(s: str) -> bool:
+    """Check if a string looks like a SQL query rather than a file path."""
+    s_strip = s.strip()
+    if "\n" in s_strip or ";" in s_strip:
+        return True
+    first_word = s_strip.split(maxsplit=1)[0].upper() if s_strip else ""
+    sql_keywords = {
+        "SELECT",
+        "WITH",
+        "EXPLAIN",
+        "DESCRIBE",
+        "SHOW",
+        "FROM",
+        "PRAGMA",
+        "CREATE",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+    }
+    return first_word in sql_keywords
+
+
+def query_parquet_df(
+    sql_or_path: str | Path | Sequence[str | Path] | None = None,
+    sql: str | None = None,
+    params: list | tuple | dict | None = None,
+    *,
+    parquet_path: str | Path | Sequence[str | Path] | None = None,
+) -> pd.DataFrame:
+    """Execute a DuckDB query over Parquet file(s) and return the result as a pandas DataFrame.
+
+    Args:
+        sql_or_path: SQL query string, or path to a Parquet file, or sequence of paths.
+        sql: SQL query string (when passed as a keyword or second positional argument).
+        params: Optional parameters for parameterized DuckDB queries.
+        parquet_path: Path to Parquet file or sequence of paths (keyword argument).
+
+    Returns:
+        pd.DataFrame containing query results.
+    """
+    target_path = parquet_path
+    query_str = sql
+
+    if sql_or_path is not None:
+        if isinstance(sql_or_path, Path) or (
+            isinstance(sql_or_path, (list, tuple, set)) and not isinstance(sql_or_path, (str, bytes))
+        ):
+            if target_path is None:
+                target_path = sql_or_path
+            elif query_str is None and isinstance(sql_or_path, str):
+                query_str = sql_or_path
+        elif isinstance(sql_or_path, str):
+            if query_str is not None or target_path is not None:
+                if query_str is None:
+                    query_str = sql_or_path
+                elif target_path is None:
+                    target_path = sql_or_path
+            else:
+                if _is_sql(sql_or_path):
+                    query_str = sql_or_path
+                else:
+                    target_path = sql_or_path
+
+    if query_str is None and target_path is not None:
+        query_str = "SELECT * FROM read_parquet(?)"
+
+    if query_str is None:
+        raise ValueError("Either a SQL query or a parquet_path must be provided.")
+
+    # Convert target_path to parameter if needed when query contains '?'
+    if target_path is not None and "?" in query_str and (params is None or len(params) == 0):
+        if isinstance(target_path, (list, tuple, set)) and not isinstance(target_path, (str, bytes, Path)):
+            formatted_paths = [str(p) for p in target_path]
+            params = [formatted_paths]
+        else:
+            params = [str(target_path)]
+
+    conn = duckdb.connect()
+    try:
+        if params is not None:
+            rel = conn.execute(query_str, params)
+        else:
+            rel = conn.execute(query_str)
+        return rel.df()
+    finally:
+        conn.close()
 
 
 def get_connection(db_path: Path | str | None = None, read_only: bool = True) -> duckdb.DuckDBPyConnection:
@@ -150,62 +239,64 @@ def health_check(data_dir: Path | str | None = None) -> dict:
             "total_files": int,
             "valid_files": int,
             "corrupted_files": int,
-            "details": list[dict]
+            "files": list[dict],
+            "error": str | None
         }
     """
-    if data_dir is None:
-        from screener.data.store import DATA_DIR
-        data_dir = DATA_DIR
-
-    d_path = Path(data_dir)
-    engine_ok = False
     try:
-        conn = get_connection(read_only=True)
-        one = conn.execute("SELECT 1").fetchone()[0]
-        conn.close()
-        engine_ok = (one == 1)
+        import duckdb
+        ver = duckdb.__version__
     except Exception as e:
-        log.error("DuckDB engine health check failed: %s", e)
-
-    if not engine_ok:
         return {
             "status": "error",
-            "duckdb_version": duckdb.__version__,
+            "duckdb_version": "unknown",
             "total_files": 0,
             "valid_files": 0,
             "corrupted_files": 0,
-            "details": [],
-            "error": "Engine connection check failed",
+            "files": [],
+            "error": str(e),
         }
 
-    parquet_files = sorted(list(d_path.rglob("*.parquet"))) if d_path.exists() else []
-    details = []
-    valid_count = 0
+    target_dir = Path(data_dir) if data_dir is not None else Path(__file__).resolve().parent.parent / "_data"
+
+    if not target_dir.exists():
+        return {
+            "status": "ok",
+            "duckdb_version": ver,
+            "total_files": 0,
+            "valid_files": 0,
+            "corrupted_files": 0,
+            "files": [],
+            "error": None,
+        }
+
+    parquet_files = list(target_dir.rglob("*.parquet"))
+    results = []
     corrupted_count = 0
 
-    for p in parquet_files:
-        res = verify_parquet_integrity(p)
-        details.append(res)
-        if res["valid"]:
-            valid_count += 1
-        else:
+    for pf in parquet_files:
+        info = verify_parquet_integrity(pf)
+        results.append(info)
+        if not info["valid"]:
             corrupted_count += 1
 
-    status = "ok" if corrupted_count == 0 else "degraded"
+    status = "ok"
+    if corrupted_count > 0:
+        status = "degraded"
+
     return {
         "status": status,
-        "duckdb_version": duckdb.__version__,
+        "duckdb_version": ver,
         "total_files": len(parquet_files),
-        "valid_files": valid_count,
+        "valid_files": len(parquet_files) - corrupted_count,
         "corrupted_files": corrupted_count,
-        "details": details,
+        "files": results,
+        "error": None,
     }
 
 
 def check_storage_parity(df_pandas: pd.DataFrame, parquet_path: Path | str) -> dict:
-    """Verify parity between a Pandas DataFrame and DuckDB reading of the corresponding Parquet file.
-
-    Compares row count, columns, null counts, and values.
+    """Check numerical and schema parity between an in-memory Pandas DataFrame and Parquet on disk via DuckDB.
 
     Returns:
         dict: {
@@ -224,7 +315,7 @@ def check_storage_parity(df_pandas: pd.DataFrame, parquet_path: Path | str) -> d
             "rows_pandas": len(df_pandas),
             "rows_duck": 0,
             "columns_match": False,
-            "mismatches": ["Parquet file does not exist"],
+            "mismatches": [f"Parquet file does not exist: {p}"],
             "error": f"File does not exist: {p}",
         }
 
