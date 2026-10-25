@@ -29,7 +29,7 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "_data"
+DATA_DIR = Path(os.environ.get("HALGOM_DATA_DIR", Path(__file__).resolve().parent.parent / "_data"))
 MARKET_TZ = "America/New_York"      # snapshot days are US market days
 
 
