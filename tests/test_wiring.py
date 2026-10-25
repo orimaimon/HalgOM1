@@ -28,7 +28,12 @@ def test_screener_page_with_row_selection(app):
         raise app.exception[0]
     assert not app.exception
 
-    # Select a ticker to open the detail view (which calls explain_panel.render)
+    # Verify fast chart review and position sizer expanders are present on Screener results
+    expanders = [e.label or "" for e in app.get("expander")]
+    assert any("דפדוף מהיר" in lbl or "Fast chart review" in lbl for lbl in expanders)
+    assert any("מחשבון גודל" in lbl or "Position sizer" in lbl for lbl in expanders)
+
+    # Select a ticker and re-run to verify no duplicate key or exception
     res = app.session_state["pipeline_res"]
     assert not res.empty
     ticker = str(res.iloc[0]["ticker"])
@@ -40,7 +45,7 @@ def test_screener_page_with_row_selection(app):
 
 
 def test_groups_page_tabs_and_breadth(app):
-    """Groups page renders all 3 tabs (Averages, Track record, Market breadth)."""
+    """Groups page renders all 4 tabs (Averages, Sector rotation, Track record, Market breadth)."""
     app.run()
     app.segmented_control(key="page").select("Groups").run()
     if app.exception:
@@ -49,7 +54,7 @@ def test_groups_page_tabs_and_breadth(app):
 
     # Verify tabs exist
     tabs = app.get("tabs")
-    assert tabs, "Tabs component missing on Groups page"
+    assert len(tabs) == 4
 
 
 def test_heatmap_page(app):
@@ -79,13 +84,33 @@ def test_portfolios_page_tabs_and_alerts(app):
         raise app.exception[0]
     assert not app.exception
 
-    # Verify tabs exist for portfolio (Positions, History, Risk, Shekels)
+    # Verify tabs exist for portfolio (Positions, History, Risk, Trade journal, Shekels)
     tabs = app.get("tabs")
-    assert tabs, "Portfolio tabs missing"
+    assert len(tabs) == 5
 
-    # Verify alerts expander exists
-    expanders = app.get("expander")
-    assert any("התראות" in (e.label or "") or "Alerts" in (e.label or "") for e in expanders)
+    # Verify alerts and trailing stops expanders exist
+    expanders = [e.label or "" for e in app.get("expander")]
+    assert any("התראות" in lbl or "Alerts" in lbl for lbl in expanders)
+    assert any("סטופ" in lbl or "Trailing stops" in lbl for lbl in expanders)
+
+
+def test_portfolios_page_watchlist_triggers(app):
+    """Portfolios page renders watchlist triggers expander for a non-empty watchlist."""
+    wl = PF.PList(
+        name="WatchSample",
+        kind=PF.WATCHLIST,
+        rows=[{"ticker": "AAPL", "date": "2024-01-01", "price": 150.0, "note": "Breakout"}],
+    )
+    PF.save(wl)
+
+    app.run()
+    app.segmented_control(key="page").select("Portfolios").run()
+    if app.exception:
+        raise app.exception[0]
+    assert not app.exception
+
+    expanders = [e.label or "" for e in app.get("expander")]
+    assert any("תוכנית עבודה" in lbl or "Trading playbook" in lbl for lbl in expanders)
 
 
 def test_guide_page_shows_maintenance_panel(app):
