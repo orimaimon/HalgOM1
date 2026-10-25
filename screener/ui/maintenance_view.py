@@ -10,7 +10,7 @@ from pathlib import Path
 import streamlit as st
 
 from screener import backup, support, whatsnew
-from screener.data import store
+from screener.data import duck_engine, store
 from screener.ui.common import L, col_label, hebrew_note, ss, t
 
 log = logging.getLogger("screener.app")
@@ -139,5 +139,32 @@ def _render_body() -> None:
                 log.exception("failed during backup restore")
                 hebrew_note("אירעה שגיאה בשחזור הגיבוי")
 
-    # 3. גירסה
+    # 3. בדיקת תקינות מאגר נתונים
+    st.subheader("בדיקת תקינות מאגר נתונים")
+    if st.button("בדיקת תקינות מאגר נתונים", key="mt_health_check"):
+        try:
+            res = duck_engine.health_check(store.DATA_DIR)
+            status = res.get("status")
+            if status == "ok":
+                total = res.get("total_files", 0)
+                st.success(f"כל קובצי הנתונים תקינים ({total} קבצים)")
+            elif status == "degraded":
+                corrupted = res.get("corrupted_files", 0)
+                files = res.get("files", [])
+                corrupted_details = []
+                for f in files:
+                    if not f.get("valid", True):
+                        p = f.get("path", "")
+                        err = f.get("error") or "קובץ פגום"
+                        corrupted_details.append(f"{p}: {err}")
+                details_str = "\n".join(corrupted_details) if corrupted_details else "נמצאו קבצים פגומים"
+                st.warning(f"נמצאו {corrupted} קבצים פגומים:\n{details_str}")
+            else:
+                err = res.get("error") or "אירעה שגיאה בבדיקת תקינות מאגר הנתונים"
+                hebrew_note(err)
+        except Exception:
+            log.exception("failed duckdb storage health check")
+            hebrew_note("אירעה שגיאה בבדיקת תקינות מאגר הנתונים")
+
+    # 4. גירסה
     st.caption(whatsnew.version_label())
