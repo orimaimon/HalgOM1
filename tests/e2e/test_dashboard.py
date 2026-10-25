@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+
+playwright = pytest.importorskip("playwright")
 from playwright.sync_api import Page, expect
 
 from screener.data.store import Store, session_date
