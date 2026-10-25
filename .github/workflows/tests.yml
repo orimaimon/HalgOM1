@@ -27,13 +27,15 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           uv venv --python 3.12 screener/.venv
-          uv pip install --python screener/.venv -r screener/requirements.lock pytest
+          uv pip install --python screener/.venv -r screener/requirements.lock -r requirements-dev.txt pytest
+          screener/.venv/bin/playwright install chromium
 
       - name: Create venv and install dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
           uv venv --python 3.12 screener\.venv
-          uv pip install --python screener\.venv -r screener\requirements.lock pytest
+          uv pip install --python screener\.venv -r screener\requirements.lock -r requirements-dev.txt pytest
+          screener\.venv\Scripts\playwright install chromium
 
       - name: Run Pytest (Linux)
         if: runner.os == 'Linux'
