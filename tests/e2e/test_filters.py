@@ -40,6 +40,7 @@ def streamlit_app(tmp_path_factory):
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent.parent)
 
+    posix_data_dir = data_dir.as_posix()
     runner_code = f"""
 import sys, os
 from pathlib import Path
@@ -50,7 +51,7 @@ import screener.export as export
 import screener.data.tradingview as tv
 import pandas as pd
 
-data_dir = Path('{data_dir}')
+data_dir = Path('{posix_data_dir}')
 store_mod.DATA_DIR = data_dir
 P.PRESETS_PATH = data_dir / 'presets.json'
 PF.PORTFOLIOS_PATH = data_dir / 'portfolios.json'
@@ -127,8 +128,8 @@ def test_screener_filter_interaction_and_search(page: Page, streamlit_app: str):
     filter_expander = page.locator("[data-testid='stExpander'] summary").get_by_text("פילטרים", exact=False)
     filter_expander.click()
 
-    # Find Market Cap selectbox ("שווי שוק")
-    mcap_select = page.get_by_label("שווי שוק", exact=True)
+    # Find Market Cap selectbox ("שווי שוק") specifically inside the filter expander
+    mcap_select = page.locator("[data-testid='stExpander']").get_by_label("שווי שוק", exact=True)
     mcap_select.click()
 
     # Select "ענק ($200B+)"
