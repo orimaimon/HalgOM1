@@ -16,10 +16,12 @@ import datetime as dt
 import hashlib
 import json
 
-from screener.filters import FILTERS_BY_KEY
+from screener.data.derive import load_filtered_universe
+from screener.data.store import Store, _local
+from screener.filters import FILTERS_BY_KEY, hide_junk as apply_hide_junk
 from screener.ui import compare_panel, explain_panel, sizing_panel
 from screener.ui.common import (CUSTOM, L, USER_PREFIX, sign_color, all_presets, col_label,
-    column_config, display_values, hebrew_note,
+    column_config, display_values, get_store, hebrew_note,
     junk_toggle, log, on_reset, opt, preset_modified,
     selections, ss, t)
 from screener.ui.watchlists import NEW_WATCHLIST, on_add_to_watchlist
@@ -60,6 +62,96 @@ def selection_index(res: pd.DataFrame, ticker: str | None) -> dict | None:
     if matches:
         return {"selection": {"rows": [res.index.get_loc(matches[0])]}}
     return None
+
+
+def _normalize_where(junk_clauses: list[str], where: str | list[str] | dict | None) -> str | list[str] | dict | None:
+    if not junk_clauses:
+        return where
+    if not where:
+        return junk_clauses
+    if isinstance(where, str):
+        return junk_clauses + [where]
+    if isinstance(where, (list, tuple)):
+        return junk_clauses + [w for w in where if isinstance(w, str)]
+    if isinstance(where, dict):
+        clauses = list(junk_clauses)
+        for k, v in where.items():
+            if k.startswith("min_"):
+                clauses.append(f'"{k[4:]}" >= {v}')
+            elif k.startswith("max_"):
+                clauses.append(f'"{k[4:]}" <= {v}')
+            elif isinstance(v, str):
+                clauses.append(f'"{k}" = {repr(v)}')
+            elif isinstance(v, (int, float)):
+                clauses.append(f'"{k}" = {v}')
+            elif isinstance(v, (list, tuple)) and len(v) == 2 and isinstance(v[0], str):
+                clauses.append(f'"{k}" {v[0]} {repr(v[1]) if isinstance(v[1], str) else v[1]}')
+        return clauses
+    return junk_clauses
+
+
+def resolve_universe(
+    store: Store | None = None,
+    hide_junk: bool = True,
+    where: str | list[str] | dict | None = None,
+    add_derived_cols: bool = False,
+    today: dt.date | None = None,
+) -> tuple[pd.DataFrame, dt.datetime, dict] | None:
+    """Resolve latest stock universe snapshot using DuckDB predicate pushdown when on disk.
+
+    Falls back to store.load_latest() if DuckDB loading is unavailable or fails.
+    """
+    store = store or get_store()
+    latest_path = store.latest_path
+
+    if latest_path.exists() and latest_path.suffix == ".parquet":
+        try:
+            junk_clauses = (
+                [
+                    "(price >= 1 OR price IS NULL)",
+                    "(avg_volume >= 50000 OR avg_volume IS NULL)",
+                    "(market_cap >= 50000000 OR market_cap IS NULL)",
+                ]
+                if hide_junk
+                else []
+            )
+
+            combined_where = _normalize_where(junk_clauses, where)
+
+            df = load_filtered_universe(
+                latest_path,
+                where=combined_where,
+                add_derived_cols=add_derived_cols,
+                today=today,
+            )
+
+            if store.meta_path.exists():
+                meta_data = json.loads(store.meta_path.read_text(encoding="utf-8"))
+                fetched_at = _local(meta_data["fetched_at"])
+                source_meta = meta_data.get("source") or {}
+            else:
+                fetched_at = dt.datetime.fromtimestamp(latest_path.stat().st_mtime).astimezone()
+                source_meta = {}
+
+            if source_meta:
+                df.attrs["source"] = source_meta
+
+            if hide_junk:
+                df = apply_hide_junk(df)
+
+            return (df, fetched_at, source_meta)
+        except Exception as e:
+            log.warning("DuckDB snapshot loading failed, falling back to load_latest: %s", e)
+
+    res = store.load_latest()
+    if res is None:
+        return None
+    df, fetched_at, meta = res
+    if hide_junk:
+        df = apply_hide_junk(df)
+    if meta:
+        df.attrs["source"] = meta
+    return (df, fetched_at, meta)
 
 
 JUNK_CONFLICT_OPTIONS = {
@@ -275,7 +367,10 @@ def toolbar(presets: dict[str, P.Preset]) -> None:
                   help="מחזיר את הפילטרים של הסריקה שנבחרה")
 
 
-def filter_panel(df: pd.DataFrame) -> None:
+def filter_panel(df: pd.DataFrame | None = None) -> None:
+    if df is None:
+        resolved = resolve_universe(hide_junk=ss.get("hide_junk", True))
+        df = resolved[0] if resolved else pd.DataFrame()
     sel = selections()
     n_active = len(active(sel))
     title = f"{t('Filters')} ({n_active} {t('active')})" if n_active else t("Filters")
@@ -299,8 +394,19 @@ def filter_panel(df: pd.DataFrame) -> None:
                                       format_func=opt)
 
 
-def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
-            prev: history.Previous | None) -> None:
+def results(df: pd.DataFrame | None = None, universe: pd.DataFrame | None = None,
+            res: pd.DataFrame | None = None, snap=None,
+            prev: history.Previous | None = None) -> None:
+    if df is None or universe is None:
+        resolved = resolve_universe(hide_junk=ss.get("hide_junk", True))
+        if resolved:
+            df = df if df is not None else resolved[0]
+            universe = universe if universe is not None else resolved[0]
+            if snap is None:
+                from screener.data.store import Snapshot
+                snap = Snapshot(resolved[0], resolved[1], "cache", meta=resolved[2])
+    if res is None:
+        res = universe if universe is not None else pd.DataFrame()
     top = st.columns([3, 5, 1.6], vertical_alignment="center")
     n_new = int((res["new"] == history.NEW).sum()) if prev is not None else 0
     if prev is not None and ss.get("only_new"):          # the count must match the table below it
