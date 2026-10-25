@@ -33,6 +33,8 @@ cryptography==50.0.2
     # via paramiko
 curl-cffi==0.16.3
     # via yfinance
+duckdb==2.0.0
+    # via -r screener/requirements.txt
 dulwich==1.2.17
     # via -r screener/requirements.txt
 et-xmlfile==2.0.0
