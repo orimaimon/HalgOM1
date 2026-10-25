@@ -124,6 +124,64 @@ jobs:
           }
           if (-not (Test-Path (Join-Path $copy ".git"))) { Write-Host "no .git after the update"; exit 1 }
 
+  # The one-file installer on a clean Windows machine: it downloads main from GitHub (the PR's own code
+  # is not in main yet: this tests the PR's installer with main's screener), unpacks it into a folder
+  # whose name has a space, "&" and parentheses, and the launcher updates, restarts and brings the server up.
+  # Run again, it only starts the installed screener (here: finds it running).
+  installer:
+    name: Windows Installer Test
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      STREAMLIT_SERVER_HEADLESS: "true"
+      SCREENER_NO_BROWSER: "1"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install with install_screener.bat
+        run: |
+          Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue   # see the launcher-smoke job
+          $env:HALGOM_DIR = Join-Path $env:RUNNER_TEMP "Halg OM & co (1)"
+          "HALGOM_DIR=$env:HALGOM_DIR" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $log = Join-Path $env:RUNNER_TEMP "install.log"
+          $p = Start-Process -FilePath cmd.exe -ArgumentList '/c', "install_screener.bat < NUL > `"$log`" 2>&1" `
+                 -WorkingDirectory $env:GITHUB_WORKSPACE -WindowStyle Hidden -PassThru
+          $deadline = (Get-Date).AddMinutes(15)
+          $up = $false
+          while ((Get-Date) -lt $deadline) {
+              try {
+                  $r = Invoke-WebRequest -Uri "http://localhost:8501/_stcore/health" -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+                  if ($r.Content -eq "ok") { $up = $true; break }
+              } catch { }
+              if ($p.HasExited) { break }
+              Start-Sleep -Seconds 3
+          }
+          Get-Content $log
+          if (-not $up) { Write-Host "server did not come up"; exit 1 }
+          if (-not (Test-Path (Join-Path $env:HALGOM_DIR ".git"))) { Write-Host "no .git: the update did not run"; exit 1 }
+          if (-not (Test-Path (Join-Path $env:HALGOM_DIR "screener\_data\shortcut.done"))) {
+              Write-Host "the desktop shortcut step did not run"; exit 1
+          }
+
+      - name: Run install_screener.bat a second time
+        run: |
+          Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue
+          $log = Join-Path $env:RUNNER_TEMP "install_second.log"
+          $p = Start-Process -FilePath cmd.exe -ArgumentList '/c', "install_screener.bat < NUL > `"$log`" 2>&1" `
+                 -WorkingDirectory $env:GITHUB_WORKSPACE -WindowStyle Hidden -PassThru
+          if (-not $p.WaitForExit(60000)) { Write-Host "second run did not exit within 60 seconds"; exit 1 }
+          Get-Content $log
+          if (Select-String -Path $log -Pattern "Downloading" -Quiet) { Write-Host "downloaded again"; exit 1 }
+          if (-not (Select-String -Path $log -Pattern "already running" -Quiet)) {
+              Write-Host "second run did not start the installed screener"; exit 1
+          }
+
+      - name: Stop server
+        if: always()
+        run: |
+          Get-Process -Name python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
   # Runs the real run_screener.bat on a clean Windows machine, like the end user's first launch.
   # Only the health endpoint is requested: the app page is never opened, so CI sends nothing to TradingView.
   launcher-smoke:

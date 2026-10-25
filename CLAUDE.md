@@ -99,12 +99,19 @@ Rules:
   `deploy_key.txt` next to the .bat is moved there on first run; `deploy_key*` is gitignored, never commit it),
   trying port 22, then ssh.github.com:443, then anonymous HTTPS. GitHub's SSH host keys are pinned in update.py.
   Log: `screener/_data/logs/update.log`.
+- `install_screener.bat` — the one-file installer (the only file the user downloads; published at the fixed link
+  `releases/download/installer/install_screener.bat` by `.github/workflows/installer-release.yml` when it changes on
+  main). ASCII + CRLF, no parenthesized blocks (paths may hold `)`/`&`). It starts an existing install found through the
+  desktop shortcut, otherwise downloads main's ZIP (anonymous HTTPS: needs the repo public) into
+  `%LOCALAPPDATA%\HalgOM` (`HALGOM_DIR` overrides; CI) with `run_screener.bat` copied last as the "installed" marker,
+  then calls `run_screener.bat`, which does the rest (update.py turns the folder into a checkout of main).
 - Launcher behavior: fixed port 8501 (if another program holds it, the launcher says so); a second launch only
   opens the browser (health check; `SCREENER_NO_BROWSER=1` skips the browser); a desktop shortcut is created once
   (`screener/_data/shortcut.done`); a venv that does not start (copied from another PC) or is older than Python
   3.11 is rebuilt; without uv it falls back to an installed Python; a failed package install still runs the
   update (the fix may be in it) before stopping.
-- CI (`.github/workflows/tests.yml`): pytest on Linux + Windows, and a launcher smoke test that runs the real
+- CI (`.github/workflows/tests.yml`): pytest on Linux + Windows, an installer test (`install_screener.bat` on a clean
+  Windows runner, real download of main), and a launcher smoke test that runs the real
   `run_screener.bat` on a clean Windows runner (health endpoint only, never the app page, so no TradingView calls).
 - Built-in preset option labels must match filter labels exactly (tests enforce this).
 - `tests/test_screener.py::test_app_smoke` runs the whole app offline with `streamlit.testing.v1.AppTest`
