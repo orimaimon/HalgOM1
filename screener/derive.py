@@ -12,8 +12,6 @@ import pandas as pd
 from pathlib import Path
 from typing import Any
 
-import duckdb
-
 from screener.fields import COLUMNS
 from screener.scores import add_scores
 from screener.signals import summarize
@@ -92,6 +90,8 @@ def load_filtered_universe(
     path_str = str(Path(path).resolve())
     cols_sql = ", ".join(f'"{c}"' for c in columns) if columns else "*"
     where_sql, params = _build_where_clause(where)
+
+    import duckdb
 
     query = f"SELECT {cols_sql} FROM read_parquet(?){where_sql}"
     all_params = [path_str] + params
