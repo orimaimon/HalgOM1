@@ -128,11 +128,10 @@ def test_screener_filter_interaction_and_search(page: Page, streamlit_app: str):
     filter_expander.click()
 
     # Find Market Cap selectbox ("שווי שוק")
-    mcap_select = page.get_by_label("שווי שוק", exact=True)
-    mcap_select.click()
-
-    # Select "ענק ($200B+)"
-    page.locator("[data-baseweb='popover']").get_by_text("ענק").click()
+    mcap_input = page.locator("[data-testid='stSelectbox']").filter(has_text="שווי שוק").locator("input")
+    mcap_input.click()
+    mcap_input.press("ArrowDown")
+    mcap_input.press("Enter")
 
     # Assert row count changes and table updates
     expect(results_locator).not_to_contain_text(f"{initial_count:,} תוצאות", timeout=10000)
