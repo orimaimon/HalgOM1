@@ -126,14 +126,14 @@ def test_screener_filter_interaction_and_search(page: Page, streamlit_app: str):
 
     # 3. Filter test: open filter expander and select Market Cap option (in default Descriptive tab)
     filter_expander = page.locator("[data-testid='stExpander'] summary").get_by_text("פילטרים", exact=False)
-    mcap_box = page.locator("[data-testid='stExpander'] [data-testid='stSelectbox']:has-text('שווי שוק')")
-    if not mcap_box.is_visible():
+    mcap_combo = page.get_by_role("combobox", name="שווי שוק")
+    if not mcap_combo.is_visible():
         filter_expander.click()
 
-    expect(mcap_box).to_be_visible(timeout=10000)
-    mcap_box.click()
+    expect(mcap_combo).to_be_visible(timeout=10000)
+    mcap_combo.click()
 
-    page.get_by_role("option", name="ענק ($200B+)").click()
+    page.get_by_text("ענק ($200B+)", exact=True).click()
 
     # Assert row count changes and table updates
     expect(results_locator).not_to_contain_text(f"{initial_count:,} תוצאות", timeout=10000)
