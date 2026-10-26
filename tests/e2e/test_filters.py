@@ -12,10 +12,24 @@ import pytest
 
 pytest.importorskip("playwright")
 from playwright.sync_api import Page, expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from screener.data.store import Store
 from screener.data.tradingview import clean
 from tests.test_screener import make_raw
+
+
+def choose_option(page: Page, label: str, option: str, attempts: int = 3) -> None:
+    """Pick an option in a Streamlit selectbox. A rerun that lands while the list is open re-renders it
+    (the option is "detached from the DOM") and closes it: open it again instead of waiting on the old one."""
+    for _ in range(attempts):
+        page.get_by_label(label, exact=True).click()
+        try:
+            page.get_by_role("option", name=option, exact=True).click(timeout=5000)
+            return
+        except PlaywrightTimeoutError:
+            page.keyboard.press("Escape")
+    raise AssertionError(f"could not choose {option!r} in {label!r}")
 
 
 def get_free_port() -> int:
@@ -50,7 +64,7 @@ import screener.export as export
 import screener.data.tradingview as tv
 import pandas as pd
 
-data_dir = Path('{data_dir}')
+data_dir = Path({str(data_dir)!r})   # repr: a Windows path has backslashes
 store_mod.DATA_DIR = data_dir
 P.PRESETS_PATH = data_dir / 'presets.json'
 PF.PORTFOLIOS_PATH = data_dir / 'portfolios.json'
@@ -127,12 +141,8 @@ def test_screener_filter_interaction_and_search(page: Page, streamlit_app: str):
     filter_expander = page.locator("[data-testid='stExpander'] summary").get_by_text("פילטרים", exact=False)
     filter_expander.click()
 
-    # Find Market Cap selectbox ("שווי שוק")
-    mcap_select = page.get_by_label("שווי שוק", exact=True)
-    mcap_select.click()
-
-    # Select "ענק ($200B+)"
-    page.get_by_text("ענק ($200B+)", exact=True).click()
+    # Market Cap selectbox ("שווי שוק") -> "ענק ($200B+)"
+    choose_option(page, "שווי שוק", "ענק ($200B+)")
 
     # Assert row count changes and table updates
     expect(results_locator).not_to_contain_text(f"{initial_count:,} תוצאות", timeout=10000)
