@@ -32,7 +32,10 @@ def streamlit_server():
         "--server.headless",
         "true",
     ]
-    proc = subprocess.Popen(cmd)
+    import os
+    env = os.environ.copy()
+    env["HALGOM_NO_AUTH"] = "1"
+    proc = subprocess.Popen(cmd, env=env)
     url = f"http://127.0.0.1:{port}"
     health_url = f"{url}/_stcore/health"
 
