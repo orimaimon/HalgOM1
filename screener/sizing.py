@@ -25,6 +25,86 @@ STOP_COLUMNS = [
 ]
 
 
+def fixed_risk_size(
+    account_equity: float,
+    risk_pct: float,
+    entry_price: float,
+    stop_loss_price: float,
+) -> dict[str, float]:
+    """Calculate fixed dollar risk position size based on account equity and stop loss price."""
+    inputs = [account_equity, risk_pct, entry_price, stop_loss_price]
+    if any(v is None or pd.isna(v) for v in inputs):
+        return {
+            "risk_per_share": 0.0,
+            "risk_usd": 0.0,
+            "shares": 0.0,
+            "position_cost": 0.0,
+            "position_weight_pct": 0.0,
+            "stop_loss_price": 0.0,
+        }
+
+    account_equity = float(account_equity)
+    risk_pct = float(risk_pct)
+    entry_price = float(entry_price)
+    stop_loss_price = float(stop_loss_price)
+
+    if account_equity <= 0 or risk_pct <= 0 or entry_price <= 0 or stop_loss_price <= 0 or stop_loss_price >= entry_price:
+        return {
+            "risk_per_share": 0.0,
+            "risk_usd": 0.0,
+            "shares": 0.0,
+            "position_cost": 0.0,
+            "position_weight_pct": 0.0,
+            "stop_loss_price": max(0.0, stop_loss_price),
+        }
+
+    risk_per_share = entry_price - stop_loss_price
+    risk_usd = account_equity * (risk_pct / 100.0)
+    shares = float(math.floor(risk_usd / risk_per_share))
+    position_cost = shares * entry_price
+    position_weight_pct = round((position_cost / account_equity) * 100.0, 6)
+
+    return {
+        "risk_per_share": float(risk_per_share),
+        "risk_usd": float(risk_usd),
+        "shares": float(shares),
+        "position_cost": float(position_cost),
+        "position_weight_pct": float(position_weight_pct),
+        "stop_loss_price": float(stop_loss_price),
+    }
+
+
+def atr_volatility_size(
+    account_equity: float,
+    risk_pct: float,
+    entry_price: float,
+    atr: float,
+    atr_multiplier: float = 2.0,
+) -> dict[str, float]:
+    """Calculate position size based on trailing ATR stop distance."""
+    if (
+        entry_price is None
+        or pd.isna(entry_price)
+        or atr is None
+        or pd.isna(atr)
+        or float(atr) <= 0
+        or atr_multiplier is None
+        or pd.isna(atr_multiplier)
+        or float(atr_multiplier) <= 0
+    ):
+        return {
+            "risk_per_share": 0.0,
+            "risk_usd": 0.0,
+            "shares": 0.0,
+            "position_cost": 0.0,
+            "position_weight_pct": 0.0,
+            "stop_loss_price": 0.0,
+        }
+
+    stop_loss_price = float(entry_price) - (float(atr) * float(atr_multiplier))
+    return fixed_risk_size(account_equity, risk_pct, entry_price, stop_loss_price)
+
+
 def position_plan(
     price: float,
     atr: float,
