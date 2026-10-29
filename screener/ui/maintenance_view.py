@@ -63,6 +63,13 @@ def _render_body() -> None:
             rep_path = support.make_report(ver)
             st.success(f"נשמר: {rep_path}")
             st.info(t("Send this file to Ori (email or WhatsApp)"))
+            st.download_button(
+                label="הורד דוח תקלה למחשב",
+                data=rep_path.read_bytes(),
+                file_name=rep_path.name,
+                mime="application/zip",
+                key="mt_dl_report",
+            )
         except Exception:
             log.exception("failed to create problem report")
             hebrew_note("אירעה שגיאה ביצירת דוח התקלה")
@@ -78,6 +85,13 @@ def _render_body() -> None:
                 target_dir = desktops[0] if (desktops and desktops[0].exists()) else (store.DATA_DIR / "reports")
                 bak_path = backup.make_backup(target_dir)
                 st.success(f"גיבוי נשמר: {bak_path}")
+                st.download_button(
+                    label="הורד קובץ גיבוי למחשב",
+                    data=bak_path.read_bytes(),
+                    file_name=bak_path.name,
+                    mime="application/zip",
+                    key="mt_dl_backup",
+                )
             except Exception:
                 log.exception("failed to create backup")
                 hebrew_note("אירעה שגיאה ביצירת הגיבוי")

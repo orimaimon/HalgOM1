@@ -43,14 +43,35 @@ class WatchTarget:
     direction: str = "above"  # "above" | "below"
 
 
-def targets_path() -> Path:
-    """Returns the path to watchlist_targets.json, resolved at call time."""
+TargetTrigger = WatchTarget
+
+
+@dataclass
+class TriggerAlert:
+    ticker: str = ""
+    list_name: str = ""
+    current_price: float = 0.0
+    target_price: float = 0.0
+    direction: str = "above"
+    status: str = "triggered"
+    message: str = ""
+
+
+def _targets_path(user_id: str | None = None) -> Path:
+    """Returns the path to watchlist_targets.json for user_id or default."""
+    if user_id:
+        return store.DATA_DIR / "users" / user_id / "watchlist_targets.json"
     return store.DATA_DIR / "watchlist_targets.json"
 
 
-def load_targets(path: Path | None = None) -> dict[str, WatchTarget]:
-    """Load all saved watch targets."""
-    p = path or targets_path()
+def targets_path(user_id: str | None = None) -> Path:
+    """Returns the path to watchlist_targets.json, resolved at call time."""
+    return _targets_path(user_id)
+
+
+def load_targets(path: Path | None = None, user_id: str | None = None) -> dict[str, WatchTarget]:
+    """Load all saved watch targets for user_id or path."""
+    p = path or _targets_path(user_id)
     try:
         return load_user_file(p, WatchTarget)
     except OSError as e:
@@ -58,16 +79,25 @@ def load_targets(path: Path | None = None) -> dict[str, WatchTarget]:
         return {}
 
 
-def set_target(
-    list_name: str,
-    ticker: str,
-    target_price: float | None,
-    direction: str = "above",
+def save_target(
+    trigger: WatchTarget | dict,
+    user_id: str | None = None,
     path: Path | None = None,
 ) -> None:
-    """Set or update a watch target for a (list_name, ticker) pair."""
-    p = path or targets_path()
-    key = f"{list_name}:{ticker}"
+    """Save or update a target trigger for user_id or path."""
+    p = path or _targets_path(user_id)
+    if isinstance(trigger, dict):
+        list_name = str(trigger.get("list_name", ""))
+        ticker = str(trigger.get("ticker", ""))
+        target_price = trigger.get("target_price")
+        direction = str(trigger.get("direction", "above"))
+        key = str(trigger.get("key") or f"{list_name}:{ticker}")
+    else:
+        list_name = getattr(trigger, "list_name", "")
+        ticker = getattr(trigger, "ticker", "")
+        target_price = getattr(trigger, "target_price", None)
+        direction = getattr(trigger, "direction", "above")
+        key = getattr(trigger, "key", "") or f"{list_name}:{ticker}"
 
     def modify(items: dict[str, WatchTarget]) -> None:
         if target_price is None:
@@ -80,6 +110,50 @@ def set_target(
                 target_price=float(target_price),
                 direction=direction if direction in ("above", "below") else "above",
             )
+
+    save_user_file(p, WatchTarget, modify)
+
+
+def set_target(
+    list_name: str,
+    ticker: str,
+    target_price: float | None,
+    direction: str = "above",
+    path: Path | None = None,
+    user_id: str | None = None,
+) -> None:
+    """Set or update a watch target for a (list_name, ticker) pair."""
+    key = f"{list_name}:{ticker}"
+    target = WatchTarget(
+        key=key,
+        list_name=list_name,
+        ticker=ticker,
+        target_price=target_price,
+        direction=direction,
+    )
+    save_target(target, user_id=user_id, path=path)
+
+
+def delete_target(
+    ticker: str,
+    user_id: str | None = None,
+    path: Path | None = None,
+    list_name: str | None = None,
+) -> None:
+    """Delete target(s) for a ticker (or list_name:ticker key) for a user."""
+    p = path or _targets_path(user_id)
+
+    def modify(items: dict[str, WatchTarget]) -> None:
+        if list_name:
+            key = f"{list_name}:{ticker}"
+            items.pop(key, None)
+        else:
+            keys_to_del = [
+                k for k, v in items.items()
+                if v.ticker == ticker or k == ticker or k.endswith(f":{ticker}")
+            ]
+            for k in keys_to_del:
+                items.pop(k, None)
 
     save_user_file(p, WatchTarget, modify)
 
@@ -106,12 +180,61 @@ def _blank(v) -> bool:
     return v is None or (isinstance(v, float) and np.isnan(v)) or str(v).strip() in ("", "nan", "None", "NaT")
 
 
+def evaluate_triggers(
+    universe: pd.DataFrame,
+    user_id: str | None = None,
+    path: Path | None = None,
+) -> list[TriggerAlert]:
+    """Evaluate all targets for user_id or path against universe prices and return triggered alerts."""
+    targets = load_targets(path=path, user_id=user_id)
+    if not targets or universe.empty or "ticker" not in universe.columns or "price" not in universe.columns:
+        return []
+
+    prices = universe.set_index("ticker")["price"]
+    alerts: list[TriggerAlert] = []
+
+    for target in targets.values():
+        if target.target_price is None or pd.isna(target.target_price):
+            continue
+        ticker = target.ticker
+        if ticker not in prices:
+            continue
+        curr_val = prices.get(ticker)
+        if pd.isna(curr_val) or float(curr_val) <= 0:
+            continue
+        curr = float(curr_val)
+        target_price = float(target.target_price)
+        direction = target.direction if target.direction in ("above", "below") else "above"
+
+        triggered = False
+        if direction == "above" and curr >= target_price:
+            triggered = True
+        elif direction == "below" and curr <= target_price:
+            triggered = True
+
+        if triggered:
+            alerts.append(
+                TriggerAlert(
+                    ticker=ticker,
+                    list_name=target.list_name,
+                    current_price=curr,
+                    target_price=target_price,
+                    direction=direction,
+                    status="triggered",
+                    message=f"🎯 {ticker} reached target price (${curr:.2f} vs target ${target_price:.2f})",
+                )
+            )
+
+    return alerts
+
+
 def evaluate_watchlist(
     plist: PList,
     universe: pd.DataFrame,
     all_lists: dict[str, PList] | None = None,
     path: Path | None = None,
     near_pct: float = 2.0,
+    user_id: str | None = None,
 ) -> pd.DataFrame:
     """Evaluate trigger status, near proximity, portfolio overlap, and notes for a watchlist."""
     if plist.kind != WATCHLIST or not plist.rows:
@@ -130,7 +253,7 @@ def evaluate_watchlist(
                 if not pos.empty and "quantity" in pos.columns:
                     held_tickers.update(pos.loc[pos["quantity"] > 0, "ticker"].tolist())
 
-    targets = load_targets(path)
+    targets = load_targets(path, user_id=user_id)
 
     # Fast lookups from universe
     prices = (

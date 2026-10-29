@@ -6,12 +6,18 @@ Calculates forward returns (5/20/60 days) and excess returns over a benchmark
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import math
+from pathlib import Path
+from typing import Any
 import duckdb
 import numpy as np
 import pandas as pd
 
 from screener import history_signals
+from screener.data import duck_engine
+
+log = logging.getLogger(__name__)
 
 LABELS: dict[str, str] = {
     "signal": "סיגנל",
@@ -27,6 +33,74 @@ LABELS: dict[str, str] = {
     "excess": "תשואת יתר",
     "disclaimer": "תוצאות עבר על נתוני היסטוריה; אינן מבטיחות תוצאות בעתיד ואינן ייעוץ השקעות.",
 }
+
+
+def load_price_history(
+    parquet_path: str | Path,
+    start_date: str | dt.date | dt.datetime | None = None,
+    end_date: str | dt.date | dt.datetime | None = None,
+) -> pd.DataFrame:
+    """Load price history from a parquet file filtered by date range using DuckDB predicate pushdown.
+
+    Falls back gracefully to standard pd.read_parquet if DuckDB query fails.
+
+    Parameters
+    ----------
+    parquet_path : str | Path
+        Path to the Parquet file containing historical price data.
+    start_date : str | dt.date | dt.datetime | None
+        Optional start date filter (inclusive).
+    end_date : str | dt.date | dt.datetime | None
+        Optional end date filter (inclusive).
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with filtered price history.
+    """
+    p = Path(parquet_path)
+
+    # Format date filters to standard ISO string if provided
+    s_str = start_date.isoformat() if hasattr(start_date, "isoformat") else (str(start_date) if start_date is not None else None)
+    e_str = end_date.isoformat() if hasattr(end_date, "isoformat") else (str(end_date) if end_date is not None else None)
+
+    try:
+        where_clauses: list[str] = []
+        params: list[Any] = [str(p)]
+
+        if s_str is not None:
+            where_clauses.append("date >= ?")
+            params.append(s_str)
+        if e_str is not None:
+            where_clauses.append("date <= ?")
+            params.append(e_str)
+
+        where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+        sql = f"SELECT * FROM read_parquet(?){where_sql}"
+
+        return duck_engine.query_parquet_df(sql=sql, params=params)
+    except Exception as e:
+        log.warning("DuckDB query failed for %s, falling back to pd.read_parquet: %s", parquet_path, e)
+        df = pd.read_parquet(p)
+        if "date" in df.columns or df.index.name == "date":
+            # If date is in index, filter via index, else filter via 'date' column
+            if "date" in df.columns:
+                date_col = pd.to_datetime(df["date"])
+                mask = pd.Series(True, index=df.index)
+                if s_str is not None:
+                    mask &= date_col >= pd.to_datetime(s_str)
+                if e_str is not None:
+                    mask &= date_col <= pd.to_datetime(e_str)
+                return df[mask]
+            else:
+                idx_dates = pd.to_datetime(df.index)
+                mask = pd.Series(True, index=df.index)
+                if s_str is not None:
+                    mask &= idx_dates >= pd.to_datetime(s_str)
+                if e_str is not None:
+                    mask &= idx_dates <= pd.to_datetime(e_str)
+                return df[mask]
+        return df
 
 
 def _r(x: float | None) -> float | None:
