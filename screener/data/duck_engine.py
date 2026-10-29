@@ -190,6 +190,105 @@ def verify_parquet_integrity(path: Path | str) -> dict:
                 pass
 
 
+def compute_daily_returns_duck(
+    parquet_path: str | Path, ticker: str | None = None
+) -> pd.DataFrame:
+    """Execute a DuckDB query computing daily percent return for tickers in a Parquet file.
+
+    Parameters
+    ----------
+    parquet_path : str | Path
+        Path to the Parquet file.
+    ticker : str | None
+        Optional ticker symbol to filter on.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame ordered by ticker, date containing daily return_pct.
+    """
+    p_str = str(parquet_path)
+    if ticker is not None:
+        sql = """
+            SELECT
+                *,
+                (close - LAG(close) OVER (PARTITION BY ticker ORDER BY date)) / LAG(close) OVER (PARTITION BY ticker ORDER BY date) * 100.0 AS return_pct
+            FROM read_parquet(?)
+            WHERE ticker = ?
+            ORDER BY ticker, date
+        """
+        params = [p_str, ticker]
+    else:
+        sql = """
+            SELECT
+                *,
+                (close - LAG(close) OVER (PARTITION BY ticker ORDER BY date)) / LAG(close) OVER (PARTITION BY ticker ORDER BY date) * 100.0 AS return_pct
+            FROM read_parquet(?)
+            ORDER BY ticker, date
+        """
+        params = [p_str]
+
+    conn = get_connection(read_only=True)
+    try:
+        return conn.execute(sql, params).df()
+    finally:
+        conn.close()
+
+
+def compute_rolling_volatility_duck(
+    parquet_path: str | Path, ticker: str | None = None, window: int = 20
+) -> pd.DataFrame:
+    """Execute a DuckDB window query computing rolling standard deviation of daily returns.
+
+    Parameters
+    ----------
+    parquet_path : str | Path
+        Path to the Parquet file.
+    ticker : str | None
+        Optional ticker symbol to filter on.
+    window : int
+        Rolling window size in days (default 20).
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing daily returns and rolling_volatility.
+    """
+    if window <= 0:
+        raise ValueError("window must be greater than 0")
+
+    p_str = str(parquet_path)
+    preceding = window - 1
+
+    where_clause = "WHERE ticker = ?" if ticker is not None else ""
+    params = [p_str, ticker] if ticker is not None else [p_str]
+
+    sql = f"""
+        WITH rets AS (
+            SELECT
+                *,
+                (close - LAG(close) OVER (PARTITION BY ticker ORDER BY date)) / LAG(close) OVER (PARTITION BY ticker ORDER BY date) * 100.0 AS return_pct
+            FROM read_parquet(?)
+            {where_clause}
+        )
+        SELECT
+            *,
+            CASE
+                WHEN COUNT(return_pct) OVER (PARTITION BY ticker ORDER BY date ROWS BETWEEN {preceding} PRECEDING AND CURRENT ROW) >= {window}
+                THEN STDDEV_SAMP(return_pct) OVER (PARTITION BY ticker ORDER BY date ROWS BETWEEN {preceding} PRECEDING AND CURRENT ROW)
+                ELSE NULL
+            END AS rolling_volatility
+        FROM rets
+        ORDER BY ticker, date
+    """
+
+    conn = get_connection(read_only=True)
+    try:
+        return conn.execute(sql, params).df()
+    finally:
+        conn.close()
+
+
 def verify_parquet_schema(
     path: Path | str, expected_columns: list[str] | dict[str, str] | None = None
 ) -> dict:
