@@ -133,3 +133,99 @@ def test_ui_sizing_panel_error_handling():
     assert not at.exception
     html_content = "".join(h.value for h in at.html)
     assert "שגיאה" in html_content
+
+
+def test_render_sizing_panel_defaults_and_calculation():
+    def script():
+        from screener.ui.sizing_panel import render_sizing_panel
+        render_sizing_panel("AAPL", 100.0)
+
+    at = AppTest.from_function(script).run()
+    assert not at.exception
+
+    # Subheader check
+    assert len(at.subheader) == 1
+    assert "AAPL" in at.subheader[0].value
+
+    # Check 4 inputs: Account, Risk %, Entry, Stop
+    assert len(at.number_input) == 4
+    assert at.number_input[0].label == "שווי תיק $"
+    assert at.number_input[0].value == 50000.0
+    assert at.number_input[1].label == "אחוז סיכון לטרייד %"
+    assert at.number_input[1].value == 1.0
+    assert at.number_input[2].label == "מחיר כניסה $"
+    assert at.number_input[2].value == 100.0
+    assert at.number_input[3].label == "מחיר קטיעת הפסד Stop $"
+    assert at.number_input[3].value == 95.0
+
+    # Risk = $500, Stop dist = $5 -> Shares = 100
+    # Position Value = $10,000, Max Risk = $500, Weight = 20.0%
+    assert len(at.metric) == 4
+    assert at.metric[0].label == "כמות מניות מומלצת"
+    assert at.metric[0].value == "100"
+    assert at.metric[1].label == "שווי פוזיציה $"
+    assert at.metric[1].value == "$10,000.00"
+    assert at.metric[2].label == "סיכון דולרי כולל $"
+    assert at.metric[2].value == "$500.00"
+    assert at.metric[3].label == "משקל מהתיק %"
+    assert at.metric[3].value == "20.0%"
+
+    # No warnings
+    assert len(at.warning) == 0
+
+
+def test_render_sizing_panel_stop_ge_entry_warning():
+    def script():
+        from screener.ui.sizing_panel import render_sizing_panel
+        render_sizing_panel("TSLA", 100.0)
+
+    at = AppTest.from_function(script).run()
+    assert not at.exception
+
+    # Set stop = 105 (>= entry 100)
+    at.number_input[3].set_value(105.0).run()
+    assert not at.exception
+
+    # Warning for stop >= entry should be rendered
+    assert len(at.warning) == 1
+    assert "חייב להיות נמוך ממחיר כניסה" in at.warning[0].value
+    # Metrics should not be rendered
+    assert len(at.metric) == 0
+
+
+def test_render_sizing_panel_weight_exceeds_25_pct_warning():
+    def script():
+        from screener.ui.sizing_panel import render_sizing_panel
+        render_sizing_panel("NVDA", 100.0)
+
+    at = AppTest.from_function(script).run()
+    assert not at.exception
+
+    # Set risk_pct = 2.0 -> Risk $1000, Stop dist $5 -> 200 shares -> Cost $20,000 -> Weight 40% (> 25%)
+    at.number_input[1].set_value(2.0).run()
+    assert not at.exception
+
+    assert len(at.metric) == 4
+    assert at.metric[0].value == "200"
+    assert at.metric[3].value == "40.0%"
+
+    # Warning for weight > 25% should be rendered
+    assert len(at.warning) == 1
+    assert "חורג מ-25% משווי התיק" in at.warning[0].value
+
+
+def test_render_sizing_panel_error_handling():
+    def script():
+        import math
+        from screener.ui.sizing_panel import render_sizing_panel
+        orig = math.floor
+        try:
+            math.floor = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("Floor failed"))
+            render_sizing_panel("FAIL", 100.0)
+        finally:
+            math.floor = orig
+
+    at = AppTest.from_function(script).run()
+    assert not at.exception
+    html_content = "".join(h.value for h in at.html)
+    assert "שגיאה" in html_content

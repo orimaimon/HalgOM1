@@ -125,3 +125,82 @@ def render(row: pd.Series) -> None:
     except Exception:
         log.exception("Error rendering sizing panel")
         hebrew_note("שגיאה בחישוב גודל פוזיציה")
+
+
+def render_sizing_panel(default_ticker: str = "", default_price: float = 0.0) -> None:
+    """Interactive position sizing panel allowing input of account equity, risk %, entry price, and stop loss."""
+    try:
+        if default_ticker:
+            st.subheader(f"מחשבון גודל פוזיציה — {default_ticker}")
+
+        def_price = float(default_price) if default_price and default_price > 0 else 0.0
+        def_stop = round(def_price * 0.95, 2) if def_price > 0 else 0.0
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            account = st.number_input(
+                "שווי תיק $",
+                min_value=0.0,
+                value=50000.0,
+                step=1000.0,
+                key=f"rsp_account_{default_ticker}",
+            )
+        with c2:
+            risk_pct = st.number_input(
+                "אחוז סיכון לטרייד %",
+                min_value=0.1,
+                max_value=100.0,
+                value=1.0,
+                step=0.25,
+                key=f"rsp_risk_pct_{default_ticker}",
+            )
+        with c3:
+            entry = st.number_input(
+                "מחיר כניסה $",
+                min_value=0.0,
+                value=def_price,
+                step=0.5,
+                key=f"rsp_entry_{default_ticker}",
+            )
+        with c4:
+            stop = st.number_input(
+                "מחיר קטיעת הפסד Stop $",
+                min_value=0.0,
+                value=def_stop,
+                step=0.5,
+                key=f"rsp_stop_{default_ticker}",
+            )
+
+        if entry > 0 and stop > 0:
+            if stop >= entry:
+                st.warning("מחיר קטיעת הפסד Stop חייב להיות נמוך ממחיר כניסה")
+                return
+
+            stop_dist = entry - stop
+            risk_dollars = account * (risk_pct / 100.0)
+            if stop_dist > 0 and account > 0:
+                shares_by_risk = int(math.floor(risk_dollars / stop_dist))
+                shares_by_account = int(math.floor(account / entry))
+                shares = max(0, min(shares_by_risk, shares_by_account))
+            else:
+                shares = 0
+
+            position_value = shares * entry
+            max_risk = shares * stop_dist
+            weight_pct = (position_value / account * 100.0) if account > 0 else 0.0
+
+            m1, m2, m3, m4 = st.columns(4)
+            with m1:
+                st.metric("כמות מניות מומלצת", f"{shares:,}")
+            with m2:
+                st.metric("שווי פוזיציה $", f"${position_value:,.2f}")
+            with m3:
+                st.metric("סיכון דולרי כולל $", f"${max_risk:,.2f}")
+            with m4:
+                st.metric("משקל מהתיק %", f"{weight_pct:.1f}%")
+
+            if weight_pct > 25.0:
+                st.warning("משקל הפוזיציה חורג מ-25% משווי התיק")
+    except Exception:
+        log.exception("Error rendering interactive sizing panel")
+        hebrew_note("שגיאה בחישוב גודל פוזיציה")
