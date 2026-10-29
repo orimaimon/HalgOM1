@@ -13,6 +13,13 @@ from screener.portfolio import PORTFOLIO, WATCHLIST, PList
 def test_targets_path_resolves_data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "DATA_DIR", tmp_path)
     assert watchlist_triggers.targets_path() == tmp_path / "watchlist_targets.json"
+    assert watchlist_triggers._targets_path() == tmp_path / "watchlist_targets.json"
+
+
+def test_targets_path_user_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    assert watchlist_triggers._targets_path(user_id="userA") == tmp_path / "users" / "userA" / "watchlist_targets.json"
+    assert watchlist_triggers.targets_path(user_id="userB") == tmp_path / "users" / "userB" / "watchlist_targets.json"
 
 
 def test_set_and_load_targets(tmp_path, monkeypatch):
@@ -33,6 +40,81 @@ def test_set_and_load_targets(tmp_path, monkeypatch):
     watchlist_triggers.set_target("MyWatch", "AAPL", None, path=p)
     targets_updated = watchlist_triggers.load_targets(path=p)
     assert "MyWatch:AAPL" not in targets_updated
+
+
+def test_multi_user_isolation(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+
+    # Set targets for User A and User B
+    watchlist_triggers.set_target("Watch", "AAPL", 150.0, "above", user_id="userA")
+    watchlist_triggers.set_target("Watch", "AAPL", 200.0, "below", user_id="userB")
+
+    # Save target using save_target function as well
+    t_a = watchlist_triggers.WatchTarget(
+        key="Watch:MSFT", list_name="Watch", ticker="MSFT", target_price=300.0, direction="above"
+    )
+    watchlist_triggers.save_target(t_a, user_id="userA")
+
+    # Verify isolation on load_targets
+    targets_a = watchlist_triggers.load_targets(user_id="userA")
+    targets_b = watchlist_triggers.load_targets(user_id="userB")
+    targets_none = watchlist_triggers.load_targets(user_id=None)
+
+    assert "Watch:AAPL" in targets_a
+    assert targets_a["Watch:AAPL"].target_price == 150.0
+    assert targets_a["Watch:AAPL"].direction == "above"
+    assert "Watch:MSFT" in targets_a
+
+    assert "Watch:AAPL" in targets_b
+    assert targets_b["Watch:AAPL"].target_price == 200.0
+    assert targets_b["Watch:AAPL"].direction == "below"
+    assert "Watch:MSFT" not in targets_b
+
+    assert "Watch:AAPL" not in targets_none
+
+    # Evaluate triggers for User A vs User B
+    universe = pd.DataFrame([
+        {"ticker": "AAPL", "company": "Apple", "price": 160.0, "change": 1.0},
+        {"ticker": "MSFT", "company": "Microsoft", "price": 310.0, "change": 2.0},
+    ])
+
+    alerts_a = watchlist_triggers.evaluate_triggers(universe, user_id="userA")
+    alerts_b = watchlist_triggers.evaluate_triggers(universe, user_id="userB")
+    alerts_none = watchlist_triggers.evaluate_triggers(universe, user_id=None)
+
+    # User A: AAPL current 160 >= 150 (triggered), MSFT current 310 >= 300 (triggered)
+    assert len(alerts_a) == 2
+    tickers_a = [al.ticker for al in alerts_a]
+    assert "AAPL" in tickers_a
+    assert "MSFT" in tickers_a
+
+    # User B: AAPL direction below, current 160 is not <= 200 (triggered? wait, 160 <= 200 IS true for below!)
+    # Let's check: direction below, current 160 <= 200 -> triggered!
+    # Let's test with User B target price 100.0 below so current 160 is not <= 100
+    watchlist_triggers.set_target("Watch", "AAPL", 100.0, "below", user_id="userB")
+    alerts_b2 = watchlist_triggers.evaluate_triggers(universe, user_id="userB")
+    assert len(alerts_b2) == 0
+
+    assert len(alerts_none) == 0
+
+    # Evaluate watchlist for User A vs User B
+    plist = PList(name="Watch", kind=WATCHLIST, rows=[{"ticker": "AAPL"}, {"ticker": "MSFT"}])
+    df_a = watchlist_triggers.evaluate_watchlist(plist, universe, user_id="userA")
+    df_b = watchlist_triggers.evaluate_watchlist(plist, universe, user_id="userB")
+    df_none = watchlist_triggers.evaluate_watchlist(plist, universe, user_id=None)
+
+    assert (df_a[df_a["ticker"] == "AAPL"]["status"].iloc[0]) == "triggered"
+    assert (df_b[df_b["ticker"] == "AAPL"]["status"].iloc[0]) == "waiting"
+    assert (df_none[df_none["ticker"] == "AAPL"]["status"].iloc[0]) == "no_target"
+
+    # Delete target for User A
+    watchlist_triggers.delete_target("AAPL", user_id="userA")
+    targets_a_after = watchlist_triggers.load_targets(user_id="userA")
+    targets_b_after = watchlist_triggers.load_targets(user_id="userB")
+
+    assert "Watch:AAPL" not in targets_a_after
+    assert "Watch:MSFT" in targets_a_after
+    assert "Watch:AAPL" in targets_b_after
 
 
 def test_update_note(tmp_path, monkeypatch):
