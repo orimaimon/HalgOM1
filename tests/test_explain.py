@@ -161,3 +161,99 @@ def test_describe_rounds_real_world_numbers():
     desc = explain.describe(row)
     assert "(25%)" in desc and "3.5%" in desc and "ב-32%" in desc and "(85)" in desc
     assert not re.search(r"\d\.\d{2,}", desc), desc
+
+
+def test_explain_stock_match_value_and_momentum():
+    row = make_test_row(
+        pe=12.3,
+        sma200_pct=8.5,
+        price=108.5,
+        sma200=100.0,
+    )
+    active_filters = {
+        "pe": "Under 15",
+        "sma200": "Price above SMA200",
+    }
+    bullets = explain.explain_stock_match("AAPL", row, active_filters)
+
+    assert len(bullets) == 2
+    assert any("P/E 12.3 נמוך מ-15" in b for b in bullets)
+    assert any("מעל ממוצע 200 ב-8.5%" in b for b in bullets)
+
+
+def test_explain_stock_match_multi_factor_and_dynamic():
+    row = make_test_row(
+        pe=12.0,
+        pe_vs_industry=-25.0,
+        sales_growth=18.0,
+        rel_volume=2.5,
+        sector="Technology Services",
+        price=150.0,
+    )
+    active_filters = {
+        "pe": "Under 15",
+        "pe_vs_industry": "20%+ below industry",
+        "sales_growth": "High (>25%)",  # fail (18% < 25%)
+        "vol_spike": "Volume 2x average",
+        "sector": "Technology Services",
+        "price": "Under $50",  # fail (150 > 50)
+    }
+    bullets = explain.explain_stock_match("NVDA", row, active_filters)
+
+    assert len(bullets) == 4
+    assert any("P/E 12 נמוך מ-15" in b for b in bullets)
+    assert any("P/E נמוך ב-25% מהחציון בתעשייה" in b for b in bullets)
+    assert any("מחזור חריג פי 2.5 מהממוצע" in b for b in bullets)
+    assert any("סקטור שירותי טכנולוגיה" in b for b in bullets)
+
+
+def test_explain_stock_match_empty_filters_or_no_match():
+    row = make_test_row(price=100.0)
+    assert explain.explain_stock_match("AAPL", row, {}) == []
+    assert explain.explain_stock_match("AAPL", row, {"price": "Under $50"}) == []
+
+
+def test_stock_summary_card_text_strong_factors():
+    # Value + Momentum + Growth
+    row_all = make_test_row(
+        score_value=85.0,
+        score_momentum=80.0,
+        sales_growth=25.0,
+    )
+    card_all = explain.stock_summary_card_text(row_all)
+    assert "ערך" in card_all and "מומנטום" in card_all and "צמיחה" in card_all
+
+    # Value + Growth
+    row_vg = make_test_row(
+        score_value=75.0,
+        score_momentum=50.0,
+        sales_growth=20.0,
+        sma200_pct=-5.0,
+    )
+    card_vg = explain.stock_summary_card_text(row_vg)
+    assert "ערך" in card_vg and "צמיחה" in card_vg
+
+    # Momentum
+    row_m = make_test_row(
+        score_value=40.0,
+        score_momentum=80.0,
+        sales_growth=5.0,
+        pe=40.0,
+    )
+    card_m = explain.stock_summary_card_text(row_m)
+    assert "מומנטום" in card_m
+
+
+def test_stock_summary_card_text_nan_and_empty_edge_cases():
+    assert explain.stock_summary_card_text(None) == ""
+    assert explain.stock_summary_card_text(pd.Series(dtype=object)) == ""
+
+    row_nan = pd.Series({
+        "score_value": np.nan,
+        "score_momentum": np.nan,
+        "market_cap": 250e9,
+        "price": 100.0,
+        "sma200_pct": 10.0,
+    })
+    card_nan = explain.stock_summary_card_text(row_nan)
+    assert isinstance(card_nan, str)
