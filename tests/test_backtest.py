@@ -305,3 +305,89 @@ def test_duckdb_compute_drawdown_parity():
     # Edge cases
     assert backtest.compute_drawdown([]) is None
     assert backtest.compute_drawdown([np.nan, np.nan]) is None
+
+
+def test_load_price_history_date_filtering_parity(tmp_path):
+    """Verify DuckDB date filtering produces identical results to Pandas filtering."""
+    dates = pd.date_range("2021-01-01", "2023-12-31", freq="B")
+    np.random.seed(42)
+    df = pd.DataFrame({
+        "date": dates.strftime("%Y-%m-%d"),
+        "AAPL": np.random.normal(150, 5, len(dates)),
+        "MSFT": np.random.normal(300, 10, len(dates)),
+    })
+    parquet_path = tmp_path / "prices.parquet"
+    df.to_parquet(parquet_path)
+
+    start_date = "2022-03-01"
+    end_date = "2022-09-30"
+
+    # DuckDB predicate pushdown load
+    res_duck = backtest.load_price_history(parquet_path, start_date=start_date, end_date=end_date)
+
+    # Standard pandas load and filter
+    df_full = pd.read_parquet(parquet_path)
+    mask = (df_full["date"] >= start_date) & (df_full["date"] <= end_date)
+    res_pandas = df_full[mask].reset_index(drop=True)
+
+    pd.testing.assert_frame_equal(res_duck.reset_index(drop=True), res_pandas)
+
+    # Test with datetime / date objects
+    res_obj = backtest.load_price_history(
+        parquet_path,
+        start_date=pd.Timestamp(start_date).date(),
+        end_date=pd.Timestamp(end_date),
+    )
+    pd.testing.assert_frame_equal(res_obj.reset_index(drop=True), res_pandas)
+
+
+def test_load_price_history_empty_range(tmp_path):
+    """Verify empty date ranges produce an empty DataFrame with proper columns."""
+    dates = pd.date_range("2022-01-01", "2022-12-31", freq="B")
+    df = pd.DataFrame({
+        "date": dates.strftime("%Y-%m-%d"),
+        "price": range(len(dates)),
+    })
+    parquet_path = tmp_path / "prices.parquet"
+    df.to_parquet(parquet_path)
+
+    # Query range outside available data
+    res = backtest.load_price_history(parquet_path, start_date="2025-01-01", end_date="2025-06-01")
+    assert isinstance(res, pd.DataFrame)
+    assert res.empty
+    assert list(res.columns) == ["date", "price"]
+
+
+def test_load_price_history_missing_file(tmp_path):
+    """Verify missing file handling raises appropriate error."""
+    missing_path = tmp_path / "does_not_exist.parquet"
+    with pytest.raises(Exception):
+        backtest.load_price_history(missing_path, start_date="2022-01-01")
+
+
+def test_load_price_history_fallback(tmp_path, monkeypatch):
+    """Verify graceful fallback to pd.read_parquet when DuckDB query fails."""
+    dates = pd.date_range("2022-01-01", "2022-12-31", freq="B")
+    df = pd.DataFrame({
+        "date": dates.strftime("%Y-%m-%d"),
+        "price": range(len(dates)),
+    })
+    parquet_path = tmp_path / "prices.parquet"
+    df.to_parquet(parquet_path)
+
+    # Force query_parquet_df to raise exception
+    def mock_query_parquet_df(*args, **kwargs):
+        raise RuntimeError("Simulated DuckDB error")
+
+    monkeypatch.setattr("screener.data.duck_engine.query_parquet_df", mock_query_parquet_df)
+
+    start_date = "2022-06-01"
+    end_date = "2022-08-31"
+
+    res_fallback = backtest.load_price_history(parquet_path, start_date=start_date, end_date=end_date)
+
+    df_full = pd.read_parquet(parquet_path)
+    mask = (df_full["date"] >= start_date) & (df_full["date"] <= end_date)
+    res_pandas = df_full[mask]
+
+    pd.testing.assert_frame_equal(res_fallback, res_pandas)
