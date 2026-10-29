@@ -36,6 +36,7 @@ def streamlit_app(tmp_path_factory):
     env["STREAMLIT_SERVER_HEADLESS"] = "true"
     env["SCREENER_NO_BROWSER"] = "1"
     env["SCREENER_NO_UPDATE"] = "1"
+    env["HALGOM_NO_AUTH"] = "1"
 
     cmd = [
         sys.executable,
@@ -58,20 +59,16 @@ def streamlit_app(tmp_path_factory):
     while time.time() - start_time < 30:
         try:
             with urllib.request.urlopen(health_url, timeout=2) as resp:
-                if resp.read().decode("utf-8").strip() == "ok":
+                if resp.status == 200:
                     up = True
                     break
         except Exception:
-            pass
-        if proc.poll() is not None:
-            stdout, stderr = proc.communicate()
-            raise RuntimeError(f"Streamlit process exited prematurely:\n{stderr.decode('utf-8')}")
-        time.sleep(0.5)
+            time.sleep(0.5)
 
     if not up:
         proc.kill()
         stdout, stderr = proc.communicate()
-        raise RuntimeError(f"Streamlit server did not become healthy in 30s:\n{stderr.decode('utf-8')}")
+        raise RuntimeError(f"Streamlit server failed to start at {url}\nStdout: {stdout.decode()}\nStderr: {stderr.decode()}")
 
     yield url
 

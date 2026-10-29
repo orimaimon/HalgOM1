@@ -53,6 +53,7 @@ def streamlit_app(tmp_path_factory):
     port = get_free_port()
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent.parent)
+    env["HALGOM_NO_AUTH"] = "1"
 
     runner_code = f"""
 import sys, os
