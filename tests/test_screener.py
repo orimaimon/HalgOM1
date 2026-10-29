@@ -44,7 +44,8 @@ def make_raw(n: int = 300, seed: int = 7) -> pd.DataFrame:
         if col.kind == "text":
             continue
         if col.kind == "date":
-            data[key] = pd.Timestamp(TODAY) + pd.to_timedelta(rng.integers(-20, 90, n), unit="D")
+            dt_series = pd.Series([pd.Timestamp(TODAY) + pd.to_timedelta(int(x), unit="D") for x in rng.integers(-20, 90, n)])
+            data[key] = dt_series.astype("datetime64[s]").astype("int64")
         else:
             data[key] = rng.normal(10, 30, n)
     df = pd.DataFrame(data)
@@ -179,7 +180,7 @@ def test_derived_columns(df):
     assert df["range52"].dropna().between(0, 1).all()
     assert (df["high52_pct"].dropna() <= 0).all()
     assert (df["days_to_earnings"].dropna() >= 0).all()
-    assert df.loc[df["earnings_date"] < pd.Timestamp(TODAY), "days_to_earnings"].isna().all()
+    assert df.loc[pd.to_datetime(df["earnings_date"]) < pd.Timestamp(TODAY), "days_to_earnings"].isna().all()
 
 
 def test_scores_rank_negative_pe_worst():

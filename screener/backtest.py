@@ -6,11 +6,18 @@ Calculates forward returns (5/20/60 days) and excess returns over a benchmark
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import math
+from pathlib import Path
+from typing import Any
+import duckdb
 import numpy as np
 import pandas as pd
 
 from screener import history_signals
+from screener.data import duck_engine
+
+log = logging.getLogger(__name__)
 
 LABELS: dict[str, str] = {
     "signal": "סיגנל",
@@ -28,10 +35,240 @@ LABELS: dict[str, str] = {
 }
 
 
+def load_price_history(
+    parquet_path: str | Path,
+    start_date: str | dt.date | dt.datetime | None = None,
+    end_date: str | dt.date | dt.datetime | None = None,
+) -> pd.DataFrame:
+    """Load price history from a parquet file filtered by date range using DuckDB predicate pushdown.
+
+    Falls back gracefully to standard pd.read_parquet if DuckDB query fails.
+
+    Parameters
+    ----------
+    parquet_path : str | Path
+        Path to the Parquet file containing historical price data.
+    start_date : str | dt.date | dt.datetime | None
+        Optional start date filter (inclusive).
+    end_date : str | dt.date | dt.datetime | None
+        Optional end date filter (inclusive).
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with filtered price history.
+    """
+    p = Path(parquet_path)
+
+    # Format date filters to standard ISO string if provided
+    s_str = start_date.isoformat() if hasattr(start_date, "isoformat") else (str(start_date) if start_date is not None else None)
+    e_str = end_date.isoformat() if hasattr(end_date, "isoformat") else (str(end_date) if end_date is not None else None)
+
+    try:
+        where_clauses: list[str] = []
+        params: list[Any] = [str(p)]
+
+        if s_str is not None:
+            where_clauses.append("date >= ?")
+            params.append(s_str)
+        if e_str is not None:
+            where_clauses.append("date <= ?")
+            params.append(e_str)
+
+        where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+        sql = f"SELECT * FROM read_parquet(?){where_sql}"
+
+        return duck_engine.query_parquet_df(sql=sql, params=params)
+    except Exception as e:
+        log.warning("DuckDB query failed for %s, falling back to pd.read_parquet: %s", parquet_path, e)
+        df = pd.read_parquet(p)
+        if "date" in df.columns or df.index.name == "date":
+            # If date is in index, filter via index, else filter via 'date' column
+            if "date" in df.columns:
+                date_col = pd.to_datetime(df["date"])
+                mask = pd.Series(True, index=df.index)
+                if s_str is not None:
+                    mask &= date_col >= pd.to_datetime(s_str)
+                if e_str is not None:
+                    mask &= date_col <= pd.to_datetime(e_str)
+                return df[mask]
+            else:
+                idx_dates = pd.to_datetime(df.index)
+                mask = pd.Series(True, index=df.index)
+                if s_str is not None:
+                    mask &= idx_dates >= pd.to_datetime(s_str)
+                if e_str is not None:
+                    mask &= idx_dates <= pd.to_datetime(e_str)
+                return df[mask]
+        return df
+
+
 def _r(x: float | None) -> float | None:
     if x is None or pd.isna(x):
         return None
     return round(float(x), 2)
+
+
+def compute_returns(
+    prices: pd.Series | pd.DataFrame | np.ndarray,
+    horizon: int = 1,
+    kind: str = "forward",
+) -> pd.Series | pd.DataFrame | np.ndarray:
+    """Calculate percentage returns across a series, dataframe, or numpy array using DuckDB SQL.
+
+    Parameters
+    ----------
+    prices : pd.Series | pd.DataFrame | np.ndarray
+        Price inputs.
+    horizon : int
+        Look-ahead or look-back step horizon.
+    kind : str
+        'forward' or 'trailing'.
+
+    Returns
+    -------
+    pd.Series | pd.DataFrame | np.ndarray
+        Returns calculated as percentage change.
+    """
+    if horizon <= 0:
+        raise ValueError("Horizon must be a positive integer")
+
+    con = duckdb.connect()
+
+    if isinstance(prices, pd.Series):
+        s = prices.astype(float)
+        df_in = pd.DataFrame({"i": range(len(s)), "price": s.values})
+        if kind == "forward":
+            sql = "SELECT (LEAD(price, ?) OVER (ORDER BY i) / price - 1.0) * 100.0 AS ret FROM df_in ORDER BY i"
+        elif kind == "trailing":
+            sql = "SELECT (price / LAG(price, ?) OVER (ORDER BY i) - 1.0) * 100.0 AS ret FROM df_in ORDER BY i"
+        else:
+            raise ValueError(f"Unknown kind: {kind}")
+        res = con.execute(sql, [horizon]).df()["ret"]
+        return pd.Series(res.values, index=prices.index)
+
+    elif isinstance(prices, pd.DataFrame):
+        df = prices.astype(float)
+        out = {}
+        for col in df.columns:
+            sub = pd.DataFrame({"i": range(len(df)), "price": df[col].values})
+            if kind == "forward":
+                sql = "SELECT (LEAD(price, ?) OVER (ORDER BY i) / price - 1.0) * 100.0 AS ret FROM sub ORDER BY i"
+            elif kind == "trailing":
+                sql = "SELECT (price / LAG(price, ?) OVER (ORDER BY i) - 1.0) * 100.0 AS ret FROM sub ORDER BY i"
+            else:
+                raise ValueError(f"Unknown kind: {kind}")
+            out[col] = con.execute(sql, [horizon]).df()["ret"].values
+        return pd.DataFrame(out, index=df.index)
+
+    else:
+        arr = np.asarray(prices, dtype=float)
+        s = pd.Series(arr)
+        ret = compute_returns(s, horizon=horizon, kind=kind)
+        return ret.to_numpy()
+
+
+def compute_sharpe(
+    returns: pd.Series | pd.DataFrame | np.ndarray | list,
+    rf: float = 0.0,
+    annualize: bool = False,
+    period_factor: int = 252,
+) -> float | None:
+    """Calculate Sharpe Ratio using DuckDB SQL aggregations.
+
+    Parameters
+    ----------
+    returns : pd.Series | pd.DataFrame | np.ndarray | list
+        Return values (percentages or decimals).
+    rf : float
+        Risk-free rate per period.
+    annualize : bool
+        Whether to multiply by sqrt(period_factor).
+    period_factor : int
+        Periods per year (default 252 for daily).
+
+    Returns
+    -------
+    float | None
+        Calculated Sharpe Ratio or None if insufficient non-NaN values or zero std.
+    """
+    if isinstance(returns, (pd.Series, pd.DataFrame)):
+        s = returns.squeeze()
+        if isinstance(s, pd.DataFrame):
+            s = s.iloc[:, 0] if not s.empty else pd.Series(dtype=float)
+        s = pd.Series(s).dropna()
+    else:
+        arr = np.asarray(returns, dtype=float)
+        s = pd.Series(arr[~np.isnan(arr)]) if len(arr) > 0 else pd.Series(dtype=float)
+
+    if len(s) < 2:
+        return None
+
+    df_in = pd.DataFrame({"r": s.values})
+    con = duckdb.connect()
+    res = con.execute(
+        """
+        SELECT
+            AVG(r - ?) AS mean_ex,
+            STDDEV_SAMP(r - ?) AS std_ex
+        FROM df_in
+        """,
+        [rf, rf],
+    ).fetchone()
+
+    if res is None or res[0] is None or res[1] is None or res[1] == 0:
+        return None
+
+    sharpe = float(res[0] / res[1])
+    if annualize:
+        sharpe *= math.sqrt(period_factor)
+    return sharpe
+
+
+def compute_drawdown(prices: pd.Series | pd.DataFrame | np.ndarray | list) -> float | None:
+    """Calculate maximum drawdown percentage using DuckDB SQL window functions.
+
+    Parameters
+    ----------
+    prices : pd.Series | pd.DataFrame | np.ndarray | list
+        Price history series or array.
+
+    Returns
+    -------
+    float | None
+        Maximum drawdown in percent (e.g. -15.5) or None if prices empty.
+    """
+    if isinstance(prices, (pd.Series, pd.DataFrame)):
+        s = prices.squeeze()
+        if isinstance(s, pd.DataFrame):
+            s = s.iloc[:, 0] if not s.empty else pd.Series(dtype=float)
+        s = pd.Series(s).dropna()
+    else:
+        arr = np.asarray(prices, dtype=float)
+        s = pd.Series(arr[~np.isnan(arr)]) if len(arr) > 0 else pd.Series(dtype=float)
+
+    if len(s) == 0:
+        return None
+
+    df_in = pd.DataFrame({"i": range(len(s)), "price": s.values})
+    con = duckdb.connect()
+    res = con.execute(
+        """
+        WITH peak_tb AS (
+            SELECT
+                price,
+                MAX(price) OVER (ORDER BY i ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS peak
+            FROM df_in
+        )
+        SELECT MIN((price - peak) / peak * 100.0) AS max_dd
+        FROM peak_tb
+        """
+    ).fetchone()
+
+    if res is None or res[0] is None:
+        return None
+
+    return float(res[0])
 
 
 def run(

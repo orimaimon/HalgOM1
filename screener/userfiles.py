@@ -23,6 +23,46 @@ _LOCK = threading.Lock()
 T = TypeVar("T")
 
 
+def get_user_file_path(filename: str, user_id: str | None = None) -> Path:
+    """
+    Return the resolved file path for a user file or global legacy file.
+    - user_id non-empty -> store.DATA_DIR / "users" / user_id / filename
+    - user_id is None or empty -> store.DATA_DIR / filename
+    Ensures parent directory exists before returning.
+    """
+    from screener.data import store
+
+    data_dir = store.DATA_DIR
+    if user_id:
+        path = data_dir / "users" / user_id / filename
+    else:
+        path = data_dir / filename
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def migrate_legacy_file(filename: str, user_id: str) -> bool:
+    """
+    If the target user file does not exist, but the legacy global file store.DATA_DIR / filename
+    exists, safely copies the legacy file to the user's directory.
+    Returns True if migrated, False otherwise.
+    """
+    from screener.data import store
+
+    legacy_path = store.DATA_DIR / filename
+    target_path = get_user_file_path(filename, user_id)
+
+    if target_path.exists():
+        return False
+
+    if legacy_path.exists():
+        shutil.copy2(legacy_path, target_path)
+        return True
+
+    return False
+
+
 def load_user_file(path: Path, item_cls: type[T]) -> dict[str, T]:
     """
     Load a JSON dict of dataclasses per-entry safely.

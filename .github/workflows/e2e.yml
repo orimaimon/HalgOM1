@@ -1,0 +1,40 @@
+name: E2E Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  e2e:
+    name: Run Playwright E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Create venv and install dependencies
+        run: |
+          uv venv --python 3.12 screener/.venv
+          uv pip install --python screener/.venv -r screener/requirements.lock pytest pytest-playwright
+
+      - name: Install Playwright Browsers with Dependencies
+        run: |
+          screener/.venv/bin/playwright install --with-deps chromium
+
+      - name: Run E2E Tests
+        run: |
+          screener/.venv/bin/python -m pytest tests/e2e
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: test-results/
+          if-no-files-found: ignore

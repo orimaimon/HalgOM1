@@ -341,8 +341,18 @@ def _header(snap, n_universe: int) -> None:
         st.caption(f"{t('Data time')}: **{snap.fetched_at:%H:%M}** · {snap.fetched_at:%d/%m/%Y} ({src}) · "
                    f"{source_text(snap.meta)}",
                    help="מקור הנתונים ומצב העדכון כפי שהספק מדווח. delayed = בעיכוב, realtime = בזמן אמת")
-        r1, r2 = st.columns([1.4, 1.3])
-        if r1.button(t("Refresh data"), icon=":material/refresh:", use_container_width=True):
+        show_exit = not lifecycle.is_server_mode()
+        if show_exit:
+            r1, r2 = st.columns([1.4, 1.3])
+            do_refresh = r1.button(t("Refresh data"), icon=":material/refresh:", use_container_width=True)
+            with r2.popover(t("Exit"), icon=":material/power_settings_new:", use_container_width=True,
+                            help="סגירת הסקרינר"):
+                hebrew_note(t("Closes the screener and the black window. Next time, open again from the desktop shortcut."))
+                st.button(t("Close the screener"), key="exit", type="primary", on_click=on_exit)
+        else:
+            do_refresh = st.button(t("Refresh data"), icon=":material/refresh:", use_container_width=True)
+
+        if do_refresh:
             if snap.source != "stale" and snap.age < REFRESH_MIN:      # every click is a TradingView request
                 st.toast(f"{t('Data was updated')} {max(0, int(snap.age.total_seconds()))} {t('seconds ago')}", icon="ℹ️")
             else:
@@ -363,10 +373,6 @@ def _header(snap, n_universe: int) -> None:
                     get_data(force=True)
                     _fetch_market.clear()
                     st.rerun()
-        with r2.popover(t("Exit"), icon=":material/power_settings_new:", use_container_width=True,
-                        help="סגירת הסקרינר"):
-            hebrew_note(t("Closes the screener and the black window. Next time, open again from the desktop shortcut."))
-            st.button(t("Close the screener"), key="exit", type="primary", on_click=on_exit)
     if snap.source == "stale":
         msg = snap.error or f"{t('Cannot connect to TradingView right now - showing saved data from')} {snap.fetched_at:%d/%m/%Y} {t('at')} {snap.fetched_at:%H:%M}. {t('Will try again automatically in a few minutes.')}"
         st.warning(f"⚠️ {msg}")
@@ -405,6 +411,8 @@ def nav() -> str:
 
 def goodbye() -> None:
     """Shown after Exit: the server stops a moment later, so this is the last thing the tab shows."""
+    if lifecycle.is_server_mode():
+        return
     st.html('<div class="hs-brand" style="justify-content:center;margin-top:18vh"><i></i><b>HalgOM</b>'
             '<span>Screener</span></div>'
             '<div dir="rtl" style="text-align:center;margin-top:1.2rem;font-size:1.4rem;font-weight:600">'

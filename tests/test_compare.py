@@ -201,3 +201,48 @@ def test_negative_debt_to_equity_never_wins():
     uni = pd.DataFrame({"ticker": ["AAA", "BBB", "CCC"], "debt_eq": [-2.0, 0.4, 0.9]})
     df = compare.compare(uni, ["AAA", "BBB", "CCC"], metrics=[("debt_eq", "low")])
     assert df.attrs["best"] == {"debt_eq": "BBB"}
+
+
+def test_compare_stocks_two_and_three_tickers():
+    universe = make_synthetic_universe()
+
+    # 2 tickers
+    res2 = compare.compare_stocks(["AAPL", "MSFT"], universe)
+    assert set(res2.keys()) == {"metrics_table", "highlights"}
+    assert list(res2["metrics_table"].columns) == ["metric", "AAPL", "MSFT"]
+    assert "Lowest P/E" in res2["highlights"]["AAPL"]
+    assert "Highest ROE" in res2["highlights"]["MSFT"]
+    assert "Highest 1Y Return" in res2["highlights"]["MSFT"]
+    assert "Lowest Debt" in res2["highlights"]["MSFT"]
+
+    # 3 tickers
+    res3 = compare.compare_stocks(["AAPL", "MSFT", "GOOGL"], universe)
+    assert set(res3.keys()) == {"metrics_table", "highlights"}
+    assert list(res3["metrics_table"].columns) == ["metric", "AAPL", "MSFT", "GOOGL"]
+    assert "Lowest P/E" in res3["highlights"]["AAPL"]
+    assert "Highest ROE" in res3["highlights"]["MSFT"]
+    assert "Lowest Debt" in res3["highlights"]["GOOGL"]
+
+
+def test_compare_stocks_five_tickers_raises():
+    universe = make_synthetic_universe()
+    with pytest.raises(ValueError, match="ניתן להשוות עד 4 מניות בלבד"):
+        compare.compare_stocks(["AAPL", "MSFT", "GOOGL", "AMZN", "META"], universe)
+
+
+def test_compare_stocks_missing_tickers():
+    universe = make_synthetic_universe()
+    res = compare.compare_stocks(["AAPL", "NONEXISTENT"], universe)
+    assert list(res["metrics_table"].columns) == ["metric", "AAPL"]
+    assert res["metrics_table"].attrs["missing"] == ["NONEXISTENT"]
+    assert "AAPL" in res["highlights"]
+    assert "NONEXISTENT" not in res["highlights"]
+
+
+def test_compare_stocks_ties():
+    universe = make_synthetic_universe()
+    # AAPL and GOOGL both have sales_growth = 12.3 in synthetic universe
+    res = compare.compare_stocks(["AAPL", "GOOGL"], universe)
+    # Since sales_growth tied, neither gets "Highest Sales Growth"
+    assert "Highest Sales Growth" not in res["highlights"]["AAPL"]
+    assert "Highest Sales Growth" not in res["highlights"]["GOOGL"]

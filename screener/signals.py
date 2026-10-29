@@ -74,7 +74,79 @@ BREAKDOWNS: list[Signal] = [
     Signal("New 3-month low (breakdown)", "BD 3M", lambda d: d["price"] < d["low_3m_prev"]),
     Signal("New 1-month low (breakdown)", "BD 1M", lambda d: d["price"] < d["low_1m_prev"]),
 ]
+def _get_val(row: pd.Series, keys: tuple[str, ...]) -> float | None:
+    for k in keys:
+        if k in row:
+            v = row[k]
+            if pd.notna(v):
+                try:
+                    f = float(v)
+                    if not np.isnan(f) and not np.isinf(f):
+                        return f
+                except (ValueError, TypeError):
+                    pass
+    return None
+
+
+def detect_vcp(row: pd.Series) -> bool:
+    """
+    Detect Volatility Contraction Pattern (VCP).
+    Checks if 1-week range < 2-week range and 2-week range < 1-month range,
+    with price within 15% of 52-week high and above SMA50.
+    """
+    r_1w = _get_val(row, ("range_1w_pct", "range_5d_pct", "range_1w", "range_5d"))
+    r_2w = _get_val(row, ("range_2w_pct", "range_10d_pct", "range_2w", "range_10d"))
+    r_1m = _get_val(row, ("range_1m_pct", "range_1m"))
+
+    if r_1w is None or r_2w is None or r_1m is None:
+        return False
+
+    if not (r_1w < r_2w < r_1m):
+        return False
+
+    price = _get_val(row, ("price", "close"))
+    high52 = _get_val(row, ("high52", "high_52w", "high52w"))
+    high52_pct = _get_val(row, ("high52_pct", "high_52w_pct"))
+
+    if price is not None and high52 is not None and high52 > 0:
+        if price < 0.85 * high52:
+            return False
+    elif high52_pct is not None:
+        if high52_pct < 0:
+            if high52_pct < -15.0:
+                return False
+        elif high52_pct <= 15.0:
+            pass
+        elif high52_pct >= 85.0:
+            pass
+        else:
+            return False
+    else:
+        return False
+
+    sma50 = _get_val(row, ("sma50", "sma_50"))
+    sma50_pct = _get_val(row, ("sma50_pct", "sma_50_pct"))
+
+    if price is not None and sma50 is not None:
+        if price <= sma50:
+            return False
+    elif sma50_pct is not None:
+        if sma50_pct <= 0:
+            return False
+    else:
+        return False
+
+    return True
+
+
+def _vcp_mask(d: pd.DataFrame) -> pd.Series:
+    if d.empty:
+        return pd.Series(dtype=bool, index=d.index)
+    return d.apply(detect_vcp, axis=1)
+
+
 CONSOLIDATION: list[Signal] = [
+    Signal("Tight 1-month range (Minervini)", "Tight 1M", _vcp_mask),
     Signal(f"Volatility contraction (1M range < {TIGHT_ATR:g}x ATR)", "Tight 1M",
            lambda d: d["range_1m_pct"] < TIGHT_ATR * d["atr_pct"]),
 ]

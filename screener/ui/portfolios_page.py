@@ -10,7 +10,16 @@ import streamlit as st
 
 from screener import export, i18n as I, portfolio as PF
 from screener.data.store import session_date
-from screener.ui import alerts_view, portfolio_history_view, portfolio_ils_view, portfolio_risk_view
+from screener.ui import (
+    alerts_view,
+    correlation_view,
+    journal_view,
+    portfolio_history_view,
+    portfolio_ils_view,
+    portfolio_risk_view,
+    stop_tracker_view,
+    watchlist_triggers_view,
+)
 from screener.ui.common import sign_color, col_label, hebrew_note, log, on_reset, ss, t
 from screener.ui.watchlists import _add_and_report, _by_ticker
 
@@ -236,10 +245,14 @@ def watchlist_view(plist: PF.PList, df: pd.DataFrame) -> None:
         with c3.popover(t("Remove ticker"), icon=":material/remove:", use_container_width=True):
             st.selectbox(t("Ticker"), list(w["ticker"]), key="pf_remove")
             st.button(t("Remove"), on_click=on_pf_remove, key="pf_remove_btn")
+        with st.expander(t("Trading playbook & triggers"), expanded=False):
+            watchlist_triggers_view.render(plist, df)
 
 
 def portfolio_view(plist: PF.PList, df: pd.DataFrame) -> None:
-    tab_pos, tab_hist, tab_risk, tab_ils = st.tabs([t("Positions"), t("History"), t("Risk"), t("Shekels")])
+    tab_pos, tab_hist, tab_risk, tab_journal, tab_ils = st.tabs(
+        [t("Positions"), t("History"), t("Risk"), t("Trade journal"), t("Shekels")]
+    )
     with tab_pos:
         trades = plist.frame()
         val = PF.valuation(PF.positions(trades), _by_ticker(df))
@@ -282,6 +295,9 @@ def portfolio_view(plist: PF.PList, df: pd.DataFrame) -> None:
                          hide_index=True, column_config=config, placeholder="—", key="pf_positions",
                          height=min(38 + 35 * len(held), 600))
         hebrew_note(t("Average cost includes fees. Splits and dividends after purchase are not yet calculated."))
+        if not held.empty:
+            with st.expander(t("Trailing stops & targets"), expanded=False):
+                stop_tracker_view.render(plist, df)
         with st.expander(f"{t('Trades')} ({len(trades)})"):
             shown = trades.assign(side=trades["side"].map(t))
             st.dataframe(shown, hide_index=True, placeholder="—", key="pf_trades", column_config={
@@ -308,6 +324,10 @@ def portfolio_view(plist: PF.PList, df: pd.DataFrame) -> None:
         portfolio_history_view.render(plist)
     with tab_risk:
         portfolio_risk_view.render(plist, df)
+        st.divider()
+        correlation_view.render(plist, df)
+    with tab_journal:
+        journal_view.render(plist, df)
     with tab_ils:
         portfolio_ils_view.render(plist, df)
 

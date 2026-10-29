@@ -121,3 +121,65 @@ def test_ui_explain_panel_english_language():
     assert not at.exception
     html_content = "".join(h.value for h in at.html)
     assert "P/E" in html_content or "12" in html_content
+
+
+def test_render_explain_card_active_filters():
+    row = make_test_row(
+        price=150.0,
+        pe=12.0,
+        market_cap=2.1e9,
+        change=12.3,
+    )
+    selections = {"pe": "Under 15", "price": "Under $50"}
+
+    def script(t, r, sel):
+        from screener.ui.explain_panel import render_explain_card
+        render_explain_card(t, r, sel)
+
+    at = AppTest.from_function(script, args=("AAPL", row, selections)).run()
+    assert not at.exception
+    # Check subheader headline
+    assert any("מדוע AAPL מופיעה בסריקה?" in sub.value for sub in at.subheader)
+    # Check summary badge (st.info)
+    assert len(at.info) >= 1
+    assert any("חברה" in info.value for info in at.info)
+    # Check bullet list of criteria
+    html_content = "".join(h.value for h in at.html)
+    assert "<ul" in html_content
+    assert "<li" in html_content
+    assert "✓" in html_content
+    assert "✗" in html_content
+    assert "$150.00" in html_content
+
+
+def test_render_explain_card_no_active_filters():
+    row = make_test_row()
+    selections = {}
+
+    def script(t, r, sel):
+        from screener.ui.explain_panel import render_explain_card
+        render_explain_card(t, r, sel)
+
+    at = AppTest.from_function(script, args=("NVDA", row, selections)).run()
+    assert not at.exception
+    assert any("מדוע NVDA מופיעה בסריקה?" in sub.value for sub in at.subheader)
+    assert any("אין פילטרים פעילים" in m.value for m in at.markdown)
+
+
+def test_render_explain_card_exception_handling():
+    row = make_test_row()
+    selections = {"pe": "Under 15"}
+
+    def script(t, r, sel):
+        import screener.explain as ex
+        orig = ex.explain
+        try:
+            ex.explain = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("card explain failed"))
+            from screener.ui.explain_panel import render_explain_card
+            render_explain_card(t, r, sel)
+        finally:
+            ex.explain = orig
+
+    at = AppTest.from_function(script, args=("MSFT", row, selections)).run()
+    assert not at.exception
+    assert any("שגיאה" in h.value for h in at.html)

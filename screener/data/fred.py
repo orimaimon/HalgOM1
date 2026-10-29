@@ -1,6 +1,6 @@
-"""FRED provider for the market header: VIX and high-yield bond spread from St. Louis Fed.
+"""FRED provider for the market header: VIX, high-yield bond spread, and yield curve slope from St. Louis Fed.
 
-Fetches VIXCLS and BAMLH0A0HYM2 from https://fred.stlouisfed.org/graph/fredgraph.csv
+Fetches VIXCLS, BAMLH0A0HYM2, and T10Y2Y from https://fred.stlouisfed.org/graph/fredgraph.csv
 through the request guard, cached once per New York day in _data/fred/fred.parquet.
 Module only; not connected to the UI or store yet.
 """
@@ -13,7 +13,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 SERIES = {
     "vix": "VIXCLS",
     "hy_spread": "BAMLH0A0HYM2",
+    "yield_curve": "T10Y2Y",
 }
 
 
@@ -189,7 +190,7 @@ def update(today: dt.date | None = None) -> bool:
 
 
 def history(key: str, data_dir: Path | None = None) -> pd.Series:
-    """Return stored series for key (vix or hy_spread). Returns empty Series if unavailable."""
+    """Return stored series for key (vix, hy_spread, or yield_curve). Returns empty Series if unavailable."""
     d_dir = data_dir or _default_dir()
     path = d_dir / "fred.parquet"
     if not path.exists():
@@ -213,6 +214,7 @@ def latest(data_dir: Path | None = None) -> dict:
     res = {
         "vix": {"value": None, "date": None},
         "hy_spread": {"value": None, "date": None},
+        "yield_curve": {"value": None, "date": None},
         "hy_spread_sma20": None,
         "hy_spread_above_sma20": None,
     }
@@ -245,5 +247,91 @@ def latest(data_dir: Path | None = None) -> dict:
             hy_val = res["hy_spread"]["value"]
             if hy_val is not None:
                 res["hy_spread_above_sma20"] = bool(hy_val > sma20)
+
+    return res
+
+
+def compute_macro_summary(data_dir: Path | None = None) -> dict[str, Any]:
+    """Compute macro summary metrics and regime indicator.
+
+    Returns latest values, 1-week changes, and regime indicator
+    ("Expansion" / "Inversion" / "Caution") based on yield curve slope (10Y-2Y)
+    and high-yield credit spread (HY OAS).
+    """
+    d_dir = data_dir or _default_dir()
+    path = d_dir / "fred.parquet"
+
+    empty_res: dict[str, Any] = {
+        "regime": "Unknown",
+        "vix": {"value": None, "date": None, "change_1w": None},
+        "hy_spread": {"value": None, "date": None, "change_1w": None},
+        "yield_curve": {"value": None, "date": None, "change_1w": None},
+        "latest": {"vix": None, "hy_spread": None, "yield_curve": None},
+        "changes_1w": {"vix": None, "hy_spread": None, "yield_curve": None},
+    }
+
+    if not path.exists():
+        return empty_res
+
+    try:
+        df = pd.read_parquet(path)
+    except Exception as e:
+        log.warning("Failed to read FRED parquet for macro summary: %s", e)
+        return empty_res
+
+    res: dict[str, Any] = {
+        "regime": "Unknown",
+        "vix": {"value": None, "date": None, "change_1w": None},
+        "hy_spread": {"value": None, "date": None, "change_1w": None},
+        "yield_curve": {"value": None, "date": None, "change_1w": None},
+        "latest": {"vix": None, "hy_spread": None, "yield_curve": None},
+        "changes_1w": {"vix": None, "hy_spread": None, "yield_curve": None},
+    }
+
+    for key in SERIES:
+        if key not in df.columns:
+            continue
+
+        s = df[key].dropna()
+        if s.empty:
+            continue
+
+        latest_idx = s.index[-1]
+        date_str = latest_idx.strftime("%Y-%m-%d") if hasattr(latest_idx, "strftime") else str(latest_idx)[:10]
+        latest_val = float(s.iloc[-1])
+
+        change_1w = None
+        if hasattr(latest_idx, "strftime") or isinstance(latest_idx, (dt.date, dt.datetime, pd.Timestamp)):
+            try:
+                target_dt = latest_idx - dt.timedelta(days=7)
+                s_past = s[s.index <= target_dt]
+                if not s_past.empty:
+                    past_val = float(s_past.iloc[-1])
+                    change_1w = round(latest_val - past_val, 4)
+            except Exception:
+                pass
+
+        if change_1w is None and len(s) >= 6:
+            change_1w = round(latest_val - float(s.iloc[-6]), 4)
+
+        res[key] = {
+            "value": latest_val,
+            "date": date_str,
+            "change_1w": change_1w,
+        }
+        res["latest"][key] = latest_val
+        res["changes_1w"][key] = change_1w
+
+    yc_val = res["latest"]["yield_curve"]
+    hy_val = res["latest"]["hy_spread"]
+
+    if yc_val is None and hy_val is None:
+        res["regime"] = "Unknown"
+    elif yc_val is not None and yc_val < 0:
+        res["regime"] = "Inversion"
+    elif (hy_val is not None and hy_val >= 5.0) or (yc_val is not None and yc_val < 0.20):
+        res["regime"] = "Caution"
+    else:
+        res["regime"] = "Expansion"
 
     return res

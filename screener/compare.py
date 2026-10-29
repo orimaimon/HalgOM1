@@ -7,10 +7,27 @@ and determining best metric values and summary lines.
 from __future__ import annotations
 
 from collections import Counter
+from typing import Any
 import pandas as pd
 
 from screener import fields, i18n
 from screener.explain import format_value
+
+BADGES: dict[str, str] = {
+    "pe": "Lowest P/E",
+    "fwd_pe": "Lowest Forward P/E",
+    "ps": "Lowest P/S",
+    "peg": "Lowest PEG",
+    "sales_growth": "Highest Sales Growth",
+    "eps_growth": "Highest EPS Growth",
+    "gross_margin": "Highest Gross Margin",
+    "net_margin": "Highest Net Margin",
+    "roe": "Highest ROE",
+    "debt_eq": "Lowest Debt",
+    "div_yield": "Highest Dividend Yield",
+    "perf_y": "Highest 1Y Return",
+    "score": "Highest Score",
+}
 
 METRICS: list[tuple[str, str]] = [
     ("market_cap", ""),
@@ -180,3 +197,30 @@ def summary_line(
             parts.append(f"{t} ב-{cnt}")
 
     return ", ".join(parts)
+
+
+def compare_stocks(
+    tickers: list[str],
+    universe: pd.DataFrame,
+    metrics: list[tuple[str, str]] | None = None,
+    lang: str = i18n.HE,
+) -> dict[str, Any]:
+    """Compare 2-4 stocks head-to-head across metrics and return comparison dictionary.
+
+    Returns dict containing:
+      - "metrics_table": DataFrame with metrics as rows and present tickers as columns
+      - "highlights": dict mapping present ticker -> list of badge strings (e.g. "Lowest P/E", "Highest ROE")
+    """
+    res_df = compare(universe, tickers, metrics=metrics, lang=lang)
+    present_tickers = [c for c in res_df.columns if c != "metric"]
+    best = res_df.attrs.get("best", {})
+
+    highlights: dict[str, list[str]] = {t: [] for t in present_tickers}
+    for metric_key, winning_ticker in best.items():
+        if winning_ticker in highlights and metric_key in BADGES:
+            highlights[winning_ticker].append(BADGES[metric_key])
+
+    return {
+        "metrics_table": res_df,
+        "highlights": highlights,
+    }

@@ -17,7 +17,7 @@ import hashlib
 import json
 
 from screener.filters import FILTERS_BY_KEY
-from screener.ui import compare_panel, explain_panel
+from screener.ui import compare_panel, explain_panel, sizing_panel
 from screener.ui.common import (CUSTOM, L, USER_PREFIX, sign_color, all_presets, col_label,
     column_config, display_values, hebrew_note,
     junk_toggle, log, on_reset, opt, preset_modified,
@@ -168,6 +168,9 @@ def tradingview_chart(symbol: str, height: int = 560) -> None:
   {json.dumps(config)}
   </script>
 </div>""", height=height)
+
+
+from screener.ui import chart_flip_view  # noqa: E402 — imported after tradingview_chart to avoid circular import
 
 
 # ─────────────────────────── callbacks ─────────────────────────────────────
@@ -395,6 +398,8 @@ def results(df: pd.DataFrame, universe: pd.DataFrame, res: pd.DataFrame, snap,
     else:
         ss.pop("selected_ticker", None)
         hebrew_note(t("👆 Click a row in the table to open chart and stock details"))
+    with st.expander(t("Fast chart review"), expanded=False):
+        chart_flip_view.render(res, selections())
     compare_panel.render(universe, list(res["ticker"]))
     export_bar(res, view_cols, snap)
 
@@ -483,6 +488,7 @@ def detail(row: pd.Series) -> None:
         l2.link_button("Finviz ↗", f"https://finviz.com/quote.ashx?t={row['ticker']}", use_container_width=True)
         add_to_watchlist_button(row["ticker"])
     explain_panel.render(row, selections())
+    sizing_panel.render(row)
 
 
 def add_to_watchlist_button(ticker: str) -> None:

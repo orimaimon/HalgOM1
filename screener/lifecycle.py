@@ -25,8 +25,25 @@ IDLE_POLLS = 30                 # 30 x 30 s = 15 minutes without an open tab
 FORCE_EXIT_AFTER = 5.0          # if a clean stop hangs, exit the process anyway
 
 
+def is_server_mode() -> bool:
+    """Check if server mode or no-idle-shutdown mode is enabled via environment variables,
+    or auto-detected when running on Linux outside tests."""
+    if os.environ.get("HALGOM_SERVER_MODE") == "1" or os.environ.get("HALGOM_NO_IDLE_SHUTDOWN") == "1":
+        return True
+    if os.environ.get("HALGOM_SERVER_MODE") == "0":
+        return False
+    # Auto-detect Linux production server (not CI, not running unit tests)
+    if os.name != "nt" and not os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("GITHUB_ACTIONS"):
+        return True
+    return False
+
+
 def stop_server(reason: str, delay: float = 1.5) -> None:
     """Stop the Streamlit server after `delay` seconds (time for the goodbye page to reach the browser)."""
+    if is_server_mode():
+        log.info("server mode: stop_server ignored (%s)", reason)
+        return
+
     log.info("stopping server: %s", reason)
 
     def _stop() -> None:
@@ -73,11 +90,15 @@ _watchdog_thread: threading.Thread | None = None
 
 def ensure_idle_watchdog_started(count: Callable[[], int | None] = active_sessions,
                                  stop: Callable[[str], None] = stop_server,
-                                 poll: float = POLL_SECONDS, idle_polls: int = IDLE_POLLS) -> threading.Thread:
+                                 poll: float = POLL_SECONDS, idle_polls: int = IDLE_POLLS) -> threading.Thread | None:
     global _watchdog_thread
     with _WATCHDOG_LOCK:
         if _watchdog_thread is not None and _watchdog_thread.is_alive():
             return _watchdog_thread
+
+        if is_server_mode():
+            log.info("server mode: idle watchdog disabled")
+            return None
 
         watch = IdleWatch(idle_polls)
 

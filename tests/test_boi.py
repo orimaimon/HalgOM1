@@ -160,3 +160,98 @@ def test_update_fetches_an_older_range_when_start_predates_the_cache(monkeypatch
     assert boi.update(dt.date(2024, 3, 1), today=dt.date(2026, 1, 7)) is True
     assert asked == [(dt.date(2024, 3, 1), dt.date(2026, 1, 7))]
     assert boi.rate_on(dt.date(2024, 3, 2)) == 3.9
+
+
+def test_get_rate_for_date_weekends_and_holidays():
+    rates = pd.Series(
+        {
+            dt.date(2026, 10, 1): 3.08,   # Thursday
+            dt.date(2026, 10, 2): 3.06,   # Friday
+            dt.date(2026, 10, 5): 3.059,  # Monday (2026-10-06 is a holiday)
+            dt.date(2026, 10, 7): 3.050,  # Wednesday
+        }
+    )
+
+    # Friday rate
+    assert boi.get_rate_for_date(dt.date(2026, 10, 2), rates) == 3.06
+
+    # Saturday (2026-10-03) and Sunday (2026-10-04) -> Friday's rate
+    assert boi.get_rate_for_date(dt.date(2026, 10, 3), rates) == 3.06
+    assert boi.get_rate_for_date(dt.date(2026, 10, 4), rates) == 3.06
+
+    # Holiday gap: Tuesday (2026-10-06) -> Monday's rate (3.059)
+    assert boi.get_rate_for_date(dt.date(2026, 10, 6), rates) == 3.059
+
+
+def test_get_rate_for_date_earliest_and_future():
+    rates = pd.Series(
+        {
+            dt.date(2026, 10, 1): 3.08,
+            dt.date(2026, 10, 2): 3.06,
+        }
+    )
+
+    # Before earliest known date -> NaN
+    res_before = boi.get_rate_for_date(dt.date(2026, 9, 30), rates)
+    assert pd.isna(res_before)
+
+    # Future date after latest known rate -> forward-fill latest rate (3.06)
+    assert boi.get_rate_for_date(dt.date(2026, 11, 15), rates) == 3.06
+
+
+def test_get_rates_for_range():
+    rates = pd.Series(
+        {
+            dt.date(2026, 10, 1): 3.08,   # Thursday
+            dt.date(2026, 10, 2): 3.06,   # Friday
+            dt.date(2026, 10, 5): 3.059,  # Monday (Tuesday Oct 6 holiday)
+            dt.date(2026, 10, 7): 3.050,  # Wednesday
+        }
+    )
+
+    # Range covering weekend and holiday (Oct 2 to Oct 7)
+    s_range = boi.get_rates_for_range(dt.date(2026, 10, 2), dt.date(2026, 10, 7), rates)
+    expected_dates = [
+        dt.date(2026, 10, 2),  # Fri: 3.06
+        dt.date(2026, 10, 3),  # Sat: 3.06 (weekend)
+        dt.date(2026, 10, 4),  # Sun: 3.06 (weekend)
+        dt.date(2026, 10, 5),  # Mon: 3.059
+        dt.date(2026, 10, 6),  # Tue: 3.059 (holiday gap)
+        dt.date(2026, 10, 7),  # Wed: 3.050
+    ]
+    assert list(s_range.index) == expected_dates
+    assert s_range.loc[dt.date(2026, 10, 2)] == 3.06
+    assert s_range.loc[dt.date(2026, 10, 3)] == 3.06
+    assert s_range.loc[dt.date(2026, 10, 4)] == 3.06
+    assert s_range.loc[dt.date(2026, 10, 5)] == 3.059
+    assert s_range.loc[dt.date(2026, 10, 6)] == 3.059
+    assert s_range.loc[dt.date(2026, 10, 7)] == 3.050
+
+
+def test_get_rates_for_range_earliest_and_future(monkeypatch, tmp_path):
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    rates = pd.Series(
+        {
+            dt.date(2026, 10, 2): 3.06,
+            dt.date(2026, 10, 5): 3.059,
+        }
+    )
+    boi_dir = tmp_path / "boi"
+    boi_dir.mkdir(parents=True, exist_ok=True)
+    boi._atomic_parquet(rates, boi_dir / "usd_ils.parquet")
+
+    # Range completely before earliest date
+    s_before = boi.get_rates_for_range(dt.date(2026, 9, 28), dt.date(2026, 9, 30))
+    assert len(s_before) == 3
+    assert s_before.isna().all()
+
+    # Range straddling earliest date
+    s_straddle = boi.get_rates_for_range(dt.date(2026, 10, 1), dt.date(2026, 10, 3))
+    assert pd.isna(s_straddle.loc[dt.date(2026, 10, 1)])
+    assert s_straddle.loc[dt.date(2026, 10, 2)] == 3.06
+    assert s_straddle.loc[dt.date(2026, 10, 3)] == 3.06
+
+    # Range completely in the future
+    s_future = boi.get_rates_for_range(dt.date(2026, 11, 1), dt.date(2026, 11, 3))
+    assert len(s_future) == 3
+    assert (s_future == 3.059).all()

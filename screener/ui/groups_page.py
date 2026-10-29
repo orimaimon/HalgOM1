@@ -10,7 +10,7 @@ from screener import groups as G, i18n as I
 from screener.fields import GROUP_COLUMNS
 from screener.filters import in_index
 
-from screener.ui import breadth_panel
+from screener.ui import breadth_panel, sector_rotation_view
 from screener.ui.common import L, sign_color, col_label, display_values, get_store, hebrew_note, junk_toggle, ss, t
 from screener.ui.track_record import groups_track_record
 
@@ -22,7 +22,9 @@ HEAT_UNIVERSES = ["S&P 500", "Nasdaq 100", "Screener results", "All stocks (top 
 
 
 def groups_page(universe: pd.DataFrame, res: pd.DataFrame) -> None:
-    tab_groups, tab_track, tab_breadth = st.tabs([t("Averages"), t("Track record"), t("Market breadth")])
+    tab_groups, tab_rot, tab_track, tab_breadth = st.tabs(
+        [t("Averages"), t("Sector rotation"), t("Track record"), t("Market breadth")]
+    )
     with tab_groups:
         c1, c2, c3, c4, c5 = st.columns([1.6, 2.2, 2.0, 1.6, 1.2], vertical_alignment="bottom")
         ss.setdefault("g_by", "Sector")
@@ -69,6 +71,8 @@ def groups_page(universe: pd.DataFrame, res: pd.DataFrame) -> None:
             hebrew_note("ביצועים ממוצעים של המניות בכל קבוצה. לחיצה על כותרת עמודה ממיינת. "
                         "מומלץ להשאיר את הסתרת מניות הזבל דלוקה — מניות זבל עם תנועות של מאות אחוזים "
                         "מעוותות ממוצע שווה-משקל.")
+    with tab_rot:
+        sector_rotation_view.render(universe)
     with tab_track:
         groups_track_record()
     with tab_breadth:

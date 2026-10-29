@@ -15,37 +15,56 @@ from screener.data import fred, guard, store
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "fred"
 
 
+def _sample_csv_with_yield_curve() -> str:
+    raw = (FIXTURES_DIR / "fred_sample.csv").read_text(encoding="utf-8").splitlines()
+    lines = []
+    for i, line in enumerate(raw):
+        if i == 0:
+            lines.append(line + ",T10Y2Y")
+        elif i == len(raw) - 1:
+            lines.append(line + ",.")
+        else:
+            lines.append(f"{line},{0.50 + i * 0.01:.2f}")
+    return "\n".join(lines)
+
+
 def test_build_url():
     url_default = fred.build_url()
-    assert "id=VIXCLS,BAMLH0A0HYM2" in url_default
+    assert "id=VIXCLS,BAMLH0A0HYM2,T10Y2Y" in url_default
 
     url_single = fred.build_url("VIXCLS")
     assert url_single == "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS"
 
-    url_list = fred.build_url(["VIXCLS", "BAMLH0A0HYM2"])
-    assert url_list == "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS,BAMLH0A0HYM2"
+    url_list = fred.build_url(["VIXCLS", "BAMLH0A0HYM2", "T10Y2Y"])
+    assert url_list == "https://fred.stlouisfed.org/graph/fredgraph.csv?id=VIXCLS,BAMLH0A0HYM2,T10Y2Y"
 
 
 def test_parse_csv_header_styles_and_nans():
-    csv_new = (FIXTURES_DIR / "fred_header_new.csv").read_text(encoding="utf-8")
-    df_new = fred._parse_csv(csv_new)
+    csv_text = (
+        "observation_date,VIXCLS,BAMLH0A0HYM2,T10Y2Y\n"
+        "2026-01-01,.,.,.\n"
+        "2026-01-02,15.2,3.45,0.65\n"
+        "2026-01-03,.,3.50,-0.10\n"
+    )
+    df_new = fred._parse_csv(csv_text)
 
     assert isinstance(df_new, pd.DataFrame)
-    assert list(df_new.columns) == ["vix", "hy_spread"]
+    assert list(df_new.columns) == ["vix", "hy_spread", "yield_curve"]
     assert df_new.index[0] == dt.date(2026, 1, 1)
     assert np.isnan(df_new.loc[dt.date(2026, 1, 1), "vix"])
     assert np.isnan(df_new.loc[dt.date(2026, 1, 1), "hy_spread"])
+    assert np.isnan(df_new.loc[dt.date(2026, 1, 1), "yield_curve"])
     assert df_new.loc[dt.date(2026, 1, 2), "vix"] == 15.2
     assert df_new.loc[dt.date(2026, 1, 2), "hy_spread"] == 3.45
-    assert np.isnan(df_new.loc[dt.date(2026, 1, 3), "vix"])
-    assert df_new.loc[dt.date(2026, 1, 3), "hy_spread"] == 3.50
+    assert df_new.loc[dt.date(2026, 1, 2), "yield_curve"] == 0.65
+    assert df_new.loc[dt.date(2026, 1, 3), "yield_curve"] == -0.10
 
-    csv_old = (FIXTURES_DIR / "fred_header_old.csv").read_text(encoding="utf-8")
+    csv_old = "DATE,VIXCLS,BAMLH0A0HYM2,T10Y2Y\n2026-01-01,16.1,3.50,0.40\n2026-01-02,.,.,.\n"
     df_old = fred._parse_csv(csv_old)
     assert df_old.loc[dt.date(2026, 1, 1), "vix"] == 16.1
     assert df_old.loc[dt.date(2026, 1, 1), "hy_spread"] == 3.50
+    assert df_old.loc[dt.date(2026, 1, 1), "yield_curve"] == 0.40
     assert np.isnan(df_old.loc[dt.date(2026, 1, 2), "vix"])
-    assert np.isnan(df_old.loc[dt.date(2026, 1, 2), "hy_spread"])
 
 
 def test_parse_csv_missing_date_column():
@@ -73,7 +92,7 @@ def test_update_downloads_once_per_ny_day(tmp_path, monkeypatch):
     fake_now = dt.datetime(2026, 10, 23, 12, 0, tzinfo=dt.timezone.utc)
     monkeypatch.setattr(guard, "_default_now", lambda: fake_now)
 
-    csv_sample = (FIXTURES_DIR / "fred_sample.csv").read_text(encoding="utf-8")
+    csv_sample = _sample_csv_with_yield_curve()
     fetch_count = 0
 
     def mock_get(url, timeout):
@@ -115,7 +134,7 @@ def test_update_handles_guard_wait_and_http_500(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(guard, "_default_now", lambda: fake_now)
 
     # First, save a valid file
-    csv_sample = (FIXTURES_DIR / "fred_sample.csv").read_text(encoding="utf-8")
+    csv_sample = _sample_csv_with_yield_curve()
     mock_ok = MagicMock(status_code=200, text=csv_sample)
     monkeypatch.setattr(requests, "get", lambda url, timeout: mock_ok)
 
@@ -162,6 +181,7 @@ def test_latest_and_history_no_file(tmp_path, monkeypatch):
     assert latest_data == {
         "vix": {"value": None, "date": None},
         "hy_spread": {"value": None, "date": None},
+        "yield_curve": {"value": None, "date": None},
         "hy_spread_sma20": None,
         "hy_spread_above_sma20": None,
     }
@@ -170,7 +190,7 @@ def test_latest_and_history_no_file(tmp_path, monkeypatch):
 def test_latest_and_history_with_data(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "DATA_DIR", tmp_path)
 
-    csv_sample = (FIXTURES_DIR / "fred_sample.csv").read_text(encoding="utf-8")
+    csv_sample = _sample_csv_with_yield_curve()
     mock_resp = MagicMock(status_code=200, text=csv_sample)
     monkeypatch.setattr(requests, "get", lambda url, timeout: mock_resp)
 
@@ -188,6 +208,10 @@ def test_latest_and_history_with_data(tmp_path, monkeypatch):
     assert len(s_hy) == 26
     assert s_hy.loc[dt.date(2026, 1, 25)] == 3.24
 
+    s_yc = fred.history("yield_curve", data_dir=d_dir)
+    assert len(s_yc) == 26
+    assert s_yc.loc[dt.date(2026, 1, 24)] == pytest.approx(0.74)
+
     s_unknown = fred.history("non_existent", data_dir=d_dir)
     assert s_unknown.empty
 
@@ -200,22 +224,106 @@ def test_latest_and_history_with_data(tmp_path, monkeypatch):
     # hy_spread: last non-NaN is 3.24 on 2026-01-25
     assert latest_data["hy_spread"] == {"value": 3.24, "date": "2026-01-25"}
 
+    # yield_curve: last non-NaN is 0.75 on 2026-01-25
+    assert latest_data["yield_curve"] == {"value": pytest.approx(0.75), "date": "2026-01-25"}
+
     # hy_spread_sma20: trailing 20 non-NaN values (rows 6 to 25: 3.05 to 3.24)
-    # mean of 3.05..3.24 is 3.145
     assert latest_data["hy_spread_sma20"] == pytest.approx(3.145)
 
-    # 3.24 > 3.145 -> True
     assert latest_data["hy_spread_above_sma20"] is True
 
 
 def test_answer_without_data_keeps_the_previous_file(tmp_path, monkeypatch):
     import pandas as pd
     monkeypatch.setattr(store, "DATA_DIR", tmp_path)
-    good = pd.DataFrame({"vix": [15.0], "hy_spread": [3.1]}, index=[pd.Timestamp("2026-10-22").date()])
+    good = pd.DataFrame(
+        {"vix": [15.0], "hy_spread": [3.1], "yield_curve": [0.55]},
+        index=[pd.Timestamp("2026-10-22").date()],
+    )
     monkeypatch.setattr(fred.guard, "call", lambda provider, fn, *a, **k: good)
     assert fred.update(today=pd.Timestamp("2026-10-22").date()) is True
-    # The next day FRED answers with only one of the two series
-    only_vix = pd.DataFrame({"vix": [16.0]}, index=[pd.Timestamp("2026-10-23").date()])
-    monkeypatch.setattr(fred.guard, "call", lambda provider, fn, *a, **k: only_vix)
+
+    # The next day FRED answers with missing yield_curve series
+    incomplete = pd.DataFrame({"vix": [16.0], "hy_spread": [3.2]}, index=[pd.Timestamp("2026-10-23").date()])
+    monkeypatch.setattr(fred.guard, "call", lambda provider, fn, *a, **k: incomplete)
     assert fred.update(today=pd.Timestamp("2026-10-23").date()) is False
     assert fred.latest()["hy_spread"]["value"] == 3.1
+    assert fred.latest()["yield_curve"]["value"] == 0.55
+
+
+def test_compute_macro_summary_no_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+
+    summary = fred.compute_macro_summary(data_dir=tmp_path / "fred")
+    assert summary["regime"] == "Unknown"
+    assert summary["latest"]["yield_curve"] is None
+    assert summary["changes_1w"]["yield_curve"] is None
+
+
+def test_compute_macro_summary_normal_and_inverted_regimes(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    d_dir = tmp_path / "fred"
+
+    # 1. Normal Yield Curve (Expansion)
+    dates = [dt.date(2026, 1, i) for i in range(1, 15)]
+    df_normal = pd.DataFrame(
+        {
+            "vix": [15.0 + i * 0.1 for i in range(14)],
+            "hy_spread": [3.20 + i * 0.02 for i in range(14)],
+            "yield_curve": [0.60 + i * 0.01 for i in range(14)],
+        },
+        index=dates,
+    )
+    fred._atomic_parquet(df_normal, d_dir / "fred.parquet")
+
+    summary_normal = fred.compute_macro_summary(data_dir=d_dir)
+    assert summary_normal["regime"] == "Expansion"
+    assert summary_normal["latest"]["vix"] == pytest.approx(16.3)
+    assert summary_normal["latest"]["hy_spread"] == pytest.approx(3.46)
+    assert summary_normal["latest"]["yield_curve"] == pytest.approx(0.73)
+    # 1-week change (2026-01-14 minus 2026-01-07): 0.73 - 0.66 = 0.07
+    assert summary_normal["yield_curve"]["change_1w"] == pytest.approx(0.07)
+    assert summary_normal["changes_1w"]["yield_curve"] == pytest.approx(0.07)
+    assert summary_normal["vix"]["change_1w"] == pytest.approx(0.7)
+
+    # 2. Inverted Yield Curve (Inversion)
+    df_inverted = pd.DataFrame(
+        {
+            "vix": [18.0] * 14,
+            "hy_spread": [3.80] * 14,
+            "yield_curve": [-0.35] * 14,
+        },
+        index=dates,
+    )
+    fred._atomic_parquet(df_inverted, d_dir / "fred.parquet")
+
+    summary_inverted = fred.compute_macro_summary(data_dir=d_dir)
+    assert summary_inverted["regime"] == "Inversion"
+    assert summary_inverted["latest"]["yield_curve"] == pytest.approx(-0.35)
+
+    # 3. Flat Yield Curve or Elevated Credit Spread (Caution)
+    df_caution_spread = pd.DataFrame(
+        {
+            "vix": [20.0] * 14,
+            "hy_spread": [5.50] * 14,
+            "yield_curve": [0.50] * 14,
+        },
+        index=dates,
+    )
+    fred._atomic_parquet(df_caution_spread, d_dir / "fred.parquet")
+
+    summary_caution1 = fred.compute_macro_summary(data_dir=d_dir)
+    assert summary_caution1["regime"] == "Caution"
+
+    df_caution_flat = pd.DataFrame(
+        {
+            "vix": [16.0] * 14,
+            "hy_spread": [3.50] * 14,
+            "yield_curve": [0.10] * 14,
+        },
+        index=dates,
+    )
+    fred._atomic_parquet(df_caution_flat, d_dir / "fred.parquet")
+
+    summary_caution2 = fred.compute_macro_summary(data_dir=d_dir)
+    assert summary_caution2["regime"] == "Caution"

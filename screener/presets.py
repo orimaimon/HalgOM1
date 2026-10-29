@@ -25,6 +25,7 @@ class Preset:
     sort: str | None = None
     ascending: bool = False
     note: str = field(default="")
+    name: str = ""
 
 
 _LIQUID = {"avg_volume": "Over 500K", "price": "Over $5"}
@@ -105,6 +106,29 @@ BUILTIN: dict[str, Preset] = {
         note="הציון המשוקלל הגבוה ביותר, בלי מניות שיוצא להן דוח השבוע"),
 }
 
+BUILTIN_PRESETS: dict[str, Preset] = BUILTIN
+
+
+def _presets_path(user_id: str | None = None) -> Path:
+    if user_id:
+        return DATA_DIR / "users" / user_id / "presets.json"
+    return PRESETS_PATH
+
+
+def load_all(user_id: str | None = None) -> dict[str, Preset]:
+    presets = dict(BUILTIN_PRESETS)
+    presets.update(load_user(_presets_path(user_id)))
+    return presets
+
+
+def save(preset: Preset, user_id: str | None = None) -> None:
+    path = _presets_path(user_id)
+    save_user_file(path, Preset, lambda presets: presets.update({preset.name: preset}))
+
+
+def delete(name: str, user_id: str | None = None) -> None:
+    path = _presets_path(user_id)
+    save_user_file(path, Preset, lambda presets: presets.pop(name, None))
 
 
 def load_user(path: Path | None = None) -> dict[str, Preset]:

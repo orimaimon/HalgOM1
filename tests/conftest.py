@@ -34,7 +34,7 @@ socket.socket.connect = _offline_connect
 
 
 @pytest.fixture(autouse=True)
-def _private_data(tmp_path_factory, monkeypatch):
+def _private_data(request, tmp_path_factory, monkeypatch):
     """Tests never write into the real screener/_data folder.
 
     The app tests render the track record panel, which asks prices.ensure() for SPY/QQQ: without this they
@@ -45,3 +45,5 @@ def _private_data(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(store, "DATA_DIR", data)
     monkeypatch.setattr(prices, "DATA_DIR", data / "history")
     monkeypatch.setattr(prices, "STATE_FILE", data / "history" / "update_state.json")
+    if "test_login_view" not in request.node.nodeid:
+        monkeypatch.setenv("HALGOM_NO_AUTH", "1")
