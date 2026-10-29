@@ -42,6 +42,7 @@ def streamlit_app(tmp_path_factory):
 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT)
+    env["HALGOM_NO_AUTH"] = "1"
 
     entry_script = data_dir / "run_app.py"
     entry_script.write_text(f"""
