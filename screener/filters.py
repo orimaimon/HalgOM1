@@ -170,6 +170,8 @@ def _ratio(col: str, steps: tuple[float, ...]) -> list[Option]:
 # ─────────────────────────── filter definitions ────────────────────────────
 
 _cap = N("market_cap", "$B")
+_aum = N("aum", "$B")
+_exp = N("expense_ratio", "%")
 _div = N("div_yield", "%")
 _price = N("price", "$")
 _avgv = N("avg_volume", "K")
@@ -220,6 +222,14 @@ FILTERS: list[Filter] = [
         + _cap.opt("-Large (under $200B)", lambda s: s < 200e9)
         + _cap.opt("-Mid (under $10B)", lambda s: s < 10e9)
         + _cap.opt("-Small (under $2B)", lambda s: s < 2e9))),
+    Filter("aum", "AUM", "Descriptive", "aum", tuple(
+        _aum.over(50e9, 10e9, 5e9, 1e9, 500e6, 100e6)
+        + _aum.under(1e9, 10e9)
+    ), help="נכסים מנוהלים (AUM) — גודל הקרן בדולרים"),
+    Filter("expense_ratio", "Expense Ratio", "Descriptive", "expense_ratio", tuple(
+        _exp.under(0.1, 0.2, 0.5, 0.75, 1.0)
+        + _exp.over(0.5, 1.0)
+    ), help="דמי ניהול שנתיים של הקרן באחוזים"),
     Filter("div_yield", "Dividend Yield", "Descriptive", "div_yield", tuple(
         _div.opt("None (0%)", lambda s: s.fillna(0) == 0) + _div.opt("Positive (>0%)", lambda s: s > 0)
         + _div.opt("High (>5%)", lambda s: s > 5) + _div.opt("Very High (>10%)", lambda s: s > 10)

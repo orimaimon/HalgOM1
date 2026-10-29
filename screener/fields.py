@@ -89,7 +89,9 @@ COLUMNS: dict[str, Col] = {
     "sector":       Col("Sector", "text", "provider", "הסקטור של החברה (סיווג TradingView)"),
     "industry":     Col("Industry", "text", "provider", "תעשייה — סיווג מפורט יותר מהסקטור"),
     "country":      Col("Country", "text", "provider", "מדינת המטה של החברה"),
-    "sec_type":     Col("Type", "text", "provider", "stock = מניה רגילה, dr = ADR (תעודת מניה זרה)"),
+    "sec_type":     Col("Type", "text", "provider", "stock = מניה רגילה, dr = ADR (תעודת מניה זרה), etf = קרן סל"),
+    "aum":          Col("AUM", "money", "provider", "נכסים מנוהלים בדולרים (Assets Under Management) — גודל הקרן"),
+    "expense_ratio": Col("Exp Ratio", "pct", "provider", "דמי ניהול שנתיים של הקרן באחוזים (Expense Ratio)"),
     "indexes":      Col("Index", "text", "provider", "מדדים מרכזיים שהמניה חברה בהם: S&P 500, Nasdaq 100, DJIA (דאו ג'ונס), Russell 1000/2000"),
     "employees":    Col("Employees", "int", "provider", "מספר עובדים"),
 
@@ -245,6 +247,8 @@ GROUP_COLUMNS: dict[str, Col] = {
 _TAIL = ["volume"]
 VIEWS: dict[str, list[str]] = {
     "Overview":    ["ticker", "company", "price", "change", "sector", "industry", "country", "indexes", "market_cap", "pe", "adj_price",
+                    *_TAIL],
+    "ETF":         ["ticker", "company", "price", "change", "aum", "expense_ratio", "div_yield", "perf_ytd", "perf_y", "sma50_pct", "sma200_pct", "avg_volume",
                     *_TAIL],
     "Valuation":   ["ticker", "price", "change", "market_cap", "pe", "fwd_pe", "peg", "ps", "pb", "pocf", "pfcf", "ev_ebitda",
                     "eps_growth", "sales_growth", *_TAIL],

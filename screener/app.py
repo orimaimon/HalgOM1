@@ -69,14 +69,21 @@ def main() -> None:
 
     sel = selections()
     prev = get_previous(snap)
+    asset_type = ss.get("asset_type", "stocks")
     pipeline_key = (snap.fetched_at, tuple(sorted(sel.items())), ss.get("query", ""),
                     ss.get("hide_junk", True), ss.get("sort_col"), ss.get("sort_asc"),
-                    ss.get("only_new", False))
+                    ss.get("only_new", False), asset_type)
     if ss.get("pipeline_key") == pipeline_key and "pipeline_res" in ss and "pipeline_universe" in ss:
         universe = ss["pipeline_universe"]
         res = ss["pipeline_res"]
     else:
-        universe = hide_junk(df, ss.get("hide_junk"))
+        if ss.get("list_view"):
+            df_scoped = df
+        elif page == "Screener" and asset_type == "etfs":
+            df_scoped = df[df["sec_type"] == "etf"] if "sec_type" in df.columns else df.iloc[0:0]
+        else:
+            df_scoped = df[df["sec_type"] != "etf"] if "sec_type" in df.columns else df
+        universe = hide_junk(df_scoped, ss.get("hide_junk"))
         res = search(apply_filters(universe, sel), ss.get("query", ""))
         res = res.assign(new=new_column(res, prev, sel))
         res = res.sort_values(ss.get("sort_col"), ascending=ss.get("sort_asc"), na_position="last")

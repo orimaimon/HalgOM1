@@ -6,7 +6,7 @@ from screener.fields import CANDLES, COLUMNS, provider_columns
 # as it was output from `origin/main` before refactoring.
 FIELDS_SNAPSHOT = [
     "name", "description", "exchange", "sector", "industry", "country", "type", "indexes",
-    "number_of_employees", "close", "change", "change_abs", "gap", "premarket_change",
+    "number_of_employees", "aum", "expense_ratio", "close", "change", "change_abs", "gap", "premarket_change",
     "postmarket_change", "volume", "average_volume_30d_calc", "relative_volume_10d_calc",
     "market_cap_basic", "float_shares_outstanding", "total_shares_outstanding_current",
     "price_earnings_ttm", "earnings_per_share_forecast_next_fy", "price_earnings_growth_ttm",

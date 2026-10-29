@@ -58,7 +58,7 @@ def _scan(market: str, query: dict, timeout: float) -> list[dict]:
 
 
 def universe_query(fields: list[str]) -> dict:
-    """US primary listings: common stocks + ADRs (no ETFs, preferreds, warrants, OTC)."""
+    """US primary listings: common stocks + ADRs + ETFs (no preferreds, warrants, OTC)."""
     return {
         "markets": ["america"],
         "columns": fields,
@@ -73,6 +73,9 @@ def universe_query(fields: list[str]) -> dict:
             ]}},
             {"operation": {"operator": "and", "operands": [
                 {"expression": {"left": "type", "operation": "equal", "right": "dr"}},
+            ]}},
+            {"operation": {"operator": "and", "operands": [
+                {"expression": {"left": "typespecs", "operation": "has", "right": ["etf"]}},
             ]}},
         ]},
         "options": {"lang": "en"},
@@ -175,8 +178,18 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
     if "currency" in df.columns:
         df = df[df["currency"].isna() | (df["currency"] == "USD")]
     df = df[df["price"].notna() & (df["price"] > 0)]
+    if "sec_type" in df.columns:
+        df["sec_type"] = df["sec_type"].astype(object)
+        is_etf = (df["sec_type"] == "fund")
+        if "typespecs" in df.columns:
+            is_etf |= df["typespecs"].apply(lambda x: isinstance(x, (list, tuple, np.ndarray)) and "etf" in x)
+        df.loc[is_etf, "sec_type"] = "etf"
     # Same ticker twice (share classes listed oddly) — keep the larger one.
-    df = df.sort_values("market_cap", ascending=False, na_position="last")
+    sort_cols = [c for c in ("market_cap", "aum") if c in df.columns]
+    if sort_cols:
+        df = df.sort_values(sort_cols, ascending=False, na_position="last")
+    else:
+        df = df.sort_values("price", ascending=False, na_position="last")
     df = df.drop_duplicates("ticker", keep="first")
     df = df.drop(columns=[c for c in EXTRA_TV_FIELDS if c in df.columns])
     if len(df) < n0:
@@ -212,6 +225,8 @@ TV_MAPPING: dict[str, str] = {
     "type": "sec_type",
     "indexes": "indexes",
     "number_of_employees": "employees",
+    "aum": "aum",
+    "expense_ratio": "expense_ratio",
     "close": "price",
     "change": "change",
     "change_abs": "change_abs",

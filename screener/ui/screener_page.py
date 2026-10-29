@@ -232,7 +232,23 @@ def on_delete():
         st.toast(f"{t('Deleted')}: “{name}”", icon="🗑️")
 
 
+def on_asset_type_change() -> None:
+    on_reset()
+    if ss.get("asset_type") == "etfs":
+        ss["view"] = "ETF" if "ETF" in VIEWS else "Overview"
+        ss["sort_col"] = "aum" if "aum" in COLUMNS else DEFAULT_SORT[0]
+        ss["sort_asc"] = False
+    else:
+        ss["view"] = "Overview"
+        ss["sort_col"] = DEFAULT_SORT[0]
+        ss["sort_asc"] = DEFAULT_SORT[1]
+
+
 def toolbar(presets: dict[str, P.Preset]) -> None:
+    t_top1, t_top2 = st.columns([2.2, 7.8], vertical_alignment="center")
+    t_top1.segmented_control("Asset type", ["stocks", "etfs"], key="asset_type",
+                             default="stocks", format_func=lambda x: t("Stocks") if x == "stocks" else t("ETFs"),
+                             on_change=on_asset_type_change, label_visibility="collapsed")
     names = [CUSTOM] + list(presets)
     if ss.get("preset") not in names:
         ss["preset"] = CUSTOM
@@ -283,11 +299,16 @@ def filter_panel(df: pd.DataFrame) -> None:
         hint = junk_conflict_hint()
         if hint:
             hebrew_note(hint)
-        counts = {g: sum(1 for f in FILTERS if f.group == g and sel[f.key] != ANY) for g in GROUPS}
-        tabs = st.tabs([f"{t(g)} ({counts[g]})" if counts[g] else t(g) for g in GROUPS])
-        for tab, group in zip(tabs, GROUPS):
+        is_etf = ss.get("asset_type") == "etfs"
+        active_groups = ["Descriptive", "Technical", "Signals"] if is_etf else GROUPS
+        counts = {g: sum(1 for f in FILTERS if f.group == g and sel[f.key] != ANY) for g in active_groups}
+        tabs = st.tabs([f"{t(g)} ({counts[g]})" if counts[g] else t(g) for g in active_groups])
+        for tab, group in zip(tabs, active_groups):
             with tab:
-                group_filters = [f for f in FILTERS if f.group == group]
+                if is_etf:
+                    group_filters = [f for f in FILTERS if f.group == group and (f.column in df.columns and (df[f.column].notna().any() or f.key in ("aum", "expense_ratio")))]
+                else:
+                    group_filters = [f for f in FILTERS if f.group == group and f.key not in ("aum", "expense_ratio")]
                 for i in range(0, len(group_filters), GRID):
                     cols = st.columns(GRID)
                     for col, f in zip(cols, group_filters[i:i + GRID]):
@@ -393,12 +414,20 @@ DETAIL_FIELDS = [
                          "score", "score_value", "score_quality", "score_momentum"]),
 ]
 
+ETF_DETAIL_FIELDS = [
+    ("Fund size & expenses", ["aum", "expense_ratio", "div_yield"]),
+    ("Returns", ["perf_w", "perf_m", "perf_q", "perf_h", "perf_ytd", "perf_y"]),
+    ("Technical", ["rsi", "rsi_w", "sma50_pct", "sma150_pct", "sma200_pct", "high52_pct", "range52", "atr_pct",
+                   "beta", "rel_volume", "avg_volume"]),
+]
+
 
 def snapshot_table(row: pd.Series) -> str:
     """Compact Finviz-style key/value table (HTML, no scripts)."""
     end = "left" if L() == I.HE else "right"                 # values sit at the far end of the row
     out = ['<table class="hs-snapshot" style="width:100%;border-collapse:collapse;font-size:14px">']
-    for title, keys in DETAIL_FIELDS:
+    fields = ETF_DETAIL_FIELDS if row.get("sec_type") == "etf" else DETAIL_FIELDS
+    for title, keys in fields:
         out.append(f'<tr><td colspan="2" style="padding:12px 4px 3px;font-weight:600;color:{theme.ACCENT};'
                    f'border-bottom:1px solid {theme.RULE}">{html.escape(t(title))}</td></tr>')
         for k in keys:

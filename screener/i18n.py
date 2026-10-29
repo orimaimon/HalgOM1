@@ -114,7 +114,8 @@ UI: dict[str, str] = {
     "Risk": "סיכון",
     "Shekels": "שקלים",
     "Screener": "סורק", "Groups": "קבוצות", "Heatmap": "מפת חום", "Guide": "מדריך",
-    "Overview": "סקירה", "Valuation": "תמחור", "Financial": "פיננסי", "Performance": "ביצועים",
+    "Overview": "סקירה", "ETF": "קרנות סל", "Stocks": "מניות", "ETFs": "קרנות סל", "Asset type": "סוג נכס",
+    "Valuation": "תמחור", "Financial": "פיננסי", "Performance": "ביצועים",
     "Technical": "טכני", "Signals": "אותות", "Scores": "ציונים",
     "Descriptive": "כללי", "Fundamental": "פונדמנטלי",
     # header
@@ -164,7 +165,7 @@ UI: dict[str, str] = {
     "Filters": "פילטרים", "active": "פעילים", "results": "תוצאות", "Only new": "רק חדשות", "NEW": "חדש",
     "Export all columns": "ייצוא כל העמודות", "TradingView list": "רשימה ל-TradingView", "Tickers": "סימולים",
     # detail panel
-    "Price": "מחיר", "Valuation & size": "תמחור", "Growth & quality": "צמיחה ואיכות",
+    "Price": "מחיר", "Valuation & size": "תמחור", "Fund size & expenses": "גודל הקרן ודמי ניהול", "Returns": "תשואות", "Growth & quality": "צמיחה ואיכות",
     # home page
     "My Morning": "הבוקר שלי",
     "New in screens": "חדשות בסריקות",
@@ -286,7 +287,7 @@ UI: dict[str, str] = {
 # ── table headers (short) ──────────────────────────────────────────────────
 COLUMNS_HE: dict[str, str] = {
     "ticker": "סימול", "company": "חברה", "exchange": "בורסה", "sector": "סקטור", "industry": "תעשייה",
-    "country": "מדינה", "sec_type": "סוג", "indexes": "מדדים", "employees": "עובדים",
+    "country": "מדינה", "sec_type": "סוג", "indexes": "מדדים", "employees": "עובדים", "aum": "נכסים מנוהלים", "expense_ratio": "דמי ניהול %",
     "price": "מחיר", "adj_price": "מחיר מתואם", "change": "שינוי", "change_abs": "שינוי $", "gap": "פער פתיחה",
     "premarket": "טרום מסחר", "postmarket": "אחרי המסחר", "volume": "מחזור", "avg_volume": "מחזור ממוצע",
     "rel_volume": "מחזור יחסי", "dollar_volume": "מחזור $", "market_cap": "שווי שוק",
@@ -331,7 +332,9 @@ GROUP_COLUMNS_HE: dict[str, str] = {
 # ── filter names ───────────────────────────────────────────────────────────
 FILTERS_HE: dict[str, str] = {
     "exchange": "בורסה", "sector": "סקטור", "industry": "תעשייה", "country": "מדינה", "index": "מדד",
-    "market_cap": "שווי שוק", "div_yield": "תשואת דיבידנד", "price": "מחיר", "avg_volume": "מחזור ממוצע",
+    "market_cap": "שווי שוק",
+    "aum": "נכסים מנוהלים",
+    "expense_ratio": "דמי ניהול", "div_yield": "תשואת דיבידנד", "price": "מחיר", "avg_volume": "מחזור ממוצע",
     "rel_volume": "מחזור יחסי", "volume": "מחזור היום", "dollar_volume": "מחזור בדולרים",
     "float_shares": "מניות צפות (Float)", "shares_out": "מניות מונפקות", "earnings": "תאריך דוח", "recom": "המלצת אנליסטים",
     "target_upside": "מחיר יעד",
@@ -358,6 +361,11 @@ FILTERS_HE: dict[str, str] = {
 
 # ── built-in presets ───────────────────────────────────────────────────────
 PRESETS_HE: dict[str, str] = {
+    "Top AUM": "קרנות ענק (Top AUM)",
+    "Low expense core": "דמי ניהול נמוכים",
+    "Momentum leaders (ETF)": "מובילות מומנטום (ETF)",
+    "Dividend — high yield (ETF)": "דיבידנד גבוה (ETF)",
+    "Oversold in uptrend (ETF)": "מכירת יתר במגמת עלייה (ETF)",
     "Value — cheap & profitable": "ערך — זולות ורווחיות", "Quality growth": "צמיחה איכותית",
     "Momentum leaders": "מובילות מומנטום", "Oversold in uptrend": "מכירת יתר במגמת עלייה",
     "52-week high breakout": "פריצה לשיא שנתי", "Dividend — stable": "דיבידנד יציב",
@@ -427,6 +435,21 @@ CANDLES_HE: dict[str, str] = {
 _MONTHS = {"1-month": "חודשי", "3-month": "3 חודשים", "6-month": "חצי שנה", "52-week": "52 שבועות"}
 
 OPTIONS_HE: dict[str, str] = {
+    "Over $50B": "מעל $50B",
+    "Over $10B": "מעל $10B",
+    "Over $5B": "מעל $5B",
+    "Over $1B": "מעל $1B",
+    "Over $500M": "מעל $500M",
+    "Over $100M": "מעל $100M",
+    "Under $1B": "מתחת ל-$1B",
+    "Under $10B": "מתחת ל-$10B",
+    "Under 0.1%": "מתחת ל-0.1%",
+    "Under 0.2%": "מתחת ל-0.2%",
+    "Under 0.5%": "מתחת ל-0.5%",
+    "Under 0.75%": "מתחת ל-0.75%",
+    "Under 1%": "מתחת ל-1%",
+    "Over 0.5%": "מעל 0.5%",
+    "Over 1%": "מעל 1%",
     "Any": "הכל", "USA": "ארה\"ב", "Foreign (ex-USA)": "זרות (לא ארה\"ב)",
     # index
     "Not in S&P 500": "לא ב-S&P 500", "Any major index": "כל מדד מרכזי",
