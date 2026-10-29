@@ -100,6 +100,52 @@ def rotation_table(df: pd.DataFrame, weight: str = "median") -> pd.DataFrame:
     return grp[ROTATION_COLUMNS]
 
 
+def compute_sector_rotation(
+    universe: pd.DataFrame,
+    snapshots_history: list | None = None,
+    weight: str = "median",
+) -> pd.DataFrame:
+    """Computes pure sector rotation momentum leaderboard ranking sectors by performance across timeframes.
+
+    Aggregates sector returns for available return columns (change, perf_w, perf_m, perf_q, perf_h),
+    ranks sectors 1 to N per timeframe, computes a composite momentum score (average rank),
+    and returns a sorted leaderboard DataFrame.
+    """
+    timeframe_cols = ["change", "perf_w", "perf_m", "perf_q", "perf_h"]
+
+    if universe.empty or "sector" not in universe.columns:
+        return pd.DataFrame()
+
+    df = universe.copy()
+    for col in ("market_cap", "price", "sma50"):
+        if col not in df.columns:
+            df[col] = np.nan
+
+    grp = groups.group_performance(df, by="sector", weight=weight)
+    if grp.empty:
+        return pd.DataFrame()
+
+    if "group" in grp.columns:
+        grp = grp.rename(columns={"group": "sector"})
+
+    avail_cols = [col for col in timeframe_cols if col in grp.columns and grp[col].notna().any()]
+    if not avail_cols:
+        return pd.DataFrame()
+
+    rank_cols = []
+    for col in avail_cols:
+        rank_col = f"rank_{col}"
+        grp[rank_col] = grp[col].rank(ascending=False, method="min").astype(int)
+        rank_cols.append(rank_col)
+
+    grp["composite_score"] = grp[rank_cols].mean(axis=1)
+    grp["composite_rank"] = grp["composite_score"].rank(ascending=True, method="min").astype(int)
+
+    grp = grp.sort_values(["composite_score"] + avail_cols[::-1], ascending=[True] + [False] * len(avail_cols)).reset_index(drop=True)
+
+    return grp
+
+
 def rotation_figure(rot_df: pd.DataFrame, lang: str = i18n.HE) -> go.Figure:
     """Builds a Plotly scatter plot (rs_trend vs rs_momentum) with reference lines and quadrant colors."""
     fig = go.Figure()
