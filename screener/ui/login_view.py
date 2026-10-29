@@ -10,7 +10,6 @@ import streamlit as st
 
 from screener.auth import (
     create_session,
-    create_user,
     get_user,
     list_users,
     revoke_session,
@@ -90,39 +89,6 @@ def render_login_screen() -> str | None:
                 return user.id
         else:
             st.error("סיסמה שגויה, נסה שוב")
-
-    with st.expander("משתמש חדש"):
-        with st.form("reg_form", clear_on_submit=False):
-            new_name = st.text_input("שם משתמש", key="reg_name")
-            new_pass = st.text_input("סיסמה", type="password", key="reg_pass")
-            confirm_pass = st.text_input("אימות סיסמה", type="password", key="reg_confirm")
-            submitted = st.form_submit_button("צור משתמש והתחבר", key="reg_submit")
-
-            if submitted:
-                cleaned_name = new_name.strip()
-                if not cleaned_name:
-                    st.error("יש להזין שם משתמש")
-                elif not new_pass:
-                    st.error("יש להזין סיסמה")
-                elif new_pass != confirm_pass:
-                    st.error("הסיסמאות אינן תואמות")
-                else:
-                    try:
-                        user = create_user(cleaned_name, new_pass)
-                        st.session_state["logged_in"] = True
-                        st.session_state["user_id"] = user.id
-                        st.session_state["user_name"] = user.display_name
-                        token = create_session(user.id, days=30)
-                        st.session_state["session_token"] = token
-                        st.html(
-                            f"<script>document.cookie = 'halgom_session={token}; max-age=2592000; path=/; SameSite=Lax';</script>",
-                            unsafe_allow_javascript=True,
-                        )
-                        st.rerun()
-                        return user.id
-                    except Exception as e:
-                        log.exception("Failed to create user: %s", e)
-                        st.error(f"שגיאה ביצירת משתמש: {e}")
 
     return None
 
