@@ -9,6 +9,9 @@ Calculates:
 """
 from __future__ import annotations
 
+import datetime as dt
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -167,4 +170,126 @@ def summary(exposure_df: pd.DataFrame, max_position: float = 20.0, max_sector: f
         "beta": weighted_beta,
         "beta_coverage": beta_coverage,
         "warnings": warnings,
+    }
+
+
+def compute_sharpe_ratio(
+    daily_returns: pd.Series,
+    risk_free_rate: float = 0.04,
+    trading_days: int = 252,
+) -> float:
+    """Calculate annualized Sharpe ratio from daily returns.
+
+    (mean_daily_return * trading_days - risk_free_rate) / (std_daily_return * np.sqrt(trading_days))
+
+    Returns 0.0 if standard deviation is 0 or if daily_returns is empty/all-NaN.
+    """
+    if isinstance(daily_returns, pd.Series):
+        s = daily_returns.dropna()
+    else:
+        s = pd.Series(daily_returns, dtype=float).dropna()
+
+    if s.empty:
+        return 0.0
+
+    std = float(s.std())
+    if np.isnan(std) or std == 0.0:
+        return 0.0
+
+    mean = float(s.mean())
+    return float((mean * trading_days - risk_free_rate) / (std * np.sqrt(trading_days)))
+
+
+def compute_max_drawdown(equity_curve: pd.Series) -> dict[str, Any]:
+    """Compute peak, trough, max_drawdown_pct, peak_date, trough_date, and recovery_days.
+
+    Parameters
+    ----------
+    equity_curve : pd.Series
+        Equity or price series over time.
+
+    Returns
+    -------
+    dict[str, Any]
+        Dictionary with keys:
+        - peak: float
+        - trough: float
+        - max_drawdown_pct: float (negative percentage, e.g. -15.4%)
+        - peak_date: index element or None
+        - trough_date: index element or None
+        - recovery_days: int or None
+    """
+    if isinstance(equity_curve, pd.Series):
+        s = equity_curve.dropna()
+    else:
+        s = pd.Series(equity_curve, dtype=float).dropna()
+
+    if s.empty:
+        return {
+            "peak": 0.0,
+            "trough": 0.0,
+            "max_drawdown_pct": 0.0,
+            "peak_date": None,
+            "trough_date": None,
+            "recovery_days": None,
+        }
+
+    running_max = s.cummax()
+    dd_series = (s - running_max) / running_max * 100.0
+    max_dd = float(dd_series.min())
+
+    if max_dd >= 0.0 or np.isclose(max_dd, 0.0):
+        peak_val = float(s.iloc[0])
+        peak_dt = s.index[0]
+        return {
+            "peak": peak_val,
+            "trough": peak_val,
+            "max_drawdown_pct": 0.0,
+            "peak_date": peak_dt,
+            "trough_date": peak_dt,
+            "recovery_days": None,
+        }
+
+    trough_idx = int(dd_series.argmin())
+    trough_date = s.index[trough_idx]
+    trough_val = float(s.iloc[trough_idx])
+
+    peak_val = float(running_max.iloc[trough_idx])
+    sub_peak = s.iloc[: trough_idx + 1]
+    peak_match = np.where(sub_peak == peak_val)[0]
+    peak_idx = int(peak_match[-1]) if len(peak_match) > 0 else 0
+    peak_date = s.index[peak_idx]
+
+    sub_rec = s.iloc[trough_idx + 1 :]
+    rec_match = np.where(sub_rec >= peak_val)[0]
+
+    if len(rec_match) == 0:
+        recovery_days = None
+    else:
+        rec_idx = trough_idx + 1 + int(rec_match[0])
+        rec_date = s.index[rec_idx]
+
+        if isinstance(s.index, pd.DatetimeIndex) or (
+            len(s.index) > 0 and isinstance(s.index[0], (dt.date, dt.datetime))
+        ):
+            rec_dt = pd.to_datetime(rec_date)
+            ref_dt = pd.to_datetime(trough_date)
+            recovery_days = int((rec_dt - ref_dt).days)
+        elif isinstance(s.index[0], str):
+            try:
+                rec_dt = pd.to_datetime(rec_date)
+                ref_dt = pd.to_datetime(trough_date)
+                recovery_days = int((rec_dt - ref_dt).days)
+            except Exception:
+                recovery_days = int(rec_idx - trough_idx)
+        else:
+            recovery_days = int(rec_idx - trough_idx)
+
+    return {
+        "peak": peak_val,
+        "trough": trough_val,
+        "max_drawdown_pct": max_dd,
+        "peak_date": peak_date,
+        "trough_date": trough_date,
+        "recovery_days": recovery_days,
     }

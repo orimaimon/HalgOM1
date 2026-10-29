@@ -5,10 +5,35 @@ from wide daily price history (index=trading days, columns=tickers).
 """
 from __future__ import annotations
 
+from pathlib import Path
 import numpy as np
 import pandas as pd
 
 from screener import track
+
+DEFAULT_COLUMNS: list[str] = ["date", "ticker", "open", "high", "low", "close", "volume"]
+
+
+def load_history_parquet(
+    path: str | Path,
+    columns: list[str] | None = None,
+) -> pd.DataFrame:
+    """Load price data from a parquet file with explicit column pushdown.
+
+    Defaults to loading explicit columns ["date", "ticker", "open", "high", "low", "close", "volume"]
+    (or available subset in the parquet schema) so unnecessary columns are not decoded.
+    """
+    cols = columns if columns is not None else DEFAULT_COLUMNS
+    try:
+        import pyarrow.parquet as pq
+        schema_cols = pq.read_schema(path).names
+        cols_to_load = [c for c in cols if c in schema_cols] if schema_cols else cols
+        if not cols_to_load:
+            return pd.read_parquet(path)
+        return pd.read_parquet(path, columns=cols_to_load)
+    except Exception:
+        return pd.read_parquet(path, columns=cols)
+
 
 SIGNAL_LABELS: dict[str, str] = {
     "cross_up_sma50": "חצתה את ממוצע 50 כלפי מעלה",
@@ -26,11 +51,14 @@ SIGNAL_LABELS: dict[str, str] = {
 }
 
 
-def prepare(closes: pd.DataFrame) -> pd.DataFrame:
+def prepare(closes: pd.DataFrame | str | Path) -> pd.DataFrame:
     """Prepare raw daily closes for history signal calculations.
 
     Undoes split jumps and forward-fills gaps up to 5 days.
+    Accepts either a DataFrame or a parquet file path.
     """
+    if isinstance(closes, (str, Path)):
+        closes = load_history_parquet(closes)
     if closes.empty:
         return closes.copy()
     adj, _ = track.split_adjusted(closes)
@@ -148,12 +176,17 @@ def _eval_breakout_within(arr: np.ndarray, w: int, days: int, index: pd.Index) -
     return pd.Series(res_arr, index=index, dtype="boolean")
 
 
-def signals_within(closes: pd.DataFrame, days: int = 5, prepared: bool = False) -> pd.DataFrame:
+def signals_within(
+    closes: pd.DataFrame | str | Path, days: int = 5, prepared: bool = False
+) -> pd.DataFrame:
     """Compute 'within last N days' signals from wide daily price closes.
 
+    Accepts either a DataFrame or a parquet file path.
     Returns pd.DataFrame indexed by ticker (closes.columns) with nullable boolean
     and float columns for days_since.
     """
+    if isinstance(closes, (str, Path)):
+        closes = load_history_parquet(closes)
     if not prepared:
         closes = prepare(closes)
 
@@ -196,9 +229,12 @@ def signals_within(closes: pd.DataFrame, days: int = 5, prepared: bool = False) 
     return pd.DataFrame(res, index=tickers)
 
 
-def event_matrix(closes: pd.DataFrame, name: str, prepared: bool = False) -> pd.DataFrame:
+def event_matrix(
+    closes: pd.DataFrame | str | Path, name: str, prepared: bool = False
+) -> pd.DataFrame:
     """Compute boolean event matrix for a single technical signal across daily history.
 
+    Accepts either a DataFrame or a parquet file path.
     Returns pd.DataFrame with same shape (index=trading days, columns=tickers) as closes,
     with True on days the signal fired and False otherwise.
 
@@ -218,6 +254,9 @@ def event_matrix(closes: pd.DataFrame, name: str, prepared: bool = False) -> pd.
     }
     if name not in boolean_signals:
         raise ValueError(f"Unknown boolean signal: {name}")
+
+    if isinstance(closes, (str, Path)):
+        closes = load_history_parquet(closes)
 
     if not prepared:
         closes = prepare(closes)
