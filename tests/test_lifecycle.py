@@ -70,3 +70,20 @@ def test_stop_server_normal_mode(monkeypatch, caplog):
 
     assert "stopping server: test normal shutdown" in caplog.text
     timer_mock.assert_called_once()
+def test_exit_button_hidden_in_server_mode(monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    monkeypatch.setenv("HALGOM_SERVER_MODE", "1")
+    monkeypatch.setenv("HALGOM_NO_AUTH", "1")
+
+    def script():
+        import datetime as dt
+        from screener.data.store import Snapshot
+        from screener.ui.common import _header
+        snap = Snapshot(df=None, fetched_at=dt.datetime.now(), source="cache", meta={})
+        _header(snap, 100)
+
+    at = AppTest.from_function(script).run()
+    assert not at.exception
+    # Exit button should NOT be present in server mode
+    assert len([b for b in at.button if b.key == "exit"]) == 0
