@@ -40,6 +40,7 @@ def streamlit_app(tmp_path_factory):
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent.parent)
 
+    posix_data_dir = data_dir.as_posix()
     runner_code = f"""
 import sys, os
 from pathlib import Path
@@ -50,7 +51,7 @@ import screener.export as export
 import screener.data.tradingview as tv
 import pandas as pd
 
-data_dir = Path('{data_dir}')
+data_dir = Path('{posix_data_dir}')
 store_mod.DATA_DIR = data_dir
 P.PRESETS_PATH = data_dir / 'presets.json'
 PF.PORTFOLIOS_PATH = data_dir / 'portfolios.json'
@@ -125,13 +126,13 @@ def test_screener_filter_interaction_and_search(page: Page, streamlit_app: str):
 
     # 3. Filter test: open filter expander and select Market Cap option (in default Descriptive tab)
     filter_expander = page.locator("[data-testid='stExpander'] summary").get_by_text("פילטרים", exact=False)
-    filter_expander.click()
+    mcap_combo = page.get_by_role("combobox", name="שווי שוק")
+    if not mcap_combo.is_visible():
+        filter_expander.click()
 
-    # Find Market Cap selectbox ("שווי שוק")
-    mcap_select = page.get_by_label("שווי שוק", exact=True)
-    mcap_select.click()
+    expect(mcap_combo).to_be_visible(timeout=10000)
+    mcap_combo.click()
 
-    # Select "ענק ($200B+)"
     page.get_by_text("ענק ($200B+)", exact=True).click()
 
     # Assert row count changes and table updates
