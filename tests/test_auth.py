@@ -16,6 +16,9 @@ from screener.auth import (
     verify_password,
     change_password,
     get_user_data_dir,
+    create_session,
+    validate_session,
+    revoke_session,
 )
 
 
@@ -95,3 +98,17 @@ def test_get_user_data_dir(isolated_data_dir):
     assert user_dir == expected
     assert user_dir.exists()
     assert user_dir.is_dir()
+
+
+def test_session_lifecycle(isolated_data_dir):
+    token = create_session("ori", days=30)
+    assert token is not None
+    assert validate_session(token) == "ori"
+
+    revoke_session(token)
+    assert validate_session(token) is None
+
+
+def test_session_expiration(isolated_data_dir):
+    token = create_session("ori", days=-1)
+    assert validate_session(token) is None

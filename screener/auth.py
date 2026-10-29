@@ -1,6 +1,6 @@
 """
 User management and authentication module for HalgOM Screener.
-Provides password-based authentication, user storage, and per-user data directory creation.
+Provides password-based authentication, user storage, session persistence, and per-user data directory creation.
 """
 from __future__ import annotations
 
@@ -29,8 +29,20 @@ class User:
     created_at: str
 
 
+@dataclass
+class Session:
+    token: str
+    user_id: str
+    created_at: str
+    expires_at: str
+
+
 def _get_users_path() -> Path:
     return store.DATA_DIR / "users.json"
+
+
+def _get_sessions_path() -> Path:
+    return store.DATA_DIR / "sessions.json"
 
 
 def _generate_salt() -> str:
@@ -167,3 +179,61 @@ def get_user_data_dir(user_id: str) -> Path:
     user_dir = store.DATA_DIR / "users" / user_id
     user_dir.mkdir(parents=True, exist_ok=True)
     return user_dir
+
+
+def create_session(user_id: str, days: int = 30) -> str:
+    token = secrets.token_urlsafe(32)
+    now = dt.datetime.now(dt.timezone.utc)
+    expires = now + dt.timedelta(days=days)
+
+    path = _get_sessions_path()
+
+    def modify_fn(items: dict[str, Session]) -> None:
+        now_iso = now.isoformat()
+        expired = [k for k, s in items.items() if s.expires_at < now_iso]
+        for k in expired:
+            items.pop(k, None)
+
+        items[token] = Session(
+            token=token,
+            user_id=user_id,
+            created_at=now.isoformat(),
+            expires_at=expires.isoformat(),
+        )
+
+    save_user_file(path, Session, modify_fn)
+    return token
+
+
+def validate_session(token: str) -> str | None:
+    if not token or not isinstance(token, str):
+        return None
+    path = _get_sessions_path()
+    if not path.exists():
+        return None
+    sessions = load_user_file(path, Session)
+    session = sessions.get(token)
+    if not session:
+        return None
+    now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
+    if session.expires_at < now_iso:
+        revoke_session(token)
+        return None
+    user = get_user(session.user_id)
+    if not user:
+        revoke_session(token)
+        return None
+    return session.user_id
+
+
+def revoke_session(token: str) -> None:
+    if not token:
+        return
+    path = _get_sessions_path()
+    if not path.exists():
+        return
+
+    def modify_fn(items: dict[str, Session]) -> None:
+        items.pop(token, None)
+
+    save_user_file(path, Session, modify_fn)

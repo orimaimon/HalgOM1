@@ -23,6 +23,7 @@ from screener.ui.common import (L, PAGES, _market, setup_logging, start_watchdog
     get_store, goodbye, header, hebrew_note, keep_widget_state, nav, new_column, preset_modified, selections, ss, t)
 from screener.ui.groups_page import groups_page, heatmap_page  # noqa: E402
 from screener.ui.guide_page import guide_page  # noqa: E402
+from screener.ui.login_view import render_login_screen, render_user_badge  # noqa: E402
 from screener.ui.portfolios_page import portfolios_page  # noqa: E402
 from screener.ui.screener_page import filter_panel, results, toolbar  # noqa: E402
 from screener.ui.track_record import track_record_expander  # noqa: E402
@@ -37,6 +38,12 @@ def main() -> None:
     if ss.get("exiting"):
         goodbye()
         return
+
+    # User Authentication Gate (30-day persistent session support)
+    user_id = render_login_screen()
+    if not user_id:
+        return
+
     start_watchdog()
     keep_widget_state()
     ss.setdefault("page", PAGES[0])
@@ -49,6 +56,7 @@ def main() -> None:
 
     snap, df = get_data()
     maintenance_view.show_whatsnew()
+    render_user_badge()
     header(snap, len(df))
     page = nav()
     if page == "Screener":
