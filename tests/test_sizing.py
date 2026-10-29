@@ -5,7 +5,86 @@ import pandas as pd
 import pytest
 
 from screener.portfolio import PORTFOLIO, WATCHLIST, PList
-from screener.sizing import STOP_COLUMNS, position_plan, stop_warnings, trailing_stops
+from screener.sizing import (
+    STOP_COLUMNS,
+    atr_volatility_size,
+    fixed_risk_size,
+    position_plan,
+    stop_warnings,
+    trailing_stops,
+)
+
+
+def test_fixed_risk_size_normal():
+    res = fixed_risk_size(
+        account_equity=10000.0,
+        risk_pct=1.0,
+        entry_price=100.0,
+        stop_loss_price=95.0,
+    )
+    assert res["risk_per_share"] == 5.0
+    assert res["risk_usd"] == 100.0
+    assert res["shares"] == 20.0
+    assert res["position_cost"] == 2000.0
+    assert res["position_weight_pct"] == 20.0
+    assert res["stop_loss_price"] == 95.0
+
+
+def test_fixed_risk_size_fractional_round_down():
+    res = fixed_risk_size(
+        account_equity=10000.0,
+        risk_pct=1.0,
+        entry_price=100.0,
+        stop_loss_price=93.0,
+    )
+    assert res["risk_per_share"] == pytest.approx(7.0)
+    assert res["risk_usd"] == pytest.approx(100.0)
+    assert res["shares"] == 14.0
+    assert res["position_cost"] == pytest.approx(1400.0)
+    assert res["position_weight_pct"] == pytest.approx(14.0)
+
+
+def test_fixed_risk_size_zero_equity():
+    res = fixed_risk_size(
+        account_equity=0.0,
+        risk_pct=1.0,
+        entry_price=100.0,
+        stop_loss_price=95.0,
+    )
+    assert res["shares"] == 0.0
+    assert res["risk_usd"] == 0.0
+    assert res["position_cost"] == 0.0
+    assert res["position_weight_pct"] == 0.0
+
+
+def test_fixed_risk_size_invalid_stop():
+    res1 = fixed_risk_size(10000.0, 1.0, 100.0, 100.0)
+    assert res1["shares"] == 0.0
+    assert res1["position_cost"] == 0.0
+
+    res2 = fixed_risk_size(10000.0, 1.0, 100.0, 105.0)
+    assert res2["shares"] == 0.0
+    assert res2["position_cost"] == 0.0
+
+
+def test_atr_volatility_size():
+    res = atr_volatility_size(
+        account_equity=10000.0,
+        risk_pct=1.0,
+        entry_price=100.0,
+        atr=2.5,
+        atr_multiplier=2.0,
+    )
+    assert res["stop_loss_price"] == 95.0
+    assert res["risk_per_share"] == 5.0
+    assert res["shares"] == 20.0
+    assert res["position_cost"] == 2000.0
+
+    res_invalid = atr_volatility_size(10000.0, 1.0, 100.0, atr=0.0)
+    assert res_invalid["shares"] == 0.0
+
+    res_none_entry = atr_volatility_size(10000.0, 1.0, None, atr=2.5)
+    assert res_none_entry["shares"] == 0.0
 
 
 def test_position_plan_exact():
