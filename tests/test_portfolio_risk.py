@@ -7,7 +7,13 @@ import pandas as pd
 import pytest
 
 from screener.portfolio import PORTFOLIO, WATCHLIST, PList
-from screener.portfolio_risk import by_sector, exposure, summary
+from screener.portfolio_risk import (
+    by_sector,
+    compute_max_drawdown,
+    compute_sharpe_ratio,
+    exposure,
+    summary,
+)
 
 HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
 
@@ -207,3 +213,77 @@ def test_no_diversification_warning_for_an_empty_portfolio_and_singular_for_one(
     one = pd.DataFrame([{"ticker": "AAPL", "company": "Apple", "sector": "Electronic Technology",
                          "value": 1000.0, "weight": 100.0, "beta": 1.1}])
     assert "רק מניה אחת בתיק — פיזור נמוך" in summary(one)["warnings"]
+
+
+def test_compute_sharpe_ratio():
+    returns = pd.Series([0.001, 0.002, -0.001, 0.003, 0.000, -0.002, 0.004])
+    sharpe = compute_sharpe_ratio(returns, risk_free_rate=0.04, trading_days=252)
+    assert isinstance(sharpe, float)
+    assert round(sharpe, 2) != 0.0
+
+    sharpe_zero_rf = compute_sharpe_ratio(returns, risk_free_rate=0.0, trading_days=250)
+    assert sharpe_zero_rf > sharpe
+
+    flat_returns = pd.Series([0.01, 0.01, 0.01, 0.01])
+    assert compute_sharpe_ratio(flat_returns) == 0.0
+
+    assert compute_sharpe_ratio(pd.Series([], dtype=float)) == 0.0
+    assert compute_sharpe_ratio(pd.Series([np.nan, np.nan])) == 0.0
+
+    returns_with_nan = pd.Series([0.001, np.nan, 0.002, -0.001, 0.003, np.nan])
+    assert compute_sharpe_ratio(returns_with_nan) != 0.0
+
+
+def test_compute_max_drawdown_synthetic_curves():
+    # 1. Monotonic up
+    up_curve = pd.Series([100.0, 105.0, 110.0, 120.0], index=pd.date_range("2025-01-01", periods=4))
+    res_up = compute_max_drawdown(up_curve)
+    assert res_up["max_drawdown_pct"] == 0.0
+    assert res_up["peak"] == 100.0
+    assert res_up["trough"] == 100.0
+    assert res_up["recovery_days"] is None
+
+    # 2. Single dip and recovery
+    dates = pd.date_range("2025-01-01", periods=6)
+    dip_curve = pd.Series([100.0, 110.0, 90.0, 80.0, 95.0, 115.0], index=dates)
+    res_dip = compute_max_drawdown(dip_curve)
+
+    assert pytest.approx(res_dip["max_drawdown_pct"], abs=1e-2) == -27.27
+    assert res_dip["peak"] == 110.0
+    assert res_dip["trough"] == 80.0
+    assert res_dip["peak_date"] == dates[1]
+    assert res_dip["trough_date"] == dates[3]
+    assert res_dip["recovery_days"] == 2
+
+    # 3. Continuous drawdown (no recovery)
+    down_curve = pd.Series([100.0, 90.0, 80.0, 70.0], index=dates[:4])
+    res_down = compute_max_drawdown(down_curve)
+    assert pytest.approx(res_down["max_drawdown_pct"], abs=1e-5) == -30.0
+    assert res_down["peak"] == 100.0
+    assert res_down["trough"] == 70.0
+    assert res_down["peak_date"] == dates[0]
+    assert res_down["trough_date"] == dates[3]
+    assert res_down["recovery_days"] is None
+
+    # 4. Flat series
+    flat_curve = pd.Series([100.0, 100.0, 100.0], index=dates[:3])
+    res_flat = compute_max_drawdown(flat_curve)
+    assert res_flat["max_drawdown_pct"] == 0.0
+    assert res_flat["peak"] == 100.0
+    assert res_flat["trough"] == 100.0
+    assert res_flat["recovery_days"] is None
+
+    # 5. Empty / all-NaN series
+    empty_curve = pd.Series([], dtype=float)
+    res_empty = compute_max_drawdown(empty_curve)
+    assert res_empty["max_drawdown_pct"] == 0.0
+    assert res_empty["peak"] == 0.0
+    assert res_empty["trough"] == 0.0
+    assert res_empty["peak_date"] is None
+    assert res_empty["trough_date"] is None
+    assert res_empty["recovery_days"] is None
+
+    nan_curve = pd.Series([np.nan, np.nan])
+    res_nan = compute_max_drawdown(nan_curve)
+    assert res_nan["max_drawdown_pct"] == 0.0
+    assert res_nan["peak_date"] is None
