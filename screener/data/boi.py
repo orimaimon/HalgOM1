@@ -234,3 +234,67 @@ def latest_rate() -> tuple[dt.date, float] | None:
         return None
     last_d = max(valid.index)
     return (last_d, float(valid.loc[last_d]))
+
+
+def get_rate_for_date(date: dt.date, rates: pd.Series | None = None) -> float:
+    """Return official USD/ILS rate on `date`, or forward-fill from the most recent preceding valid rate."""
+    s = rates if rates is not None else load_rates()
+    if s.empty:
+        return float("nan")
+
+    valid = s.dropna()
+    if valid.empty:
+        return float("nan")
+
+    target_date = date.date() if isinstance(date, dt.datetime) else date
+
+    if len(valid) > 0 and isinstance(valid.index[0], (dt.datetime, pd.Timestamp)):
+        idx = [d.date() if isinstance(d, (dt.datetime, pd.Timestamp)) else d for d in valid.index]
+        valid = pd.Series(valid.values, index=idx, dtype=float)
+
+    past = valid[valid.index <= target_date]
+    if past.empty:
+        return float("nan")
+
+    return float(past.iloc[-1])
+
+
+def get_rates_for_range(
+    start_date: dt.date,
+    end_date: dt.date,
+    rates: pd.Series | None = None,
+) -> pd.Series:
+    """Return daily reindexed series with forward-filled rates for all calendar days in range."""
+    s = rates if rates is not None else load_rates()
+
+    start = start_date.date() if isinstance(start_date, dt.datetime) else start_date
+    end = end_date.date() if isinstance(end_date, dt.datetime) else end_date
+
+    if start > end:
+        return pd.Series(dtype=float)
+
+    n_days = (end - start).days + 1
+    all_dates = [start + dt.timedelta(days=i) for i in range(n_days)]
+
+    if s.empty:
+        return pd.Series(np.nan, index=all_dates, dtype=float)
+
+    valid = s.dropna()
+    if valid.empty:
+        return pd.Series(np.nan, index=all_dates, dtype=float)
+
+    if len(valid) > 0 and isinstance(valid.index[0], (dt.datetime, pd.Timestamp)):
+        idx = [d.date() if isinstance(d, (dt.datetime, pd.Timestamp)) else d for d in valid.index]
+        valid = pd.Series(valid.values, index=idx, dtype=float)
+
+    valid = valid[~valid.index.duplicated(keep="last")].sort_index()
+
+    relevant_valid = valid[valid.index <= end]
+    if relevant_valid.empty:
+        return pd.Series(np.nan, index=all_dates, dtype=float)
+
+    combined_idx = sorted(set(relevant_valid.index) | set(all_dates))
+
+    filled = relevant_valid.reindex(combined_idx).ffill()
+    result = filled.reindex(all_dates)
+    return result
