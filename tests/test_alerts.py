@@ -303,3 +303,63 @@ def test_storage_roundtrip_and_damaged_json(tmp_path):
     # Verify file was renamed to .bad-*
     bad_files = list(tmp_path.glob("alerts.json.bad-*"))
     assert len(bad_files) == 1
+
+
+def test_get_alerts_path():
+    path_default = alerts._get_alerts_path(None)
+    assert path_default == alerts.ALERTS_PATH
+
+    path_user = alerts._get_alerts_path("user_1")
+    assert path_user == alerts.DATA_DIR / "users" / "user_1" / "alerts.json"
+
+
+def test_per_user_alert_rules_isolation(tmp_path, monkeypatch):
+    monkeypatch.setattr(alerts, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(alerts, "ALERTS_PATH", tmp_path / "alerts.json")
+
+    a1 = Alert(ticker="AAPL", kind="price_below", value=175.0, note="user_1 alert")
+    a2 = Alert(ticker="MSFT", kind="price_above", value=400.0, note="user_2 alert")
+
+    alerts.save_alert(a1, user_id="user_1")
+    alerts.save_alert(a2, user_id="user_2")
+
+    u1_alerts = alerts.load_alerts(user_id="user_1")
+    assert len(u1_alerts) == 1
+    assert u1_alerts[0].ticker == "AAPL"
+    assert u1_alerts[0].note == "user_1 alert"
+
+    u2_alerts = alerts.load_alerts(user_id="user_2")
+    assert len(u2_alerts) == 1
+    assert u2_alerts[0].ticker == "MSFT"
+    assert u2_alerts[0].note == "user_2 alert"
+
+    default_alerts = alerts.load_alerts(user_id=None)
+    assert len(default_alerts) == 0
+
+    alerts.delete_alert(u1_alerts[0].id, user_id="user_1")
+    assert len(alerts.load_alerts(user_id="user_1")) == 0
+    assert len(alerts.load_alerts(user_id="user_2")) == 1
+
+
+def test_fired_today_with_user_id(sample_universe, tmp_path, monkeypatch):
+    monkeypatch.setattr(alerts, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(alerts, "ALERTS_PATH", tmp_path / "alerts.json")
+
+    today = dt.date(2025, 10, 25)
+
+    a1 = Alert(ticker="AAPL", kind="price_below", value=175.0)
+    alerts.save_alert(a1, user_id="user_1")
+
+    a2 = Alert(ticker="MSFT", kind="price_above", value=400.0)
+    alerts.save_alert(a2, user_id="user_2")
+
+    fired_u1 = alerts.fired_today(sample_universe, today=today, user_id="user_1")
+    assert len(fired_u1) == 1
+    assert fired_u1[0].ticker == "AAPL"
+
+    fired_u2 = alerts.fired_today(sample_universe, today=today, user_id="user_2")
+    assert len(fired_u2) == 1
+    assert fired_u2[0].ticker == "MSFT"
+
+    fired_default = alerts.fired_today(sample_universe, today=today, user_id=None)
+    assert len(fired_default) == 0

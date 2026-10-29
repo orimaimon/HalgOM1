@@ -43,9 +43,10 @@ def test_login_screen_initial(isolated_data_dir):
     at = AppTest.from_function(script_render_login, args=(str(isolated_data_dir),)).run()
     assert not at.exception
     assert any("התחברות למערכת HalgOM" in h.value for h in at.header)
-    assert len(at.selectbox) > 0
-    assert len(at.text_input) >= 1
-    assert len(at.button) >= 1
+    assert len(at.selectbox) == 1
+    assert len(at.text_input) == 1
+    assert len(at.button) == 1
+    assert not at.expander
 
 
 def test_login_failure(isolated_data_dir):
@@ -72,35 +73,6 @@ def test_login_success(isolated_data_dir):
     assert at.session_state.get("logged_in") is True
     assert at.session_state.get("user_id") == "ori"
     assert at.session_state.get("user_name") == "אורי"
-
-
-def test_register_new_user(isolated_data_dir):
-    at = AppTest.from_function(script_render_login, args=(str(isolated_data_dir),)).run()
-    assert not at.exception
-
-    at.text_input(key="reg_name").input("דני")
-    at.text_input(key="reg_pass").input("mypass123")
-    at.text_input(key="reg_confirm").input("mypass123")
-    at.button(key="reg_submit").click().run()
-
-    assert not at.exception
-    assert at.session_state.get("logged_in") is True
-    assert at.session_state.get("user_id") is not None
-    assert at.session_state.get("user_name") == "דני"
-
-
-def test_register_validation_mismatch(isolated_data_dir):
-    at = AppTest.from_function(script_render_login, args=(str(isolated_data_dir),)).run()
-    assert not at.exception
-
-    at.text_input(key="reg_name").input("דני")
-    at.text_input(key="reg_pass").input("mypass123")
-    at.text_input(key="reg_confirm").input("differentpass")
-    at.button(key="reg_submit").click().run()
-
-    assert not at.exception
-    assert any("הסיסמאות אינן תואמות" in err.value for err in at.error)
-    assert not at.session_state.get("logged_in")
 
 
 def test_render_user_badge_logged_in_and_logout(isolated_data_dir):
