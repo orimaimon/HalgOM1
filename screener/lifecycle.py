@@ -26,11 +26,16 @@ FORCE_EXIT_AFTER = 5.0          # if a clean stop hangs, exit the process anyway
 
 
 def is_server_mode() -> bool:
-    """Check if server mode or no-idle-shutdown mode is enabled via environment variables."""
-    return (
-        os.environ.get("HALGOM_SERVER_MODE") == "1"
-        or os.environ.get("HALGOM_NO_IDLE_SHUTDOWN") == "1"
-    )
+    """Check if server mode or no-idle-shutdown mode is enabled via environment variables,
+    or auto-detected when running on Linux outside tests."""
+    if os.environ.get("HALGOM_SERVER_MODE") == "1" or os.environ.get("HALGOM_NO_IDLE_SHUTDOWN") == "1":
+        return True
+    if os.environ.get("HALGOM_SERVER_MODE") == "0":
+        return False
+    # Auto-detect Linux production server (not CI, not running unit tests)
+    if os.name != "nt" and not os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("GITHUB_ACTIONS"):
+        return True
+    return False
 
 
 def stop_server(reason: str, delay: float = 1.5) -> None:
