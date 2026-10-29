@@ -26,6 +26,13 @@ log = logging.getLogger(__name__)
 
 ALERTS_PATH = DATA_DIR / "alerts.json"
 
+
+def _get_alerts_path(user_id: str | None = None) -> Path:
+    if user_id:
+        return DATA_DIR / "users" / user_id / "alerts.json"
+    return ALERTS_PATH
+
+
 KINDS: dict[str, str] = {
     "price_below": "מחיר מתחת ל-",
     "price_above": "מחיר מעל ל-",
@@ -55,11 +62,14 @@ class Fired:
     message: str
 
 
+AlertResult = Fired
+
+
 # ── Storage ──────────────────────────────────────────────────────────────────
 
-def load(path: Path | None = None) -> dict[str, Alert]:
+def load(path: Path | None = None, user_id: str | None = None) -> dict[str, Alert]:
     """Load all alerts indexed by alert id."""
-    path = path or ALERTS_PATH
+    path = path or _get_alerts_path(user_id)
     try:
         return load_user_file(path, Alert)
     except OSError as e:
@@ -67,9 +77,14 @@ def load(path: Path | None = None) -> dict[str, Alert]:
         return {}
 
 
-def add(alert: Alert, path: Path | None = None) -> Alert:
+def load_alerts(user_id: str | None = None) -> list[Alert]:
+    """Load all alerts for user_id as a list of Alert objects."""
+    return list(load(user_id=user_id).values())
+
+
+def add(alert: Alert, path: Path | None = None, user_id: str | None = None) -> Alert:
     """Add or update an alert. Fills id and created if empty."""
-    path = path or ALERTS_PATH
+    path = path or _get_alerts_path(user_id)
     today_str = dt.date.today().isoformat()
     if not alert.id:
         alert.id = uuid.uuid4().hex
@@ -83,19 +98,30 @@ def add(alert: Alert, path: Path | None = None) -> Alert:
     return alert
 
 
-def remove(alert_id: str, path: Path | None = None) -> None:
+def save_alert(alert: Alert, user_id: str | None = None) -> None:
+    """Save an alert for the given user_id."""
+    add(alert, user_id=user_id)
+
+
+def remove(alert_id: str, path: Path | None = None, user_id: str | None = None) -> None:
     """Remove an alert by id."""
-    path = path or ALERTS_PATH
+    path = path or _get_alerts_path(user_id)
     save_user_file(path, Alert, lambda alerts: alerts.pop(alert_id, None))
+
+
+def delete_alert(alert_id: str, user_id: str | None = None) -> None:
+    """Delete an alert by id for the given user_id."""
+    remove(alert_id, user_id=user_id)
 
 
 def mark_fired(
     alert_ids: str | Iterable[str],
     session_date: dt.date | str,
     path: Path | None = None,
+    user_id: str | None = None,
 ) -> None:
     """Mark alerts as fired on a given session date."""
-    path = path or ALERTS_PATH
+    path = path or _get_alerts_path(user_id)
     if isinstance(alert_ids, str):
         target_ids = {alert_ids}
     else:
@@ -113,6 +139,16 @@ def mark_fired(
                 alerts[aid].last_fired = s_date
 
     save_user_file(path, Alert, modify)
+
+
+def fired_today(
+    universe: pd.DataFrame,
+    today: dt.date,
+    user_id: str | None = None,
+) -> list[AlertResult]:
+    """Evaluate and return fired alerts today for a given user_id (or default)."""
+    alert_dict = load(user_id=user_id)
+    return evaluate(alert_dict, universe, session_date=today, today=today)
 
 
 # ── Evaluation ───────────────────────────────────────────────────────────────
