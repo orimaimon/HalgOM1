@@ -198,3 +198,48 @@ def test_breakout_needs_a_full_window():
     assert res.loc["OLD", "breakout_250"] == True       # noqa: E712
     assert res.loc["NEW", "breakout_20"] == True        # noqa: E712
     assert pd.isna(res.loc["NEW", "breakout_250"])
+
+
+def test_load_history_parquet_column_pushdown(tmp_path):
+    """Loading a parquet file with extra columns decodes only specified columns."""
+    df_full = pd.DataFrame({
+        "date": ["2025-01-01", "2025-01-02"],
+        "ticker": ["AAPL", "AAPL"],
+        "open": [100.0, 101.0],
+        "high": [105.0, 106.0],
+        "low": [99.0, 100.0],
+        "close": [104.0, 105.0],
+        "volume": [10000, 12000],
+        "extra_unneeded_column": ["ignore1", "ignore2"],
+        "another_extra": [123, 456],
+    })
+    p = tmp_path / "test_history.parquet"
+    df_full.to_parquet(p, index=False)
+
+    df_loaded = history_signals.load_history_parquet(p)
+    assert "extra_unneeded_column" not in df_loaded.columns
+    assert "another_extra" not in df_loaded.columns
+    assert list(df_loaded.columns) == ["date", "ticker", "open", "high", "low", "close", "volume"]
+
+
+def test_signals_within_with_parquet_path(tmp_path):
+    """signals_within, prepare, and event_matrix accept parquet path and give identical results."""
+    n = 250
+    dates = pd.date_range("2025-01-01", periods=n, freq="B")
+    prices = np.full(n, 100.0)
+    prices[:246] = 95.0
+    prices[246:] = 105.0 + np.arange(4)
+
+    closes = pd.DataFrame({"AAPL": prices}, index=dates)
+    p = tmp_path / "closes.parquet"
+    closes.to_parquet(p)
+
+    res_df = history_signals.signals_within(closes, days=5, prepared=True)
+    res_path = history_signals.signals_within(p, days=5, prepared=False)
+
+    pd.testing.assert_frame_equal(res_df, res_path)
+
+    em_df = history_signals.event_matrix(closes, "cross_up_sma200", prepared=True)
+    em_path = history_signals.event_matrix(p, "cross_up_sma200", prepared=False)
+
+    pd.testing.assert_frame_equal(em_df, em_path, check_freq=False)
